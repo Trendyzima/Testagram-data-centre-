@@ -1,0 +1,42 @@
+name: testagram-vps
+services:
+  control-plane:
+    build: {context: .., dockerfile: control-plane/Dockerfile}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+      VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN}
+      VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN}
+      VPS_CONTROL_PLANE_ADDR: :8787
+    networks: [supabase, internal]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8787/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+  video:
+    extends: {file: ../backend/docker-compose.yml, service: video}
+    networks: [internal, supabase]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+  video-worker:
+    extends: {file: ../backend/docker-compose.yml, service: video-worker}
+    networks: [internal, supabase]
+  notification:
+    extends: {file: ../backend/docker-compose.yml, service: notification}
+    networks: [internal, supabase]
+  worker:
+    extends: {file: ../backend/docker-compose.yml, service: worker}
+    networks: [internal, supabase]
+  redis:
+    extends: {file: ../backend/docker-compose.yml, service: redis}
+  edge:
+    extends: {file: ../backend/docker-compose.yml, service: edge}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    ports: ["80:80", "443:443"]
+    networks: [edge, internal, supabase]
+networks:
+  edge:
+  internal: {internal: true}
+  supabase:
+    external: true
+    name: ${SUPABASE_NETWORK:-testagram-supabase}
