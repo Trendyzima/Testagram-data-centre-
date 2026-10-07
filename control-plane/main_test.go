@@ -15,3 +15,5 @@ func TestHealth(t *testing.T) {
 		t.Fatalf("unexpected response: %d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestValidImageDigest(t *testing.T) { if !validImageDigest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") { t.Fatal("expected valid digest") }; if validImageDigest("sha256:bad") { t.Fatal("expected invalid digest") }; if validImageDigest("sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") { t.Fatal("expected lowercase-only digest") } }
