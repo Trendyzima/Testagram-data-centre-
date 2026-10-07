@@ -69,6 +69,32 @@ jobs:
       - name: Build backend containers
         run: |
           docker compose -f backend/docker-compose.yml build video video-worker notification worker
+      - name: Backend runtime smoke test
+        run: |
+          set -euo pipefail
+          docker network create testagram-supabase 2>/dev/null || true
+          docker run -d --name testagram-postgres --network testagram-supabase -e POSTGRES_PASSWORD=testagram postgres:17-alpine
+          trap 'docker rm -f testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do
+            docker exec testagram-postgres pg_isready -U postgres -d postgres >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker exec testagram-postgres pg_isready -U postgres -d postgres
+          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c "psql -h testagram-postgres -U postgres -d postgres -f /migrations/001_vps.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/002_video_platform.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/003_production_hardening.sql"
+          export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/postgres
+          export VIDEO_JWT_SECRET=ci-test-jwt-secret
+          export VIDEO_SIGNING_SECRET=ci-test-signing-secret-at-least-32-bytes
+          export NOTIFICATION_JWT_SECRET=ci-test-jwt-secret
+          export NOTIFICATION_INTERNAL_TOKEN=ci-test-internal-token
+          export SUPABASE_NETWORK=testagram-supabase
+          docker compose -f backend/docker-compose.yml up -d video notification worker
+          for i in $(seq 1 30); do
+            docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz
+          docker compose -f backend/docker-compose.yml exec -T notification wget -q -O - http://127.0.0.1:8090/readyz
+          docker compose -f backend/docker-compose.yml exec -T worker wget -q -O - http://127.0.0.1:8091/readyz
 
   android:
     runs-on: ubuntu-latest
