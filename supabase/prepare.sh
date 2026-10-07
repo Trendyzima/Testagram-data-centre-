@@ -8,6 +8,9 @@ REPO="https://github.com/supabase/supabase.git"
 command -v git >/dev/null 2>&1 || { echo "git is required"; exit 1; }
 command -v cp >/dev/null 2>&1 || { echo "cp is required"; exit 1; }
 mkdir -p "$ROOT" "$PROJECT"
+TESTAGRAM_STORAGE_ROOT="${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}"
+export TESTAGRAM_STORAGE_ROOT
+"$(dirname "$0")/storage.sh"
 if [ -d "$UPSTREAM/.git" ]; then
   git -C "$UPSTREAM" remote set-url origin "$REPO"
   git -C "$UPSTREAM" fetch --depth=1 origin "$REF"
@@ -24,6 +27,13 @@ mkdir -p "$PROJECT"
 cp -a "$UPSTREAM/docker/." "$PROJECT/"
 cp "$(dirname "$0")/docker-compose.vps.yml" "$PROJECT/docker-compose.testagram.yml"
 if [ -f "$PROJECT/.env.example" ] && [ ! -f "$PROJECT/.env" ]; then cp "$PROJECT/.env.example" "$PROJECT/.env"; fi
+if [ -f "$PROJECT/.env" ]; then
+  if grep -q "^TESTAGRAM_STORAGE_ROOT=" "$PROJECT/.env"; then
+    sed -i "s#^TESTAGRAM_STORAGE_ROOT=.*#TESTAGRAM_STORAGE_ROOT=$TESTAGRAM_STORAGE_ROOT#" "$PROJECT/.env"
+  else
+    printf "\nTESTAGRAM_STORAGE_ROOT=$TESTAGRAM_STORAGE_ROOT\n" >> "$PROJECT/.env"
+  fi
+fi
 if [ -f "$PROJECT/.env" ]; then
   if grep -q '^COMPOSE_FILE=' "$PROJECT/.env"; then
     sed -i 's#^COMPOSE_FILE=.*#COMPOSE_FILE=docker-compose.yml:docker-compose.testagram.yml#' "$PROJECT/.env"
