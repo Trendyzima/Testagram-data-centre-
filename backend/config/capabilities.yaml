@@ -1,0 +1,55 @@
+version: 1
+ownership:
+  mode: locally-owned
+  external_providers_are_adapters: true
+
+components:
+  notification_broker:
+    enabled: true
+    queue: local
+    persistence: supabase_postgres
+  media_pipeline:
+    enabled: true
+    object_store: local
+    processing: local_workers
+  cache:
+    enabled: true
+    engine: redis_compatible
+    persistence: ephemeral_plus_postgres_jobs
+  edge:
+    enabled: true
+    tls: required
+    rate_limit: local
+  federation:
+    activitypub: true
+    matrix: true
+  feeds:
+    rss: true
+    normalization: local
+  email:
+    queue: local
+    delivery: smtp_adapter
+  geospatial:
+    engine: local
+  ai:
+    gateway: local
+    moderation: local
+    transcription: local
+    external_models: adapters_only
+  payments:
+    ledger: local
+    providers:
+      - mpesa
+      - paypal
+      - pesapal
+  identity:
+    auth: supabase_self_hosted
+    authorization: testagram_rls_and_policy
+    kyc: local_or_provider_adapter
+
+security:
+  secrets_external_to_git: true
+  audit_events_persisted: true
+  idempotency_required_for_payments: true
+  signed_media_urls: true
+  least_privilege_provider_credentials: true
