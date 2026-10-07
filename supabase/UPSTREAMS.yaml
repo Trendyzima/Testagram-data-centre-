@@ -1,50 +1,142 @@
-version: 1
-purpose: "Official Supabase backend components for the Testagram VPS"
+version: 2
+purpose: "Locally owned Testagram backend capabilities with official Supabase retained as the core"
 policy:
-  source_of_truth: "Official upstream repositories only"
-  source_repos_are_not_forks: true
-  runtime: "Official upstream container images / builds"
-services:
-  - name: postgres
-    repo: https://github.com/supabase/postgres.git
-    ref: develop
-    role: "PostgreSQL database with Supabase extensions"
-  - name: auth
-    repo: https://github.com/supabase/auth.git
-    ref: master
-    role: "JWT authentication and user management"
-  - name: rest
-    repo: https://github.com/PostgREST/postgrest.git
-    ref: main
-    role: "PostgreSQL REST API"
-  - name: realtime
-    repo: https://github.com/supabase/realtime.git
-    ref: main
-    role: "WebSocket realtime and Postgres change delivery"
-  - name: storage
-    repo: https://github.com/supabase/storage.git
-    ref: master
-    role: "S3-compatible object storage API with Postgres metadata"
-  - name: edge-runtime
-    repo: https://github.com/supabase/edge-runtime.git
-    ref: main
-    role: "Deno Edge Functions runtime"
-  - name: postgres-meta
-    repo: https://github.com/supabase/postgres-meta.git
-    ref: master
-    role: "Postgres metadata/admin API used by Studio"
-  - name: supavisor
-    repo: https://github.com/supabase/supavisor.git
-    ref: main
-    role: "Postgres connection pooler"
-integration:
-  database_url: "${DATABASE_URL}"
-  stack_network: "testagram-supabase"
-  persistent_root: "${SUPABASE_DATA_ROOT:-/var/lib/testagram/supabase}"
-  api_gateway: "testagram-vps-control-plane remains the infrastructure control plane; Supabase API traffic is isolated behind the stack gateway"
-security:
-  never_commit_secrets: true
-  tls_required_at_edge: true
-  service_role_key_server_only: true
-  anon_key_client_safe_only: true
+  ownership: "Testagram owns the runtime, data, keys, queues, notification adapters, media adapters, integrations and operational control"
+  upstream_boundary: "Official Supabase source and self-hosted Docker distribution remain unmodified"
+  no_managed_dependency_required: true
+
+supabase_core:
+  source: "supabase/supabase self-hosted Docker distribution"
+  capabilities:
+    - auth
+    - postgres
+    - rest
+    - realtime
+    - storage
+    - edge_functions
+    - postgres_meta
+    - connection_pooling
+    - optional_logs_and_analytics
+    - optional_vector
+    - optional_queues
+
+testagram_owned_services:
+  identity:
+    owner: "Testagram"
+    implementation: "Supabase Auth plus Testagram authorization/RLS/session policy"
+    external_dependency: false
+  push:
+    owner: "Testagram"
+    implementation: "local notification broker with device-token registry, retry queue, templates, preferences and provider adapters"
+    external_dependency: false
+    adapters:
+      - fcm_optional
+      - apns_optional
+      - web_push_optional
+  media:
+    owner: "Testagram"
+    implementation: "local object-storage pipeline, image/video transforms, thumbnails, metadata and signed delivery URLs"
+    external_dependency: false
+    adapters:
+      - cloudinary_optional
+      - bunny_optional
+  edge_network:
+    owner: "Testagram"
+    implementation: "local reverse proxy, TLS, rate limiting, WAF policy, caching and origin routing"
+    external_dependency: false
+  cache_queue:
+    owner: "Testagram"
+    implementation: "Redis-compatible local cache, rate limiter and durable job queues"
+    external_dependency: false
+    adapters:
+      - upstash_optional
+  google:
+    owner: "Testagram"
+    implementation: "OAuth token vault, YouTube integration and ingest adapters"
+    external_dependency: true
+    note: "Google APIs cannot be made local; Testagram owns the integration and credentials."
+  identity_verification:
+    owner: "Testagram"
+    implementation: "KYC orchestration, evidence vault, verification state machine and audit trail"
+    external_dependency: false
+    adapters:
+      - didit_optional
+  payments:
+    owner: "Testagram"
+    implementation: "payment ledger, idempotency, webhooks, reconciliation, fees, payouts and provider adapters"
+    external_dependency: true
+    providers:
+      - mpesa
+      - paypal
+      - pesapal
+  content_discovery:
+    owner: "Testagram"
+    implementation: "local GIF index, news/feed normalization, RSS ingestion and moderation pipeline"
+    external_dependency: false
+    adapters:
+      - tenor_optional
+      - newsify_optional
+      - rss
+  federation:
+    owner: "Testagram"
+    implementation: "ActivityPub/Mastodon federation service and Matrix bridge"
+    external_dependency: false
+    protocols:
+      - activitypub
+      - matrix
+  email:
+    owner: "Testagram"
+    implementation: "transactional mail queue, templates, verification and security events"
+    external_dependency: false
+    adapters:
+      - smtp_optional
+  geospatial:
+    owner: "Testagram"
+    implementation: "local geocoding cache, distance engine and route/location primitives"
+    external_dependency: false
+  ai:
+    owner: "Testagram"
+    implementation: "local model gateway, moderation, transcription, embeddings and support-agent runtime"
+    external_dependency: false
+    adapters:
+      - external_llm_optional
+
+external_integrations:
+  principle: "Only capabilities that inherently require an external network/provider remain external"
+  required_external:
+    - google_youtube
+    - mpesa_safaricom
+    - paypal
+    - pesapal
+  optional_external:
+    - fcm
+    - apns
+    - web_push
+    - cloudinary
+    - bunny_cdn
+    - upstash
+    - didit
+    - tenor
+    - newsify
+    - smtp
+    - external_ai_models
+
+network:
+  private_services:
+    - postgres
+    - redis
+    - object_storage
+    - queue_workers
+    - notification_broker
+    - media_processor
+    - ai_runtime
+    - federation_worker
+  public_edge_only:
+    - api
+    - auth
+    - realtime
+    - storage
+    - federation
+    - payment_webhooks
   database_port_public: false
+  tls_required_at_edge: true
