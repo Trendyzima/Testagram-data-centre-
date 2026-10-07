@@ -47,16 +47,12 @@ jobs:
           assert_file "$tmp_storage/.testagram-storage"
           for dir in \
             "$tmp_storage/supabase" \
-            "$tmp_storage/media/posts" \
-            "$tmp_storage/media/images" \
-            "$tmp_storage/media/videos" \
-            "$tmp_storage/media/originals" \
-            "$tmp_storage/media/hls" \
-            "$tmp_storage/media/posters" \
-            "$tmp_storage/media/avatars" \
-            "$tmp_storage/media/stories" \
-            "$tmp_storage/media/messages" \
-            "$tmp_storage/media/attachments" \
+            "$tmp_storage/media/posts/images" \
+            "$tmp_storage/media/posts/videos" \
+            "$tmp_storage/media/uploads" \
+            "$tmp_storage/media/videos/originals" \
+            "$tmp_storage/media/videos/hls" \
+            "$tmp_storage/media/videos/posters" \
             "$tmp_storage/media/tmp" \
             "$tmp_storage/nodes"; do
             assert_dir "$dir"
@@ -75,10 +71,10 @@ jobs:
             migrations/002_video_platform.sql; do
             assert_file "$file"
           done
-          grep -q 'filepath.Join(s.mediaDir,"videos",id)' backend/services/video/main.go
-          grep -q 'filepath.Join(s.mediaDir,"hls",id,file)' backend/services/video/main.go
-          grep -q 'filepath.Join(root,"hls",id)' backend/services/video-worker/main.go
-          grep -q 'filepath.Join(root,"posters",id)' backend/services/video-worker/main.go
+          grep -q 'filepath.Join(s.mediaDir,"videos","originals",id)' backend/services/video/main.go
+          grep -q 'filepath.Join(s.mediaDir,"videos","hls",id,file)' backend/services/video/main.go
+          grep -q 'filepath.Join(root,"videos","hls",id)' backend/services/video-worker/main.go
+          grep -q 'filepath.Join(root,"videos","posters",id)' backend/services/video-worker/main.go
           TESTAGRAM_STORAGE_ROOT=/var/lib/testagram/storage docker compose -f backend/docker-compose.yml config
           echo "VPS local-storage authority validation: PASS"
       - name: Validate database migrations
