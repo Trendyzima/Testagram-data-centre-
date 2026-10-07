@@ -1,12 +1,276 @@
 package main
-import ("bytes";"encoding/json";"errors";"io";"log";"net/http";"os";"os/exec";"path/filepath";"runtime";"strconv";"strings";"sync";"time")
-type Agent struct{control,bootstrap,nodeToken,name,endpoint,volumeRoot string;mu sync.RWMutex}
-type Registration struct{Name string;Platform string;Arch string;CPUCores int;MemoryBytes int64;StorageBytes int64;FreeBytes int64;Endpoint string;Capabilities map[string]any}
-type Workload struct{Image string;ImageDigest string;Command []string;Env map[string]string;CPUMillis int;MemoryBytes int64;Volume string}
-func(a *Agent)auth()string{a.mu.RLock();defer a.mu.RUnlock();if a.nodeToken!=""{return "Bearer "+a.nodeToken};return "Bearer "+a.bootstrap}
-func runtimeBin()string{for _,n:=range []string{"docker","podman"}{if p,e:=exec.LookPath(n);e==nil{return p}};return ""}
-func(a *Agent)disk()(int64,int64){t,_:=strconv.ParseInt(os.Getenv("VPS_STORAGE_BYTES"),10,64);f,_:=strconv.ParseInt(os.Getenv("VPS_FREE_BYTES"),10,64);return t,f}
-func(a *Agent)register()error{t,f:=a.disk();body,_:=json.Marshal(Registration{Name:a.name,Platform:runtime.GOOS,Arch:runtime.GOARCH,CPUCores:runtime.NumCPU(),StorageBytes:t,FreeBytes:f,Endpoint:a.endpoint,Capabilities:map[string]any{"containers":runtimeBin()!="","localVolumes":true,"encryptedVolumes":true,"microSD":runtime.GOOS=="android"}});req,e:=http.NewRequest(http.MethodPost,strings.TrimRight(a.control,"/")+"/v1/nodes/register",bytes.NewReader(body));if e!=nil{return e};req.Header.Set("Authorization",a.auth());req.Header.Set("Content-Type","application/json");resp,e:=http.DefaultClient.Do(req);if e!=nil{return e};defer resp.Body.Close();if resp.StatusCode>=300{b,_:=io.ReadAll(io.LimitReader(resp.Body,4096));return errors.New(string(b))};var out struct{Token string};if e=json.NewDecoder(resp.Body).Decode(&out);e!=nil{return e};a.mu.Lock();a.nodeToken=out.Token;a.mu.Unlock();return nil}
-func(a *Agent)heartbeat()error{t,f:=a.disk();body,_:=json.Marshal(Registration{CPUCores:runtime.NumCPU(),StorageBytes:t,FreeBytes:f,Capabilities:map[string]any{"containers":runtimeBin()!="","localVolumes":true,"encryptedVolumes":true,"microSD":runtime.GOOS=="android"}});req,e:=http.NewRequest(http.MethodPost,strings.TrimRight(a.control,"/")+"/v1/nodes/heartbeat",bytes.NewReader(body));if e!=nil{return e};req.Header.Set("Authorization",a.auth());req.Header.Set("Content-Type","application/json");resp,e:=http.DefaultClient.Do(req);if e!=nil{return e};defer resp.Body.Close();if resp.StatusCode>=300{b,_:=io.ReadAll(io.LimitReader(resp.Body,4096));return errors.New(string(b))};return nil}
-func(a *Agent)execute(w Workload)error{rt:=runtimeBin();if rt==""{return errors.New("docker or podman is required on this execution node")};if w.Image==""{return errors.New("image required")};args:=[]string{"run","--rm","--read-only","--cap-drop=ALL","--security-opt=no-new-privileges"};if w.CPUMillis>0{args=append(args,"--cpus",strconv.FormatFloat(float64(w.CPUMillis)/1000,'f',3,64))};if w.MemoryBytes>0{args=append(args,"--memory",strconv.FormatInt(w.MemoryBytes,10))};for k,v:=range w.Env{if k==""||strings.ContainsAny(k,"=\x00\r\n"){return errors.New("invalid environment key")};args=append(args,"--env",k+"="+v)};if w.Volume!=""{root,_:=filepath.Abs(a.volumeRoot);path,_:=filepath.Abs(filepath.Join(root,filepath.Clean(w.Volume)));if path!=root&&!strings.HasPrefix(path,root+string(os.PathSeparator)){return errors.New("volume escapes root")};args=append(args,"--volume",path+":/data:rw")};args=append(args,w.Image);args=append(args,w.Command...);cmd:=exec.Command(rt,args...);cmd.Stdout=os.Stdout;cmd.Stderr=os.Stderr;return cmd.Run()}
-func main(){cp:=os.Getenv("VPS_CONTROL_PLANE_URL");boot:=os.Getenv("VPS_NODE_BOOTSTRAP_TOKEN");if cp==""||boot==""{log.Fatal("VPS_CONTROL_PLANE_URL and VPS_NODE_BOOTSTRAP_TOKEN are required")};a:=&Agent{control:cp,bootstrap:boot,name:os.Getenv("VPS_NODE_NAME"),endpoint:os.Getenv("VPS_NODE_ENDPOINT"),volumeRoot:os.Getenv("VPS_VOLUME_ROOT")};if a.name==""{a.name="testagram-node"};if a.endpoint==""{a.endpoint="http://127.0.0.1:8790"};if a.volumeRoot==""{a.volumeRoot="./volumes"};_=os.MkdirAll(a.volumeRoot,0700);for{if a.nodeToken==""{if e:=a.register();e!=nil{log.Printf("register: %v",e);time.Sleep(5*time.Second);continue}};if e:=a.heartbeat();e!=nil{log.Printf("heartbeat: %v",e);a.mu.Lock();a.nodeToken="";a.mu.Unlock();time.Sleep(2*time.Second);continue};time.Sleep(15*time.Second)}}
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+type Agent struct {
+	control, bootstrap, nodeToken, nodeID, name, endpoint, volumeRoot string
+	mu sync.RWMutex
+}
+
+type Registration struct {
+	Name string `json:"name"`
+	Platform string `json:"platform"`
+	Arch string `json:"arch"`
+	CPUCores int `json:"cpuCores"`
+	MemoryBytes int64 `json:"memoryBytes"`
+	StorageBytes int64 `json:"storageBytes"`
+	FreeBytes int64 `json:"freeBytes"`
+	Endpoint string `json:"endpoint"`
+	Capabilities map[string]any `json:"capabilities"`
+}
+
+type Workload struct {
+	Image string `json:"image"`
+	ImageDigest string `json:"imageDigest"`
+	Command []string `json:"command"`
+	Env map[string]string `json:"env"`
+	CPUMillis int `json:"cpuMillis"`
+	MemoryBytes int64 `json:"memoryBytes"`
+	Volume string `json:"volume"`
+}
+
+type pollResponse struct {
+	ID string `json:"id"`
+	Workload Workload `json:"workload"`
+}
+
+func (a *Agent) token() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.nodeToken
+}
+
+func (a *Agent) authHeader() string {
+	if t := a.token(); t != "" {
+		return "Bearer " + t
+	}
+	return "Bearer " + a.bootstrap
+}
+
+func runtimeBin() string {
+	for _, name := range []string{"docker", "podman"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+func (a *Agent) disk() (int64, int64) {
+	total, _ := strconv.ParseInt(os.Getenv("VPS_STORAGE_BYTES"), 10, 64)
+	free, _ := strconv.ParseInt(os.Getenv("VPS_FREE_BYTES"), 10, 64)
+	return total, free
+}
+
+func (a *Agent) post(path string, body any, out any) (int, error) {
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(a.control, "/")+path, bytes.NewReader(raw))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", a.authHeader())
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 12 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNoContent {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return resp.StatusCode, errors.New(string(data))
+	}
+	if out != nil && resp.StatusCode != http.StatusNoContent {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			return resp.StatusCode, err
+		}
+	}
+	return resp.StatusCode, nil
+}
+
+func (a *Agent) register() error {
+	total, free := a.disk()
+	body := Registration{
+		Name: a.name, Platform: runtime.GOOS, Arch: runtime.GOARCH,
+		CPUCores: runtime.NumCPU(), StorageBytes: total, FreeBytes: free,
+		Endpoint: a.endpoint,
+		Capabilities: map[string]any{
+			"containers": runtimeBin() != "",
+			"localVolumes": true,
+			"encryptedVolumes": true,
+		},
+	}
+	var out struct {
+		ID string `json:"id"`
+		Token string `json:"token"`
+	}
+	_, err := a.post("/v1/nodes/register", body, &out)
+	if err != nil {
+		return err
+	}
+	if out.ID == "" || out.Token == "" {
+		return errors.New("control plane returned incomplete node credentials")
+	}
+	a.mu.Lock()
+	a.nodeID, a.nodeToken = out.ID, out.Token
+	a.mu.Unlock()
+	return nil
+}
+
+func (a *Agent) heartbeat() error {
+	total, free := a.disk()
+	body := Registration{
+		CPUCores: runtime.NumCPU(), StorageBytes: total, FreeBytes: free,
+		Capabilities: map[string]any{"containers": runtimeBin() != ""},
+	}
+	_, err := a.post("/v1/nodes/heartbeat", body, nil)
+	return err
+}
+
+func (a *Agent) poll() (*pollResponse, error) {
+	var out pollResponse
+	code, err := a.post("/v1/nodes/poll", map[string]any{}, &out)
+	if err != nil {
+		if code == http.StatusNoContent {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (a *Agent) report(id string, success bool) error {
+	_, err := a.post("/v1/workloads/"+id+"/result", map[string]bool{"success": success}, nil)
+	return err
+}
+
+func (a *Agent) execute(w Workload) error {
+	rt := runtimeBin()
+	if rt == "" {
+		return errors.New("docker or podman is required on this execution node")
+	}
+	if w.Image == "" {
+		return errors.New("image required")
+	}
+
+	image := w.Image
+	if w.ImageDigest != "" {
+		if !strings.HasPrefix(w.ImageDigest, "sha256:") {
+			return errors.New("unsupported image digest")
+		}
+		image = w.Image + "@" + w.ImageDigest
+	}
+
+	args := []string{"run", "--rm", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges"}
+	if w.CPUMillis > 0 {
+		args = append(args, "--cpus", strconv.FormatFloat(float64(w.CPUMillis)/1000, 'f', 3, 64))
+	}
+	if w.MemoryBytes > 0 {
+		args = append(args, "--memory", strconv.FormatInt(w.MemoryBytes, 10))
+	}
+	for key, value := range w.Env {
+		if key == "" || strings.ContainsAny(key, "=\x00\r\n") {
+			return errors.New("invalid environment key")
+		}
+		args = append(args, "--env", key+"="+value)
+	}
+	if w.Volume != "" {
+		root, err := filepath.Abs(a.volumeRoot)
+		if err != nil {
+			return err
+		}
+		path, err := filepath.Abs(filepath.Join(root, filepath.Clean(w.Volume)))
+		if err != nil {
+			return err
+		}
+		if path != root && !strings.HasPrefix(path, root+string(os.PathSeparator)) {
+			return errors.New("volume escapes root")
+		}
+		args = append(args, "--volume", path+":/data:rw")
+	}
+	args = append(args, image)
+	args = append(args, w.Command...)
+
+	cmd := exec.Command(rt, args...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+func main() {
+	control := os.Getenv("VPS_CONTROL_PLANE_URL")
+	bootstrap := os.Getenv("VPS_NODE_BOOTSTRAP_TOKEN")
+	if control == "" || bootstrap == "" {
+		log.Fatal("VPS_CONTROL_PLANE_URL and VPS_NODE_BOOTSTRAP_TOKEN are required")
+	}
+
+	a := &Agent{
+		control: control, bootstrap: bootstrap,
+		name: os.Getenv("VPS_NODE_NAME"),
+		endpoint: os.Getenv("VPS_NODE_ENDPOINT"),
+		volumeRoot: os.Getenv("VPS_VOLUME_ROOT"),
+	}
+	if a.name == "" {
+		a.name = "testagram-node"
+	}
+	if a.endpoint == "" {
+		a.endpoint = "outbound-only"
+	}
+	if a.volumeRoot == "" {
+		a.volumeRoot = "./volumes"
+	}
+	if err := os.MkdirAll(a.volumeRoot, 0700); err != nil {
+		log.Fatal(err)
+	}
+
+	for {
+		if a.token() == "" {
+			if err := a.register(); err != nil {
+				log.Printf("register: %v", err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+		}
+
+		if err := a.heartbeat(); err != nil {
+			log.Printf("heartbeat: %v", err)
+			a.mu.Lock()
+			a.nodeToken = ""
+			a.mu.Unlock()
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		if work, err := a.poll(); err != nil {
+			log.Printf("poll: %v", err)
+		} else if work != nil {
+			err = a.execute(work.Workload)
+			if reportErr := a.report(work.ID, err == nil); reportErr != nil {
+				log.Printf("report %s: %v", work.ID, reportErr)
+			}
+			if err != nil {
+				log.Printf("workload %s failed: %v", work.ID, err)
+			}
+		}
+
+		time.Sleep(3 * time.Second)
+	}
+}
