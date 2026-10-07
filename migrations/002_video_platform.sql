@@ -109,3 +109,7 @@ alter table testagram_video.comments enable row level security;
 
 -- The application service owns writes. Client access is intentionally not granted
 -- directly to this schema; the video API applies authorization and moderation policy.
+
+
+create index if not exists video_views_session_idx on testagram_video.video_views(session_hash, created_at desc);
+create index if not exists subscriptions_user_idx on testagram_video.subscriptions(user_id, created_at desc);
