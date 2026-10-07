@@ -32,3 +32,7 @@ jobs:
           grep -q 'supabase/postgres-meta.git' supabase/UPSTREAMS.yaml
           grep -q 'supabase/supavisor.git' supabase/UPSTREAMS.yaml
           grep -q 'docker-compose.yml:docker-compose.testagram.yml' supabase/prepare.sh
+          test -f backend/docker-compose.yml
+          test -f backend/runtime/Caddyfile
+          test -f backend/services/notification/Dockerfile
+          test -f backend/services/worker/Dockerfile
