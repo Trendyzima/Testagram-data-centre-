@@ -2,7 +2,7 @@ name: testagram-supabase
 
 services:
   api-gw:
-    ports:
+    ports: !override
       - "127.0.0.1:8000:8000"
   storage:
     volumes:
