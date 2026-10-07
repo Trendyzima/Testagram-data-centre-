@@ -41,23 +41,27 @@ jobs:
           bash -n supabase/storage.sh
           tmp_storage="$(mktemp -d)"
           TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash supabase/storage.sh
-          test -f "$tmp_storage/.testagram-storage-root"
+          test -f "$tmp_storage/.testagram-storage"
           test -d "$tmp_storage/supabase"
-          test -d "$tmp_storage/media/posts/images"
-          test -d "$tmp_storage/media/posts/videos"
-          test -d "$tmp_storage/media/uploads"
-          test -d "$tmp_storage/media/videos/originals"
-          test -d "$tmp_storage/media/videos/hls"
-          test -d "$tmp_storage/media/videos/posters"
+          test -d "$tmp_storage/media/posts"
+          test -d "$tmp_storage/media/images"
+          test -d "$tmp_storage/media/videos"
+          test -d "$tmp_storage/media/originals"
+          test -d "$tmp_storage/media/hls"
+          test -d "$tmp_storage/media/posters"
+          test -d "$tmp_storage/media/avatars"
+          test -d "$tmp_storage/media/stories"
+          test -d "$tmp_storage/media/messages"
+          test -d "$tmp_storage/media/attachments"
           test -d "$tmp_storage/media/tmp"
           test -d "$tmp_storage/nodes"
           rm -rf "$tmp_storage"
           bash -n vps/install.sh
           test -f vps/docker-compose.yml
-          grep -q 'videos/originals' backend/services/video/main.go
-          grep -q 'videos/hls' backend/services/video/main.go
-          grep -q 'videos/hls' backend/services/video-worker/main.go
-          grep -q 'videos/posters' backend/services/video-worker/main.go
+          grep -q 'filepath.Join(s.mediaDir,"videos",id)' backend/services/video/main.go
+          grep -q 'filepath.Join(s.mediaDir,"hls",id,file)' backend/services/video/main.go
+          grep -q 'filepath.Join(root,"hls",id)' backend/services/video-worker/main.go
+          grep -q 'filepath.Join(root,"posters",id)' backend/services/video-worker/main.go
           TESTAGRAM_STORAGE_ROOT=/var/lib/testagram/storage docker compose -f backend/docker-compose.yml config >/dev/null
           test -f backend/docker-compose.yml
           test -f backend/runtime/Caddyfile
