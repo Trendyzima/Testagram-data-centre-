@@ -38,6 +38,14 @@ jobs:
           bash -n supabase/prepare.sh
           bash -n supabase/status.sh
           bash -n supabase/healthcheck.sh
+          bash -n supabase/storage.sh
+          tmp_storage="$(mktemp -d)"
+          TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash supabase/storage.sh
+          test -d "$tmp_storage/supabase"
+          test -d "$tmp_storage/media"
+          test -d "$tmp_storage/nodes"
+          rm -rf "$tmp_storage"
+          TESTAGRAM_STORAGE_ROOT=/var/lib/testagram/storage docker compose -f backend/docker-compose.yml config >/dev/null
           test -f backend/docker-compose.yml
           test -f backend/runtime/Caddyfile
           test -f backend/services/notification/Dockerfile
