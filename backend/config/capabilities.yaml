@@ -1,4 +1,4 @@
-version: 2
+version: 3
 ownership:
   mode: locally-owned
   external_providers_are_adapters: true
@@ -11,8 +11,23 @@ ownership:
   tenor: disabled
   newsify: disabled
   novu: disabled
+  youtube: disabled
 
 components:
+  video_platform:
+    enabled: true
+    implementation: testagram-owned
+    api: local
+    channels: local
+    uploads: local_private_storage
+    transcoding: local_ffmpeg
+    streaming: adaptive_hls
+    renditions: [240p, 360p, 720p]
+    playback: signed_manifest_and_segment_urls
+    metadata: supabase_postgres
+    views: deduplicated
+    likes: persistent
+    publishing: moderation_ready_state
   notification_broker:
     enabled: true
     implementation: testagram-owned
@@ -60,15 +75,11 @@ components:
     transcription: local
     embeddings: local
     support_agent: local
-    external_models: optional_adapter_only
   payments:
     ledger: local
     idempotency: local
     reconciliation: local
-    providers:
-      - mpesa
-      - paypal
-      - pesapal
+    providers: [mpesa, paypal, pesapal]
   identity:
     auth: supabase_self_hosted
     authorization: testagram_policy_layer
