@@ -10,7 +10,25 @@ services:
       - edge_data:/data
       - edge_config:/config
     depends_on:
+      video:
+        condition: service_healthy
       platform:
+        condition: service_healthy
+    networks: [edge, internal]
+
+  redis:
+    image: valkey/valkey:8
+    restart: unless-stopped
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes: [redis_data:/data]
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  platform:
     build:
       context: ..
       dockerfile: backend/services/platform/Dockerfile
@@ -29,24 +47,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-
-  video:
-        condition: service_healthy
-      platform:
-        condition: service_healthy
-    networks: [edge, internal]
-
-  redis:
-    image: valkey/valkey:8
-    restart: unless-stopped
-    command: ["valkey-server", "--appendonly", "yes"]
-    volumes: [redis_data:/data]
-    networks: [internal]
-    healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
 
   video:
     build:
@@ -112,6 +112,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+
 networks:
   edge:
   internal:
