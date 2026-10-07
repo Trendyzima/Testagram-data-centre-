@@ -48,6 +48,8 @@ jobs:
           test -d "$tmp_storage/nodes"
           rm -rf "$tmp_storage"
           bash -n vps/install.sh
+          bash -n scripts/install-local-docker.sh
+          bash -n android-node/install-apk.sh
           test -f vps/docker-compose.yml
           test -f backend/docker-compose.yml
           test -f backend/runtime/Caddyfile
