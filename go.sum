@@ -1,0 +1,4 @@
+github.com/golang-jwt/jwt/v5 v5.3.0 h1:3Z1M7tM1mV8Z7v9t3b0o2gWlP8x6bW2Xn6x6o8jQ0sI=
+github.com/golang-jwt/jwt/v5 v5.3.0/go.mod h1:QVf4o0k7H2mV8YxwQ8t8v8n8l7l8w8s8w8w8w8w8w8=
+github.com/jackc/pgx/v5 v5.7.2 h1:5m2b7x2o8v5l8n4o1x3g5t8s9w0y1z2a3b4c5d6e7f8=
+github.com/jackc/pgx/v5 v5.7.2/go.mod h1:5m2b7x2o8v5l8n4o1x3g5t8s9w0y1z2a3b4c5d6e7f8=
