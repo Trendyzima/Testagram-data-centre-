@@ -196,18 +196,8 @@ func (a *Agent) execute(w Workload) error {
 	if rt == "" {
 		return errors.New("docker or podman is required on this execution node")
 	}
-	if w.Image == "" {
-		return errors.New("image required")
-	}
-
-	image := w.Image
-	if w.ImageDigest != "" {
-		if !strings.HasPrefix(w.ImageDigest, "sha256:") {
-			return errors.New("unsupported image digest")
-		}
-		image = w.Image + "@" + w.ImageDigest
-	}
-
+	if w.Image == "" || !validImageDigest(w.ImageDigest) { return errors.New("immutable sha256 image digest required") }
+	image := w.Image + "@" + w.ImageDigest
 	args := []string{"run", "--rm", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges"}
 	if w.CPUMillis > 0 {
 		args = append(args, "--cpus", strconv.FormatFloat(float64(w.CPUMillis)/1000, 'f', 3, 64))
@@ -242,6 +232,8 @@ func (a *Agent) execute(w Workload) error {
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	return cmd.Run()
 }
+
+func validImageDigest(v string) bool { if len(v) != 71 || !strings.HasPrefix(v, "sha256:") { return false }; for _, c := range v[7:] { if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) { return false } }; return true }
 
 func main() {
 	control := os.Getenv("VPS_CONTROL_PLANE_URL")
