@@ -79,8 +79,7 @@ class MainActivity : Activity() {
             addView(nodeName)
             addView(save)
             addView(choose)
-            addView(label("Runtime
-The APK controls the Android node and its local storage. Full Docker/Supabase Linux services require a Linux/container runtime; Android itself cannot run Docker containers natively without an additional runtime/root layer."))
+            addView(label("Runtime\nThe APK controls the Android node and its local storage. Full Docker/Supabase Linux services require a Linux/container runtime; Android itself cannot run Docker containers natively without an additional runtime/root layer."))
         })
         setContentView(scroll)
         refreshDashboard()
