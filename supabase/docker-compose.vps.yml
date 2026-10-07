@@ -1,6 +1,9 @@
 name: testagram-supabase
 
 services:
+  api-gw:
+    ports:
+      - "127.0.0.1:8000:8000"
   storage:
     volumes:
       - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/supabase:/var/lib/storage:z
