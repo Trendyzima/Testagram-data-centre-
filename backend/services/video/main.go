@@ -106,7 +106,7 @@ func (s *server) like(w http.ResponseWriter,r *http.Request,id string){
 }
 func (s *server) manifest(w http.ResponseWriter,r *http.Request,id string){
   var status,visibility string;if err:=s.db.QueryRow(r.Context(),"select status,visibility from testagram_video.videos where id=$1",id).Scan(&status,&visibility);err!=nil||status!="ready"||visibility=="private"{http.Error(w,"not available",404);return}
-  http.Redirect(w,r,http.StatusTemporaryRedirect,fmt.Sprintf("/v1/videos/%s/hls/master.m3u8?token=%s",id,s.sign(id,time.Now().Add(6*time.Hour))))
+  http.Redirect(w,r,fmt.Sprintf("/v1/videos/%s/hls/master.m3u8?token=%s",id,s.sign(id,time.Now().Add(6*time.Hour))),http.StatusTemporaryRedirect)
 }
 func (s *server) hls(w http.ResponseWriter,r *http.Request,id,file string){
   token:=r.URL.Query().Get("token");if !s.validToken(id,token){http.Error(w,"forbidden",403);return};if strings.Contains(file,"..")||strings.ContainsAny(file,"/\\"){http.Error(w,"bad path",400);return}
