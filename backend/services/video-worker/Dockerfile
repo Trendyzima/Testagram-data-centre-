@@ -9,4 +9,5 @@ RUN apk add --no-cache ffmpeg
 RUN addgroup -S testagram && adduser -S -G testagram -u 65532 testagram
 COPY --from=build /out/video-worker /usr/local/bin/testagram-video-worker
 USER 65532:65532
+WORKDIR /media
 ENTRYPOINT ["/usr/local/bin/testagram-video-worker"]
