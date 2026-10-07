@@ -44,7 +44,7 @@ jobs:
           tmp_storage="$(mktemp -d)"
           trap 'rm -rf "$tmp_storage"' EXIT
           TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash supabase/storage.sh
-          assert_file "$tmp_storage/.testagram-storage"
+          assert_file "$tmp_storage/.testagram-storage-root"
           for dir in \
             "$tmp_storage/supabase" \
             "$tmp_storage/media/posts/images" \
