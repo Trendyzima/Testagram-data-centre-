@@ -11,7 +11,6 @@ ownership:
   tenor: disabled
   newsify: disabled
   novu: disabled
-  youtube: disabled
 
 components:
   video_platform:
