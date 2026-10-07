@@ -42,6 +42,7 @@ claimed for Android.
 - Never commit database passwords, JWT secrets, service-role/secret keys, or
   private signing keys.
 - Use HTTPS for a remotely reachable control plane and public Supabase API.
+- The control plane supports native TLS with `VPS_CONTROL_PLANE_TLS_CERT_FILE` and `VPS_CONTROL_PLANE_TLS_KEY_FILE`; both must be set together.
 - Keep service-role/secret credentials server-side.
 - Bootstrap credentials are only for enrollment; steady-state gadget traffic
   uses the issued node token.
