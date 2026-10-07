@@ -44,14 +44,14 @@ func runOne(ctx context.Context,db *pgxpool.Pool,root string)error{
     return workErr
   }
   if _,err=db.Exec(ctx,`update testagram_video.video_jobs set status='done',lease_until=null,updated_at=now() where id=$1`,j.ID);err!=nil{return err}
-  if j.Kind=="poster"{if _,err=db.Exec(ctx,`update testagram_video.videos set poster_object_key=$2,updated_at=now() where id=$1`,j.VideoID,filepath.Join("hls",j.VideoID,"poster.jpg"));err!=nil{return err}}
+  if j.Kind=="poster"{if _,err=db.Exec(ctx,`update testagram_video.videos set poster_object_key=$2,updated_at=now() where id=$1`,j.VideoID,filepath.Join("videos","posters",j.VideoID,"poster.jpg"));err!=nil{return err}}
   if j.Kind=="transcode"{if _,err=db.Exec(ctx,`update testagram_video.videos set status='processing',processing_error=null,updated_at=now() where id=$1`,j.VideoID);err!=nil{return err}}
   _,err=db.Exec(ctx,`update testagram_video.videos v set status='ready',processing_error=null,updated_at=now() where v.id=$1 and exists (select 1 from testagram_video.video_jobs t where t.video_id=v.id and t.kind='transcode' and t.status='done') and exists (select 1 from testagram_video.video_jobs p where p.video_id=v.id and p.kind='poster' and p.status='done')`,j.VideoID)
   return err
 }
 
 func transcode(root,id,source string)error{
-  out:=filepath.Join(root,"hls",id);if err:=os.MkdirAll(out,0750);err!=nil{return err}
+  out:=filepath.Join(root,"videos","hls",id);if err:=os.MkdirAll(out,0750);err!=nil{return err}
   filter:="[0:v]split=3[v1][v2][v3];[v1]scale=w=426:h=240:force_original_aspect_ratio=decrease[v1o];[v2]scale=w=640:h=360:force_original_aspect_ratio=decrease[v2o];[v3]scale=w=1280:h=720:force_original_aspect_ratio=decrease[v3o]"
   args:=[]string{"-hide_banner","-loglevel","error","-i",source,"-filter_complex",filter,"-map","[v1o]","-c:v:0","h264","-b:v:0","500k","-map","[v2o]","-c:v:1","h264","-b:v:1","900k","-map","[v3o]","-c:v:2","h264","-b:v:2","2500k","-f","hls","-hls_time","4","-hls_playlist_type","vod","-hls_flags","independent_segments","-master_pl_name","master.m3u8","-var_stream_map","v:0,name:240p v:1,name:360p v:2,name:720p",filepath.Join(out,"%v.m3u8")}
   if hasAudio(source){
