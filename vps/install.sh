@@ -7,13 +7,19 @@ ENV_FILE="${TESTAGRAM_ENV_FILE:-$ROOT/.env}"
 REPO_URL="${TESTAGRAM_REPO_URL:-https://github.com/Trendyzima/Testagram-data-centre-.git}"
 command -v git >/dev/null || { echo "git is required"; exit 1; }
 command -v docker >/dev/null || { echo "Docker Engine is required"; exit 1; }
-mkdir -p "$ROOT" "$SUPABASE_ROOT" "$STORAGE_ROOT"
+mkdir -p "$ROOT"
 if [ ! -d "$ROOT/.git" ]; then git clone "$REPO_URL" "$ROOT"; else git -C "$ROOT" fetch origin main && git -C "$ROOT" reset --hard origin/main; fi
 if [ ! -f "$ENV_FILE" ]; then cp "$ROOT/vps/.env.example" "$ENV_FILE"; chmod 600 "$ENV_FILE"; echo "Created $ENV_FILE; set production values and rerun."; exit 1; fi
 set -a
 . "$ENV_FILE"
 set +a
-export TESTAGRAM_STORAGE_ROOT SUPABASE_DATA_ROOT
+# Re-read operator-selected paths after loading .env. This is important for
+# phone/edge deployments where storage lives on a mounted local data volume.
+SUPABASE_ROOT="${SUPABASE_DATA_ROOT:-/var/lib/testagram/supabase}"
+STORAGE_ROOT="${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}"
+mkdir -p "$SUPABASE_ROOT" "$STORAGE_ROOT"
+export TESTAGRAM_STORAGE_ROOT="$STORAGE_ROOT" SUPABASE_DATA_ROOT="$SUPABASE_ROOT"
+"$ROOT/supabase/storage.sh"
 "$ROOT/supabase/prepare.sh"
 cd "$ROOT/supabase/project"
 docker compose pull
