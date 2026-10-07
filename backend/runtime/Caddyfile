@@ -11,12 +11,10 @@
   request_body {
     max_size 2GB
   }
-  rate_limit {
-    zone api {
-      key {remote_host}
-      events 120
-      window 1m
-    }
+  header {
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy no-referrer
   }
   reverse_proxy {$TESTAGRAM_ORIGIN}
 }
