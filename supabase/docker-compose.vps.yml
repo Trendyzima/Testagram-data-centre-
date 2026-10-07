@@ -1,9 +1,16 @@
 name: testagram-supabase
 
-# Testagram integration override only.
-# The official Supabase self-hosted docker-compose.yml remains the source
-# of truth for service structure, images, healthchecks, and dependencies.
-# This file changes only the Compose network identity.
+services:
+  storage:
+    volumes:
+      - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/supabase:/var/lib/storage:z
+    environment:
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+
+  imgproxy:
+    volumes:
+      - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/supabase:/var/lib/storage:z
 
 networks:
   default:
