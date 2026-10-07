@@ -7,7 +7,7 @@ NODES="$ROOT/nodes"
 
 # Canonical VPS-owned media layout. Application containers only receive the
 # explicit media mount; the host filesystem itself is never exposed directly.
-mkdir -p "$SUPABASE" "$NODES"   "$MEDIA/posts/images"   "$MEDIA/posts/videos"   "$MEDIA/uploads"   "$MEDIA/videos/originals"   "$MEDIA/videos/hls"   "$MEDIA/videos/posters"   "$MEDIA/tmp"
+mkdir -p "$SUPABASE" "$NODES"   "$MEDIA/posts/images" "$MEDIA/posts/videos" "$MEDIA/uploads" "$MEDIA/videos/originals" "$MEDIA/videos/hls" "$MEDIA/videos/posters" "$MEDIA/avatars" "$MEDIA/stories" "$MEDIA/messages" "$MEDIA/attachments" "$MEDIA/tmp"
 
 chmod 0770 "$ROOT" "$SUPABASE" "$MEDIA" "$NODES"
 find "$MEDIA" -type d -exec chmod 0770 {} +
