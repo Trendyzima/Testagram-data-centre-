@@ -38,7 +38,7 @@ services:
       VIDEO_MEDIA_ROOT: /media
       VIDEO_ADDR: :8790
     volumes: [media_data:/media]
-    networks: [internal]
+    networks: [internal, supabase]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8790/readyz"]
       interval: 10s
@@ -65,7 +65,7 @@ services:
       REDIS_URL: redis://redis:6379
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
-    networks: [internal]
+    networks: [internal, supabase]
 
   worker:
     build:
@@ -82,6 +82,9 @@ networks:
   edge:
   internal:
     internal: true
+  supabase:
+    external: true
+    name: ${SUPABASE_NETWORK:-testagram-supabase}
 
 volumes:
   edge_data:
