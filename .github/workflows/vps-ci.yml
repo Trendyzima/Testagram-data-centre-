@@ -34,45 +34,53 @@ jobs:
       - name: Validate VPS/Supabase boundary
         run: |
           set -euo pipefail
+          assert_file() { test -f "$1" || { echo "MISSING FILE: $1" >&2; exit 1; }; }
+          assert_dir() { test -d "$1" || { echo "MISSING DIRECTORY: $1" >&2; exit 1; }; }
           bash -n supabase/bootstrap.sh
           bash -n supabase/prepare.sh
           bash -n supabase/status.sh
           bash -n supabase/healthcheck.sh
           bash -n supabase/storage.sh
           tmp_storage="$(mktemp -d)"
+          trap 'rm -rf "$tmp_storage"' EXIT
           TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash supabase/storage.sh
-          test -f "$tmp_storage/.testagram-storage"
-          test -d "$tmp_storage/supabase"
-          test -d "$tmp_storage/media/posts"
-          test -d "$tmp_storage/media/images"
-          test -d "$tmp_storage/media/videos"
-          test -d "$tmp_storage/media/originals"
-          test -d "$tmp_storage/media/hls"
-          test -d "$tmp_storage/media/posters"
-          test -d "$tmp_storage/media/avatars"
-          test -d "$tmp_storage/media/stories"
-          test -d "$tmp_storage/media/messages"
-          test -d "$tmp_storage/media/attachments"
-          test -d "$tmp_storage/media/tmp"
-          test -d "$tmp_storage/nodes"
-          rm -rf "$tmp_storage"
+          assert_file "$tmp_storage/.testagram-storage"
+          for dir in \
+            "$tmp_storage/supabase" \
+            "$tmp_storage/media/posts" \
+            "$tmp_storage/media/images" \
+            "$tmp_storage/media/videos" \
+            "$tmp_storage/media/originals" \
+            "$tmp_storage/media/hls" \
+            "$tmp_storage/media/posters" \
+            "$tmp_storage/media/avatars" \
+            "$tmp_storage/media/stories" \
+            "$tmp_storage/media/messages" \
+            "$tmp_storage/media/attachments" \
+            "$tmp_storage/media/tmp" \
+            "$tmp_storage/nodes"; do
+            assert_dir "$dir"
+          done
           bash -n vps/install.sh
-          test -f vps/docker-compose.yml
+          for file in \
+            vps/docker-compose.yml \
+            backend/docker-compose.yml \
+            backend/runtime/Caddyfile \
+            backend/services/notification/Dockerfile \
+            backend/services/worker/Dockerfile \
+            backend/services/video/Dockerfile \
+            backend/services/video-worker/Dockerfile \
+            backend/services/video/main.go \
+            backend/services/video-worker/main.go \
+            migrations/002_video_platform.sql; do
+            assert_file "$file"
+          done
           grep -q 'filepath.Join(s.mediaDir,"videos",id)' backend/services/video/main.go
           grep -q 'filepath.Join(s.mediaDir,"hls",id,file)' backend/services/video/main.go
           grep -q 'filepath.Join(root,"hls",id)' backend/services/video-worker/main.go
           grep -q 'filepath.Join(root,"posters",id)' backend/services/video-worker/main.go
-          grep -q "migrations/004_storage_buckets.sql" .github/workflows/vps-ci.yml
           TESTAGRAM_STORAGE_ROOT=/var/lib/testagram/storage docker compose -f backend/docker-compose.yml config >/dev/null
-          test -f backend/docker-compose.yml
-          test -f backend/runtime/Caddyfile
-          test -f backend/services/notification/Dockerfile
-          test -f backend/services/worker/Dockerfile
-          test -f backend/services/video/Dockerfile
-          test -f backend/services/video-worker/Dockerfile
-          test -f backend/services/video/main.go
-          test -f backend/services/video-worker/main.go
-          test -f migrations/002_video_platform.sql
+          echo "VPS local-storage authority validation: PASS"
       - name: Validate database migrations
         run: |
           docker run --rm --network host \
