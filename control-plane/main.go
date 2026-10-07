@@ -284,6 +284,8 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, map[string]any{"id": workloadID, "workload": work})
 }
 
+func (s *Server) health(w http.ResponseWriter, r *http.Request) { reply(w, http.StatusOK, map[string]string{"status": "ok"}) }
+
 func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 	nodeToken := bearer(r)
 	if nodeToken == "" {
@@ -344,9 +346,7 @@ func main() {
 
 	s := &Server{db: db, internal: internal, bootstrap: bootstrap}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		reply(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
+	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/v1/nodes/register", s.register)
 	mux.HandleFunc("/v1/nodes/heartbeat", s.heartbeat)
 	mux.HandleFunc("/v1/nodes/poll", s.poll)
