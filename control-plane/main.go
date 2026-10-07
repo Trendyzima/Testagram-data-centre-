@@ -253,12 +253,18 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 
 	var workloadID string
 	var work Workload
-	const q = `select w.id,w.image,w.image_digest,w.command,w.env,w.cpu_millis,w.memory_bytes,w.volume
-		from public.vps_workloads w
-		join public.vps_nodes n on n.id=w.node_id
-		where n.token_hash=$1 and n.status='online' and w.status='assigned'
-		order by w.created_at asc
-		limit 1`
+	const q = `update public.vps_workloads w
+		set status='running', started_at=now(), updated_at=now()
+		where w.id = (
+			select w2.id
+			from public.vps_workloads w2
+			join public.vps_nodes n on n.id=w2.node_id
+			where n.token_hash=$1 and n.status='online' and w2.status='assigned'
+			order by w2.created_at asc
+			for update skip locked
+			limit 1
+		)
+		returning w.id,w.image,w.image_digest,w.command,w.env,w.cpu_millis,w.memory_bytes,w.volume`
 	err := s.db.QueryRow(ctx, q, crypto.HashToken(nodeToken)).Scan(
 		&workloadID, &work.Image, &work.ImageDigest, &work.Command, &work.Env,
 		&work.CPUMillis, &work.MemoryBytes, &work.Volume)
@@ -271,20 +277,18 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const claim = `update public.vps_workloads w
-		set status='running',started_at=now()
-		from public.vps_nodes n
-		where w.id=$1 and w.node_id=n.id and n.token_hash=$2 and w.status='assigned'`
-	tag, err := s.db.Exec(ctx, claim, workloadID, crypto.HashToken(nodeToken))
-	if err != nil || tag.RowsAffected() != 1 {
-		reply(w, http.StatusConflict, map[string]string{"error": "workload claim lost"})
-		return
-	}
-
 	reply(w, http.StatusOK, map[string]any{"id": workloadID, "workload": work})
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) { reply(w, http.StatusOK, map[string]string{"status": "ok"}) }
+
+func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
+	if err := s.db.Ping(r.Context()); err != nil {
+		reply(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready"})
+		return
+	}
+	reply(w, http.StatusOK, map[string]string{"status": "ready"})
+}
 
 func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 	nodeToken := bearer(r)
@@ -349,6 +353,7 @@ func main() {
 	s := &Server{db: db, internal: internal, bootstrap: bootstrap}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
+	mux.HandleFunc("/readyz", s.ready)
 	mux.HandleFunc("/v1/nodes/register", s.register)
 	mux.HandleFunc("/v1/nodes/heartbeat", s.heartbeat)
 	mux.HandleFunc("/v1/nodes/poll", s.poll)
