@@ -1,50 +1,57 @@
-# Testagram VPS — Official Supabase Backend
+# Testagram VPS — Supabase integration boundary
 
-This directory makes the Testagram data-centre VPS ready to host a self-managed Supabase backend.
+This directory does **not** fork, edit, or restructure Supabase. The official
+Supabase self-hosted Docker distribution remains the source of truth.
 
-## Official backend set
+## Boundary
 
-The VPS tracks these eight upstream projects:
+- `prepare.sh` downloads a pinned official `supabase/supabase` self-hosted release.
+- The official `docker/` directory is copied verbatim into the VPS data root.
+- `docker-compose.vps.yml` is an external Compose override containing only a
+  network-name integration. It does not redefine Supabase services.
+- Secrets and runtime `.env` state live outside Git.
+- `healthcheck.sh` verifies the public API surface.
+- `status.sh` validates and reports the resolved Compose stack.
 
-1. `supabase/postgres`
-2. `supabase/auth`
-3. `PostgREST/postgrest`
-4. `supabase/realtime`
-5. `supabase/storage`
-6. `supabase/edge-runtime`
-7. `supabase/postgres-meta`
-8. `supabase/supavisor`
+Supabase documents Docker as the recommended self-hosting path and distributes
+the self-hosted Docker configuration from the official `supabase/supabase`
+repository.
 
-They remain upstream projects; this repository does not pretend to be an official Supabase fork. The authoritative list and intended role of each service are in `UPSTREAMS.yaml`.
+## Gadget communication
 
-Supabase's official self-hosting architecture places Auth, PostgREST, Realtime, Storage, Edge Runtime, postgres-meta, Studio and the other services around a single Postgres database, with Supavisor providing connection pooling. The Testagram VPS uses the same backend principle while keeping the VPS control plane separate. See the upstream architecture documentation before changing service wiring.
+The VPS control plane and Supabase are separate boundaries. Gadget nodes
+communicate with the Testagram control plane through authenticated outbound
+HTTP(S), so phones and laptops do not need an inbound listening port.
 
-## Files
+1. Gadget registers with the bootstrap token.
+2. Control plane issues a per-node token.
+3. Gadget sends resource heartbeats.
+4. Gadget polls for assigned workloads.
+5. Gadget executes workloads where its runtime supports them.
+6. Gadget reports success/failure.
+7. The control plane persists node/workload state.
 
-- `UPSTREAMS.yaml` — exact upstream repository inventory.
-- `bootstrap.sh` — validates Git availability, clones/updates all eight upstream repositories into the VPS data root, and records the checked-out refs.
-- `healthcheck.sh` — verifies the expected local Supabase endpoints when the stack is running.
-- `docker-compose.vps.yml` — VPS-side integration layer; secrets are supplied through the environment and never committed.
+The Android node follows the same outbound model. It can register and maintain
+a heartbeat while using Android's persisted external-storage selection for its
+local data volume. Arbitrary Linux container execution is intentionally not
+claimed for Android.
 
-## Deployment model
+## Security boundary
 
-The VPS is the host. Supabase is a managed stack inside it.
+- Never expose Postgres directly to the Internet.
+- Never commit database passwords, JWT secrets, service-role/secret keys, or
+  private signing keys.
+- Use HTTPS for a remotely reachable control plane and public Supabase API.
+- Keep service-role/secret credentials server-side.
+- Bootstrap credentials are only for enrollment; steady-state gadget traffic
+  uses the issued node token.
+- Nodes that stop heartbeating are excluded from scheduling.
+- Container workloads run read-only, with all Linux capabilities dropped and
+  no-new-privileges enabled; digest-pinned images are accepted when supplied.
 
-- Postgres owns durable relational data.
-- Auth owns users, sessions and JWT issuance.
-- PostgREST exposes database APIs.
-- Realtime handles WebSockets/change streams.
-- Storage handles files/objects.
-- Edge Runtime executes Edge Functions.
-- postgres-meta supplies database metadata operations.
-- Supavisor pools database connections.
+## Official components
 
-The application repos should consume this backend through the configured Supabase URL and keys; they should not each carry an independent database.
-
-## Security rules
-
-- Do not expose Postgres directly to the public Internet.
-- Do not commit `JWT_SECRET`, database passwords, service-role keys or private signing keys.
-- Put TLS in front of public Supabase APIs.
-- Keep service-role credentials server-side.
-- Treat Edge Functions and database migrations as deployable code and audit them before production.
+The eight official backend projects are inventoried in `UPSTREAMS.yaml`.
+The orchestration repository `supabase/supabase` is additionally used as the
+official self-hosted Docker source. None of these upstream projects is edited
+by this repository.
