@@ -52,9 +52,14 @@ func runOne(ctx context.Context,db *pgxpool.Pool,root string)error{
 
 func transcode(root,id,source string)error{
   out:=filepath.Join(root,"hls",id);if err:=os.MkdirAll(out,0750);err!=nil{return err}
-  args:=[]string{"-hide_banner","-loglevel","error","-i",source,"-filter_complex","[0:v]split=3[v1][v2][v3];[v1]scale=w=426:h=240:force_original_aspect_ratio=decrease[v1o];[v2]scale=w=640:h=360:force_original_aspect_ratio=decrease[v2o];[v3]scale=w=1280:h=720:force_original_aspect_ratio=decrease[v3o]","-map","[v1o]","-map","0:a?","-c:v:0","h264","-b:v:0","500k","-map","[v2o]","-map","0:a?","-c:v:1","h264","-b:v:1","900k","-map","[v3o]","-map","0:a?","-c:v:2","h264","-b:v:2","2500k","-c:a","aac","-b:a","128k","-f","hls","-hls_time","4","-hls_playlist_type","vod","-hls_flags","independent_segments","-master_pl_name","master.m3u8","-var_stream_map","v:0,a:0,name:240p v:1,a:1,name:360p v:2,a:2,name:720p",filepath.Join(out,"%v.m3u8")}
+  filter:="[0:v]split=3[v1][v2][v3];[v1]scale=w=426:h=240:force_original_aspect_ratio=decrease[v1o];[v2]scale=w=640:h=360:force_original_aspect_ratio=decrease[v2o];[v3]scale=w=1280:h=720:force_original_aspect_ratio=decrease[v3o]"
+  args:=[]string{"-hide_banner","-loglevel","error","-i",source,"-filter_complex",filter,"-map","[v1o]","-c:v:0","h264","-b:v:0","500k","-map","[v2o]","-c:v:1","h264","-b:v:1","900k","-map","[v3o]","-c:v:2","h264","-b:v:2","2500k","-f","hls","-hls_time","4","-hls_playlist_type","vod","-hls_flags","independent_segments","-master_pl_name","master.m3u8","-var_stream_map","v:0,name:240p v:1,name:360p v:2,name:720p",filepath.Join(out,"%v.m3u8")}
+  if hasAudio(source){
+    args=[]string{"-hide_banner","-loglevel","error","-i",source,"-filter_complex",filter,"-map","[v1o]","-map","0:a:0","-c:v:0","h264","-b:v:0","500k","-map","[v2o]","-map","0:a:0","-c:v:1","h264","-b:v:1","900k","-map","[v3o]","-map","0:a:0","-c:v:2","h264","-b:v:2","2500k","-c:a","aac","-b:a","128k","-f","hls","-hls_time","4","-hls_playlist_type","vod","-hls_flags","independent_segments","-master_pl_name","master.m3u8","-var_stream_map","v:0,a:0,name:240p v:1,a:1,name:360p v:2,a:2,name:720p",filepath.Join(out,"%v.m3u8")}
+  }
   return exec.Command("ffmpeg",args...).Run()
 }
+func hasAudio(source string)bool{cmd:=exec.Command("ffprobe","-v","error","-select_streams","a:0","-show_entries","stream=index","-of","csv=p=0",source);return cmd.Run()==nil}
 func poster(root,id,source string)error{out:=filepath.Join(root,"hls",id);if err:=os.MkdirAll(out,0750);err!=nil{return err};return exec.Command("ffmpeg","-hide_banner","-loglevel","error","-i",source,"-frames:v","1","-vf","scale=1280:-2",filepath.Join(out,"poster.jpg")).Run()}
 func env(k,d string)string{if v:=os.Getenv(k);v!=""{return v};return d}
 func mustEnv(k string)string{v:=os.Getenv(k);if v==""{log.Fatalf("%s is required",k)};return v}
