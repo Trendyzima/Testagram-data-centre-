@@ -16,6 +16,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+  platform:
+    extends: {file: ../backend/docker-compose.yml, service: platform}
+    networks: [internal, supabase]
   video:
     extends: {file: ../backend/docker-compose.yml, service: video}
     networks: [internal, supabase]
