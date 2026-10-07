@@ -36,10 +36,3 @@ create index if not exists platform_audit_time_idx on testagram_platform.audit_e
 alter table testagram_platform.feature_flags enable row level security;
 alter table testagram_platform.events enable row level security;
 alter table testagram_platform.audit_events enable row level security;
-
-revoke all on schema testagram_platform from anon, authenticated;
-revoke all on all tables in schema testagram_platform from anon, authenticated;
-grant usage on schema testagram_platform to service_role;
-grant select on testagram_platform.feature_flags to service_role;
-grant insert,select on testagram_platform.events to service_role;
-grant insert,select on testagram_platform.audit_events to service_role;
