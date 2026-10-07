@@ -66,6 +66,19 @@ jobs:
       - name: Validate Compose syntax
         run: |
           docker compose -f backend/docker-compose.yml config
+      - name: Validate VPS control plane Compose runtime
+        run: |
+          set -euo pipefail
+          docker network create testagram-supabase 2>/dev/null || true
+          docker run -d --name vps-ci-db --network testagram-supabase -e POSTGRES_PASSWORD=testagram postgres:17-alpine
+          trap 'docker rm -f vps-ci-db >/dev/null 2>&1 || true; docker compose -f vps/docker-compose.yml down -v >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do docker exec vps-ci-db pg_isready -U postgres -d postgres >/dev/null 2>&1 && break; sleep 2; done
+          docker exec vps-ci-db pg_isready -U postgres -d postgres
+          POSTGRES_PASSWORD=testagram VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap SUPABASE_NETWORK=testagram-supabase docker compose -f vps/docker-compose.yml build control-plane
+          POSTGRES_PASSWORD=testagram VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap SUPABASE_NETWORK=testagram-supabase docker compose -f vps/docker-compose.yml up -d control-plane
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/healthz >/dev/null 2>&1 && break; sleep 2; done
+          curl -fsS http://127.0.0.1:8787/healthz
+
       - name: Validate Caddy syntax
         run: |
           docker run --rm \
