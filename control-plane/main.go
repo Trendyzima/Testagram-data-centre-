@@ -357,13 +357,22 @@ func main() {
 	if addr == "" {
 		addr = ":8787"
 	}
-	log.Printf("Testagram VPS control plane listening on %s", addr)
-	log.Fatal((&http.Server{
+	server := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
-	}).ListenAndServe())
+	}
+	log.Printf("Testagram VPS control plane listening on %s", addr)
+	certFile := os.Getenv("VPS_CONTROL_PLANE_TLS_CERT_FILE")
+	keyFile := os.Getenv("VPS_CONTROL_PLANE_TLS_KEY_FILE")
+	if (certFile == "") != (keyFile == "") {
+		log.Fatal("VPS_CONTROL_PLANE_TLS_CERT_FILE and VPS_CONTROL_PLANE_TLS_KEY_FILE must be set together")
+	}
+	if certFile != "" {
+		log.Fatal(server.ListenAndServeTLS(certFile, keyFile))
+	}
+	log.Fatal(server.ListenAndServe())
 }
