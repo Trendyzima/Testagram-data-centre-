@@ -39,6 +39,7 @@ func main() {
   mux := http.NewServeMux()
   mux.HandleFunc("/healthz", s.health)
   mux.HandleFunc("/v1/channels", s.channels)
+  mux.HandleFunc("/v1/channels/", s.channelRoute)
   mux.HandleFunc("/v1/feed", s.feed)
   mux.HandleFunc("/v1/videos", s.videos)
   mux.HandleFunc("/v1/videos/", s.videoRoute)
@@ -60,6 +61,16 @@ func (s *server) channels(w http.ResponseWriter,r *http.Request) {
   err:=s.db.QueryRow(r.Context(),"insert into testagram_video.channels(owner_id,handle,name,description) values($1,$2,$3,$4) returning id",user,strings.ToLower(in.Handle),strings.TrimSpace(in.Name),in.Description).Scan(&id)
   if err!=nil { http.Error(w,"channel creation failed",409); return }
   jsonOut(w,201,map[string]string{"id":id})
+}
+
+func (s *server) channelRoute(w http.ResponseWriter,r *http.Request) {
+  p:=strings.TrimPrefix(r.URL.Path,"/v1/channels/"); parts:=strings.Split(strings.Trim(p,"/"),"/")
+  if len(parts)!=2 || parts[1]!="subscribe" { http.Error(w,"not found",404); return }
+  if r.Method!=http.MethodPost { http.Error(w,"method not allowed",405); return }
+  user,ok:=s.user(r);if !ok{http.Error(w,"unauthorized",401);return}
+  if _,err:=s.db.Exec(r.Context(),`insert into testagram_video.subscriptions(channel_id,user_id) values($1,$2) on conflict do nothing`,parts[0],user);err!=nil{http.Error(w,"subscribe failed",500);return}
+  _,_=s.db.Exec(r.Context(),`update testagram_video.channels set subscriber_count=(select count(*) from testagram_video.subscriptions where channel_id=$1),updated_at=now() where id=$1`,parts[0])
+  jsonOut(w,200,map[string]bool{"subscribed":true})
 }
 
 func (s *server) feed(w http.ResponseWriter,r *http.Request) {
