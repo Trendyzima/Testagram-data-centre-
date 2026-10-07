@@ -42,7 +42,6 @@ jobs:
           bash -n supabase/healthcheck.sh
           bash -n supabase/storage.sh
           tmp_storage="$(mktemp -d)"
-          trap 'rm -rf "$tmp_storage"' EXIT
           TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash supabase/storage.sh
           assert_file "$tmp_storage/.testagram-storage-root"
           for dir in \
@@ -76,6 +75,8 @@ jobs:
           grep -q 'filepath.Join(root,"hls",id)' backend/services/video-worker/main.go
           grep -q 'filepath.Join(root,"posters",id)' backend/services/video-worker/main.go
           echo "VPS local-storage authority validation: PASS"
+          rm -rf "$tmp_storage"
+          exit 0
       - name: Validate database migrations
         run: |
           docker run --rm --network host \
