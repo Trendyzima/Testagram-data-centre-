@@ -133,9 +133,21 @@ func (s *server) manifest(w http.ResponseWriter,r *http.Request,id string) {
 }
 
 func (s *server) hls(w http.ResponseWriter,r *http.Request,id,file string) {
-  if !s.validToken(id,r.URL.Query().Get("token")) { http.Error(w,"forbidden",403); return }
+  token:=r.URL.Query().Get("token")
+  if !s.validToken(id,token) { http.Error(w,"forbidden",403); return }
   if strings.Contains(file,"..")||strings.ContainsAny(file,"/\\") { http.Error(w,"bad path",400); return }
-  http.ServeFile(w,r,filepath.Join(s.mediaDir,"hls",id,file))
+  path:=filepath.Join(s.mediaDir,"hls",id,file)
+  data,err:=os.ReadFile(path); if err!=nil { http.NotFound(w,r); return }
+  if strings.HasSuffix(file,".m3u8") {
+    lines:=strings.Split(string(data),"\\n")
+    for i,line:=range lines {
+      if line!="" && !strings.HasPrefix(line,"#") && !strings.Contains(line,"?token=") { lines[i]=line+"?token="+token }
+    }
+    w.Header().Set("Content-Type","application/vnd.apple.mpegurl")
+    _,_=w.Write([]byte(strings.Join(lines,"\\n"))); return
+  }
+  w.Header().Set("Cache-Control","public, max-age=3600")
+  http.ServeFile(w,r,path)
 }
 
 func (s *server) user(r *http.Request)(string,bool) {
