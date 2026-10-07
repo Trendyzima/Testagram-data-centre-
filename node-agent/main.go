@@ -72,9 +72,15 @@ func runtimeBin() string {
 }
 
 func (a *Agent) disk() (int64, int64) {
-	total, _ := strconv.ParseInt(os.Getenv("VPS_STORAGE_BYTES"), 10, 64)
-	free, _ := strconv.ParseInt(os.Getenv("VPS_FREE_BYTES"), 10, 64)
-	return total, free
+	if total, err := strconv.ParseInt(os.Getenv("VPS_STORAGE_BYTES"), 10, 64); err == nil && total > 0 {
+		free, _ := strconv.ParseInt(os.Getenv("VPS_FREE_BYTES"), 10, 64)
+		return total, free
+	}
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(a.volumeRoot, &stat); err != nil {
+		return 0, 0
+	}
+	return int64(stat.Blocks) * int64(stat.Bsize), int64(stat.Bavail) * int64(stat.Bsize)
 }
 
 func (a *Agent) post(path string, body any, out any) (int, error) {
@@ -149,11 +155,14 @@ func (a *Agent) heartbeat() error {
 func (a *Agent) poll() (*pollResponse, error) {
 	var out pollResponse
 	code, err := a.post("/v1/nodes/poll", map[string]any{}, &out)
+	if code == http.StatusNoContent {
+		return nil, nil
+	}
 	if err != nil {
-		if code == http.StatusNoContent {
-			return nil, nil
-		}
 		return nil, err
+	}
+	if out.ID == "" || out.Workload.Image == "" {
+		return nil, errors.New("control plane returned an incomplete workload")
 	}
 	return &out, nil
 }
