@@ -25,7 +25,7 @@ func runOne(ctx context.Context,db *pgxpool.Pool,root string)error{
   var j job
   err=tx.QueryRow(ctx,`with picked as (
     select id from testagram_video.video_jobs
-    where status='queued' and available_at<=now()
+    where (status='queued' and available_at<=now()) or (status='running' and lease_until<now() and attempts<3)
     order by created_at for update skip locked limit 1
   )
   update testagram_video.video_jobs q
