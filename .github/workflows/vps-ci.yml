@@ -79,7 +79,7 @@ jobs:
           grep -q 'filepath.Join(s.mediaDir,"hls",id,file)' backend/services/video/main.go
           grep -q 'filepath.Join(root,"hls",id)' backend/services/video-worker/main.go
           grep -q 'filepath.Join(root,"posters",id)' backend/services/video-worker/main.go
-          TESTAGRAM_STORAGE_ROOT=/var/lib/testagram/storage docker compose -f backend/docker-compose.yml config >/dev/null
+          TESTAGRAM_STORAGE_ROOT=/var/lib/testagram/storage docker compose -f backend/docker-compose.yml config
           echo "VPS local-storage authority validation: PASS"
       - name: Validate database migrations
         run: |
