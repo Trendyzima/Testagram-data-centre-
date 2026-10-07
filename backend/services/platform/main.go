@@ -48,6 +48,25 @@ type rateRequest struct {
 	Limit int64 `json:"limit"`
 	Window int64 `json:"window_seconds"`
 }
+type flagRequest struct {
+	Key string `json:"key"`
+	Enabled bool `json:"enabled"`
+	Public bool `json:"public"`
+	Value json.RawMessage `json:"value"`
+}
+type eventRequest struct {
+	EventName string `json:"event_name"`
+	UserID *string `json:"user_id"`
+	SessionHash string `json:"session_hash"`
+	Properties json.RawMessage `json:"properties"`
+}
+type auditRequest struct {
+	ActorID *string `json:"actor_id"`
+	Action string `json:"action"`
+	ResourceType string `json:"resource_type"`
+	ResourceID string `json:"resource_id"`
+	Metadata json.RawMessage `json:"metadata"`
+}
 
 func main() {
 	ctx := context.Background()
@@ -70,6 +89,10 @@ func main() {
 	mux.HandleFunc("/v1/queue/enqueue", s.queueEnqueue)
 	mux.HandleFunc("/v1/queue/claim", s.queueClaim)
 	mux.HandleFunc("/v1/queue/ack", s.queueAck)
+	mux.HandleFunc("/v1/queue/reclaim", s.queueReclaim)
+	mux.HandleFunc("/v1/config/set", s.configSet)
+	mux.HandleFunc("/v1/events", s.events)
+	mux.HandleFunc("/v1/audit", s.audit)
 	mux.HandleFunc("/v1/config/", s.publicConfig)
 
 	addr := env("PLATFORM_ADDR", ":8095")
