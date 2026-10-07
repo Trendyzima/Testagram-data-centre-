@@ -1,4 +1,25 @@
-# Android Node
-The Android node uses app-private storage by default. External/microSD storage must be selected by the user through Android Storage Access Framework (ACTION_OPEN_DOCUMENT_TREE); the node must retain URI permissions and never bypass Android storage security.
+# Testagram Android Node
 
-The production agent will use a foreground service, authenticated outbound control-plane connection, reconnect backoff, battery/thermal policy and graceful node draining.
+Install the debug APK over USB with:
+
+adb install -r app-debug.apk
+
+Or from this repository:
+
+bash android-node/install-apk.sh
+
+First boot:
+1. Open Testagram VPS.
+2. Select the phone/SD-card storage directory.
+3. Enter the control-plane URL, bootstrap token and node name.
+4. Set the media signing secret.
+5. Save the connection.
+6. Turn VPS ON.
+
+The selected SAF tree becomes the authoritative local media volume. The node creates media/uploads, media/videos/originals, media/videos/hls, media/videos/posters and the other Testagram media directories.
+
+A video placed/uploaded under media/videos/originals is queued for on-device HLS processing. The runtime creates 240p, 360p and 720p variants, a master playlist and a poster.
+
+CI proves the APK compiles. A physical-device test is still required to prove real upload, FFmpeg execution, HLS serving and frontend playback.
+
+The Android node must not expose its local port directly to the public internet. External playback requires a secure reachable endpoint in front of the phone.
