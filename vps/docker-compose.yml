@@ -42,3 +42,8 @@ networks:
   supabase:
     external: true
     name: ${SUPABASE_NETWORK:-testagram-supabase}
+
+volumes:
+  edge_data:
+  edge_config:
+  redis_data:
