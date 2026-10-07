@@ -79,7 +79,7 @@ jobs:
             -e PGPASSWORD=testagram \
             -v "$PWD:/workspace:ro" \
             postgres:17-alpine \
-            sh -c "psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/001_vps.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/002_video_platform.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/003_production_hardening.sql"
+            sh -c "psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/001_vps.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/002_video_platform.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/003_production_hardening.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/004_storage_buckets.sql"
       - name: Validate Compose syntax
         run: |
           docker compose -f backend/docker-compose.yml config
@@ -118,7 +118,7 @@ jobs:
             sleep 2
           done
           docker exec testagram-postgres pg_isready -U postgres -d postgres
-          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c "psql -h testagram-postgres -U postgres -d postgres -f /migrations/001_vps.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/002_video_platform.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/003_production_hardening.sql"
+          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c "psql -h testagram-postgres -U postgres -d postgres -f /migrations/001_vps.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/002_video_platform.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/003_production_hardening.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/004_storage_buckets.sql"
           export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/postgres
           export VIDEO_JWT_SECRET=ci-test-jwt-secret
           export VIDEO_SIGNING_SECRET=ci-test-signing-secret-at-least-32-bytes
