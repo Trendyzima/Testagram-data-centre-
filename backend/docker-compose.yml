@@ -1,0 +1,64 @@
+name: testagram-backend
+
+services:
+  edge:
+    image: caddy:2.10
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./runtime/Caddyfile:/etc/caddy/Caddyfile:ro
+      - edge_data:/data
+      - edge_config:/config
+    networks: [edge, internal]
+
+  redis:
+    image: valkey/valkey:8
+    restart: unless-stopped
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks: [internal]
+
+  media:
+    image: jrottenberg/ffmpeg:7-alpine
+    restart: "no"
+    volumes:
+      - media_data:/media
+    networks: [internal]
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["sleep infinity"]
+
+  notification:
+    build:
+      context: ./services/notification
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+    networks: [internal]
+
+  worker:
+    build:
+      context: ./services/worker
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+    volumes:
+      - media_data:/media
+    networks: [internal]
+
+networks:
+  edge:
+  internal:
+    internal: true
+
+volumes:
+  edge_data:
+  edge_config:
+  redis_data:
+  media_data:
