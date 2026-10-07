@@ -24,10 +24,14 @@ jobs:
         with:
           go-version: "1.23"
           cache: false
-      - name: Normalize Go formatting
-        run: gofmt -w control-plane node-agent internal backend/services/video backend/services/video-worker
-      - name: Resolve Go module checksums
-        run: go mod tidy
+      - name: Verify Go formatting
+        run: |
+          gofmt -w control-plane node-agent internal backend/services/video backend/services/video-worker
+          git diff --exit-code -- control-plane node-agent internal backend/services/video backend/services/video-worker
+      - name: Verify Go module graph
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
       - run: go test -race ./...
       - run: go vet ./...
       - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker
@@ -123,5 +127,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
+      - name: Validate Android VPS runtime sources
+        run: |
+          test -f android-node/app/src/main/java/com/testagram/node/LocalMediaServer.kt
+          test -f android-node/app/src/main/java/com/testagram/node/LocalMediaService.kt
+          grep -q 'android:name=".LocalMediaService"' android-node/app/src/main/AndroidManifest.xml
+          grep -q 'foregroundServiceType="specialUse"' android-node/app/src/main/AndroidManifest.xml
       - name: Build Android node
         run: gradle -p android-node assembleDebug
