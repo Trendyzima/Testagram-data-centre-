@@ -1,6 +1,9 @@
 name: testagram-supabase
 
 services:
+  studio:
+    ports: !override
+      - "127.0.0.1:3000:3000"
   api-gw:
     ports: !override
       - "127.0.0.1:8000:8000"
