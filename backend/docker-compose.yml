@@ -4,8 +4,6 @@ services:
   edge:
     image: caddy:2.10
     restart: unless-stopped
-    environment:
-      SUPABASE_STUDIO_DOMAIN: ${SUPABASE_STUDIO_DOMAIN}
     ports: ["80:80", "443:443"]
     volumes:
       - ./runtime/Caddyfile:/etc/caddy/Caddyfile:ro
