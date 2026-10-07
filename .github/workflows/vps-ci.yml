@@ -1,7 +1,7 @@
 name: testagram-vps-ci
 on:
   push:
-    paths: ["go.mod","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**",".github/workflows/vps-ci.yml"]
   pull_request:
     paths: ["go.mod","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**",".github/workflows/vps-ci.yml"]
 jobs:
@@ -36,3 +36,9 @@ jobs:
           test -f backend/runtime/Caddyfile
           test -f backend/services/notification/Dockerfile
           test -f backend/services/worker/Dockerfile
+          test -f backend/services/video/Dockerfile
+          test -f backend/services/video-worker/Dockerfile
+          test -f backend/services/video/main.go
+          test -f backend/services/video-worker/main.go
+          test -f migrations/002_video_platform.sql
+          ! grep -RniE 'youtube|google_youtube' backend supabase/UPSTREAMS.yaml
