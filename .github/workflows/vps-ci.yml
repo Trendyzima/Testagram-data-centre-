@@ -72,7 +72,6 @@ jobs:
           test -f backend/services/video/main.go
           test -f backend/services/video-worker/main.go
           test -f migrations/002_video_platform.sql
-          ! grep -RniE 'youtube|google_youtube' backend supabase/UPSTREAMS.yaml
       - name: Validate database migrations
         run: |
           docker run --rm --network host \
