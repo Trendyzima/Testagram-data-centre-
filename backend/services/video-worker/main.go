@@ -22,6 +22,8 @@ func main() {
 
 func runOne(ctx context.Context,db *pgxpool.Pool,root string)error{
   tx,err:=db.Begin(ctx);if err!=nil{return err};defer tx.Rollback(ctx)
+  if _,err=tx.Exec(ctx,`update testagram_video.video_jobs set status='failed',lease_until=null,last_error=coalesce(last_error,'processing lease exhausted'),updated_at=now() where status='running' and lease_until<now() and attempts>=3`);err!=nil{return err}
+  if _,err=tx.Exec(ctx,`update testagram_video.videos v set status='failed',processing_error='video processing lease exhausted',updated_at=now() where status in ('queued','processing') and exists (select 1 from testagram_video.video_jobs j where j.video_id=v.id and j.status='failed' and j.attempts>=3`);err!=nil{return err}
   var j job
   err=tx.QueryRow(ctx,`with picked as (
     select id from testagram_video.video_jobs
@@ -42,7 +44,9 @@ func runOne(ctx context.Context,db *pgxpool.Pool,root string)error{
     return workErr
   }
   if _,err=db.Exec(ctx,`update testagram_video.video_jobs set status='done',lease_until=null,updated_at=now() where id=$1`,j.ID);err!=nil{return err}
-  if j.Kind=="transcode"{_,err=db.Exec(ctx,`update testagram_video.videos set status='ready',processing_error=null,updated_at=now() where id=$1`,j.VideoID)}
+  if j.Kind=="poster"{if _,err=db.Exec(ctx,`update testagram_video.videos set poster_object_key=$2,updated_at=now() where id=$1`,j.VideoID,filepath.Join("hls",j.VideoID,"poster.jpg"));err!=nil{return err}}
+  if j.Kind=="transcode"{if _,err=db.Exec(ctx,`update testagram_video.videos set status='processing',processing_error=null,updated_at=now() where id=$1`,j.VideoID);err!=nil{return err}}
+  _,err=db.Exec(ctx,`update testagram_video.videos v set status='ready',processing_error=null,updated_at=now() where v.id=$1 and exists (select 1 from testagram_video.video_jobs t where t.video_id=v.id and t.kind='transcode' and t.status='done') and exists (select 1 from testagram_video.video_jobs p where p.video_id=v.id and p.kind='poster' and p.status='done')`,j.VideoID)
   return err
 }
 
