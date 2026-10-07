@@ -39,6 +39,7 @@ func main() {
   mux := http.NewServeMux()
   mux.HandleFunc("/healthz", s.health)
   mux.HandleFunc("/v1/channels", s.channels)
+  mux.HandleFunc("/v1/feed", s.feed)
   mux.HandleFunc("/v1/videos", s.videos)
   mux.HandleFunc("/v1/videos/", s.videoRoute)
   srv := &http.Server{Addr: env("VIDEO_ADDR", ":8790"), Handler: securityHeaders(mux), ReadHeaderTimeout: 10*time.Second, ReadTimeout: 60*time.Second, WriteTimeout: 60*time.Second, IdleTimeout: 120*time.Second}
@@ -59,6 +60,30 @@ func (s *server) channels(w http.ResponseWriter,r *http.Request) {
   err:=s.db.QueryRow(r.Context(),"insert into testagram_video.channels(owner_id,handle,name,description) values($1,$2,$3,$4) returning id",user,strings.ToLower(in.Handle),strings.TrimSpace(in.Name),in.Description).Scan(&id)
   if err!=nil { http.Error(w,"channel creation failed",409); return }
   jsonOut(w,201,map[string]string{"id":id})
+}
+
+func (s *server) feed(w http.ResponseWriter,r *http.Request) {
+  if r.Method!=http.MethodGet { http.Error(w,"method not allowed",405); return }
+  rows,err:=s.db.Query(r.Context(),`select id,channel_id,title,description,visibility,status,duration_ms,width,height,view_count,like_count,comment_count,published_at from testagram_video.videos where visibility='public' and status='ready' order by published_at desc nulls last,created_at desc limit 50`)
+  if err!=nil { http.Error(w,"feed failed",500); return }; defer rows.Close()
+  type item struct { ID string `json:"id"`; ChannelID string `json:"channel_id"`; Title string `json:"title"`; Description string `json:"description"`; Visibility string `json:"visibility"`; Status string `json:"status"`; DurationMS int64 `json:"duration_ms"`; Width int `json:"width"`; Height int `json:"height"`; Views int64 `json:"views"`; Likes int64 `json:"likes"`; Comments int64 `json:"comments"`; PublishedAt *time.Time `json:"published_at"` }
+  out:=make([]item,0,50)
+  for rows.Next(){ var v item; if err:=rows.Scan(&v.ID,&v.ChannelID,&v.Title,&v.Description,&v.Visibility,&v.Status,&v.DurationMS,&v.Width,&v.Height,&v.Views,&v.Likes,&v.Comments,&v.PublishedAt);err!=nil{http.Error(w,"feed failed",500);return};out=append(out,v) }
+  jsonOut(w,200,out)
+}
+
+func (s *server) comments(w http.ResponseWriter,r *http.Request,id string) {
+  if r.Method==http.MethodGet {
+    rows,err:=s.db.Query(r.Context(),`select id,user_id,body,created_at from testagram_video.comments where video_id=$1 order by created_at desc limit 100`,id)
+    if err!=nil{http.Error(w,"comments failed",500);return};defer rows.Close()
+    type comment struct{ID string `json:"id"`;UserID string `json:"user_id"`;Body string `json:"body"`;CreatedAt time.Time `json:"created_at"`}
+    out:=make([]comment,0,100);for rows.Next(){var x comment;if err:=rows.Scan(&x.ID,&x.UserID,&x.Body,&x.CreatedAt);err!=nil{http.Error(w,"comments failed",500);return};out=append(out,x)};jsonOut(w,200,out);return
+  }
+  if r.Method!=http.MethodPost{http.Error(w,"method not allowed",405);return};user,ok:=s.user(r);if !ok{http.Error(w,"unauthorized",401);return}
+  var in struct{Body string `json:"body"`};if json.NewDecoder(io.LimitReader(r.Body,1<<20)).Decode(&in)!=nil||strings.TrimSpace(in.Body)==""||len(in.Body)>4000{http.Error(w,"invalid comment",400);return}
+  _,err:=s.db.Exec(r.Context(),`insert into testagram_video.comments(video_id,user_id,body) values($1,$2,$3)`,id,user,strings.TrimSpace(in.Body));if err!=nil{http.Error(w,"comment failed",500);return}
+  _,_=s.db.Exec(r.Context(),`update testagram_video.videos set comment_count=(select count(*) from testagram_video.comments where video_id=$1) where id=$1`,id)
+  jsonOut(w,201,map[string]bool{"created":true})
 }
 
 func (s *server) videos(w http.ResponseWriter,r *http.Request) {
@@ -96,6 +121,7 @@ func (s *server) videoRoute(w http.ResponseWriter,r *http.Request) {
   case "publish": s.publish(w,r,id)
   case "view": s.view(w,r,id)
   case "like": s.like(w,r,id)
+  case "comments": s.comments(w,r,id)
   case "manifest": s.manifest(w,r,id)
   case "hls": if len(parts)==3 { s.hls(w,r,id,parts[2]) } else { http.Error(w,"not found",404) }
   default: http.Error(w,"not found",404)
