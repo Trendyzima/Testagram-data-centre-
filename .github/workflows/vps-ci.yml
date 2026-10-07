@@ -133,3 +133,14 @@ jobs:
           grep -q 'foregroundServiceType="specialUse"' android-node/app/src/main/AndroidManifest.xml
       - name: Build Android node
         run: gradle -p android-node assembleDebug
+      - name: Package Android installer
+        run: |
+          mkdir -p android-node/dist
+          cp android-node/app/build/outputs/apk/debug/app-debug.apk android-node/dist/TestagramNode-debug.apk
+          cp android-node/install-apk.sh android-node/dist/install-apk.sh
+      - name: Upload Android installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: testagram-android-node
+          path: android-node/dist/
+          retention-days: 14
