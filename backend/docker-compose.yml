@@ -76,13 +76,18 @@ services:
 
   worker:
     build:
-      context: ./services/worker
+      context: ..
+      dockerfile: backend/services/worker/Dockerfile
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL}
-    volumes: [media_data:/media]
-    networks: [internal]
-
+      WORKER_ADDR: :8091
+    networks: [internal, supabase]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8091/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
 networks:
   edge:
   internal:
