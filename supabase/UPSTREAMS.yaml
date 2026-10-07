@@ -1,7 +1,7 @@
-version: 2
-purpose: "Locally owned Testagram backend capabilities with official Supabase retained as the core"
+version: 3
+purpose: "Testagram-owned backend capabilities with official self-hosted Supabase retained as the core"
 policy:
-  ownership: "Testagram owns the runtime, data, keys, queues, notification adapters, media adapters, integrations and operational control"
+  ownership: "Testagram owns runtime, media, video, data, keys, queues, orchestration and operational control"
   upstream_boundary: "Official Supabase source and self-hosted Docker distribution remain unmodified"
   no_managed_dependency_required: true
 
@@ -22,102 +22,59 @@ supabase_core:
 
 testagram_owned_services:
   identity:
-    owner: "Testagram"
     implementation: "Supabase Auth plus Testagram authorization/RLS/session policy"
     external_dependency: false
-  push:
-    owner: "Testagram"
-    implementation: "local notification broker with device-token registry, retry queue, templates, preferences and provider adapters"
+  video_platform:
+    implementation: "Testagram-owned creator channels, upload, local media storage, FFmpeg processing, HLS playback, posters, visibility, likes, views and publishing"
     external_dependency: false
-    adapters:
-      - fcm_optional
-      - apns_optional
-      - web_push_optional
   media:
-    owner: "Testagram"
-    implementation: "local object-storage pipeline, image/video transforms, thumbnails, metadata and signed delivery URLs"
+    implementation: "local object-storage pipeline, image/video transforms, thumbnails and signed delivery URLs"
     external_dependency: false
-    adapters:
-      - cloudinary_optional
-      - bunny_optional
+  push:
+    implementation: "local notification broker with device registry, durable queue, templates and preferences"
+    external_dependency: false
   edge_network:
-    owner: "Testagram"
     implementation: "local reverse proxy, TLS, rate limiting, WAF policy, caching and origin routing"
     external_dependency: false
   cache_queue:
-    owner: "Testagram"
-    implementation: "Redis-compatible local cache, rate limiter and durable job queues"
+    implementation: "local Redis-compatible cache and durable job queues"
     external_dependency: false
-    adapters:
-      - upstash_optional
   google:
-    owner: "Testagram"
-    implementation: "OAuth token vault, YouTube integration and ingest adapters"
-    external_dependency: true
-    note: "Google APIs cannot be made local; Testagram owns the integration and credentials."
+    implementation: "removed; no YouTube dependency"
+    external_dependency: false
   identity_verification:
-    owner: "Testagram"
     implementation: "KYC orchestration, evidence vault, verification state machine and audit trail"
     external_dependency: false
-    adapters:
-      - didit_optional
   payments:
-    owner: "Testagram"
     implementation: "payment ledger, idempotency, webhooks, reconciliation, fees, payouts and provider adapters"
     external_dependency: true
-    providers:
-      - mpesa
-      - paypal
-      - pesapal
+    providers: [mpesa, paypal, pesapal]
   content_discovery:
-    owner: "Testagram"
     implementation: "local GIF index, news/feed normalization, RSS ingestion and moderation pipeline"
     external_dependency: false
-    adapters:
-      - tenor_optional
-      - newsify_optional
-      - rss
   federation:
-    owner: "Testagram"
     implementation: "ActivityPub/Mastodon federation service and Matrix bridge"
     external_dependency: false
-    protocols:
-      - activitypub
-      - matrix
+    protocols: [activitypub, matrix]
   email:
-    owner: "Testagram"
     implementation: "transactional mail queue, templates, verification and security events"
     external_dependency: false
-    adapters:
-      - smtp_optional
   geospatial:
-    owner: "Testagram"
     implementation: "local geocoding cache, distance engine and route/location primitives"
     external_dependency: false
   ai:
-    owner: "Testagram"
     implementation: "local model gateway, moderation, transcription, embeddings and support-agent runtime"
     external_dependency: false
-    adapters:
-      - external_llm_optional
 
 external_integrations:
-  principle: "Only capabilities that inherently require an external network/provider remain external"
+  principle: "Only inherently external networks/providers remain external"
   required_external:
-    - google_youtube
     - mpesa_safaricom
     - paypal
     - pesapal
   optional_external:
-    - fcm
     - apns
     - web_push
-    - cloudinary
-    - bunny_cdn
-    - upstash
-    - didit
-    - tenor
-    - newsify
     - smtp
     - external_ai_models
 
@@ -128,6 +85,8 @@ network:
     - object_storage
     - queue_workers
     - notification_broker
+    - video_api
+    - video_worker
     - media_processor
     - ai_runtime
     - federation_worker
@@ -138,5 +97,6 @@ network:
     - storage
     - federation
     - payment_webhooks
+    - video_playback
   database_port_public: false
   tls_required_at_edge: true
