@@ -37,7 +37,8 @@ services:
       VIDEO_SIGNING_SECRET: ${VIDEO_SIGNING_SECRET}
       VIDEO_MEDIA_ROOT: /media
       VIDEO_ADDR: :8790
-    volumes: [media_data:/media]
+    volumes:
+      - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/media:/media
     networks: [internal, supabase]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8790/readyz"]
@@ -100,4 +101,3 @@ volumes:
   edge_data:
   edge_config:
   redis_data:
-  media_data:
