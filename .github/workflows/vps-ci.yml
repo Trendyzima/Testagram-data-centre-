@@ -3,7 +3,7 @@ on:
   push:
     paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**",".github/workflows/vps-ci.yml"]
   pull_request:
-    paths: ["go.mod","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**",".github/workflows/vps-ci.yml"]
 jobs:
   go:
     runs-on: ubuntu-latest
