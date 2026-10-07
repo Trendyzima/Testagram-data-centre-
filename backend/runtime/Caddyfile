@@ -9,12 +9,23 @@
 {$TESTAGRAM_DOMAIN} {
   encode zstd gzip
   request_body {
-    max_size 2GB
+    max_size 20GB
   }
   header {
     X-Content-Type-Options nosniff
     X-Frame-Options DENY
     Referrer-Policy no-referrer
   }
-  reverse_proxy {$TESTAGRAM_ORIGIN}
+
+  handle /v1/videos* {
+    reverse_proxy video:8790
+  }
+
+  handle /v1/channels* {
+    reverse_proxy video:8790
+  }
+
+  handle {
+    reverse_proxy {$TESTAGRAM_ORIGIN}
+  }
 }
