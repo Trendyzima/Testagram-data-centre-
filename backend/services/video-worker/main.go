@@ -59,7 +59,7 @@ func transcode(root,id,source string)error{
   }
   return exec.Command("ffmpeg",args...).Run()
 }
-func hasAudio(source string)bool{cmd:=exec.Command("ffprobe","-v","error","-select_streams","a:0","-show_entries","stream=index","-of","csv=p=0",source);return cmd.Run()==nil}
+func hasAudio(source string)bool{out,err:=exec.Command("ffprobe","-v","error","-select_streams","a:0","-show_entries","stream=index","-of","csv=p=0",source).Output();return err==nil&&len(out)>0}
 func poster(root,id,source string)error{out:=filepath.Join(root,"hls",id);if err:=os.MkdirAll(out,0750);err!=nil{return err};return exec.Command("ffmpeg","-hide_banner","-loglevel","error","-i",source,"-frames:v","1","-vf","scale=1280:-2",filepath.Join(out,"poster.jpg")).Run()}
 func env(k,d string)string{if v:=os.Getenv(k);v!=""{return v};return d}
 func mustEnv(k string)string{v:=os.Getenv(k);if v==""{log.Fatalf("%s is required",k)};return v}
