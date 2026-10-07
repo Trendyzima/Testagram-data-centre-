@@ -10,8 +10,7 @@ class NodeClient(private val config: NodeConfig) {
     private var nodeToken: String? = null
 
     private fun post(path: String, body: JSONObject): JSONObject? {
-        val url = URL(config.controlPlaneUrl.trimEnd('/') + path)
-        val connection = (url.openConnection() as HttpURLConnection).apply {
+        val connection = (URL(config.controlPlaneUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 10000
             readTimeout = 10000
@@ -26,20 +25,24 @@ class NodeClient(private val config: NodeConfig) {
         return connection.inputStream.bufferedReader().use { JSONObject(it.readText()) }
     }
 
+    fun ready(): Boolean {
+        val connection = (URL(config.controlPlaneUrl.trimEnd('/') + "/readyz").openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"; connectTimeout = 5000; readTimeout = 5000
+        }
+        return try { connection.responseCode in 200..299 } finally { connection.disconnect() }
+    }
+
     fun register() {
-        val body = JSONObject()
-            .put("name", config.nodeName)
-            .put("platform", "android")
-            .put("arch", "arm64")
+        val result = post("/v1/nodes/register", JSONObject()
+            .put("name", config.nodeName).put("platform", "android").put("arch", "arm64")
             .put("cpuCores", Runtime.getRuntime().availableProcessors())
             .put("endpoint", "outbound-only")
-            .put("capabilities", JSONObject().put("localVolumes", true).put("microSD", true))
-        val result = post("/v1/nodes/register", body)
+            .put("capabilities", JSONObject().put("localVolumes", true).put("microSD", true)))
             ?: throw IllegalStateException("empty registration response")
         nodeToken = result.getString("token")
     }
 
-    fun heartbeat() {
+    private fun heartbeat() {
         if (nodeToken == null) register()
         post("/v1/nodes/heartbeat", JSONObject()
             .put("cpuCores", Runtime.getRuntime().availableProcessors())
@@ -47,17 +50,17 @@ class NodeClient(private val config: NodeConfig) {
             .put("capabilities", JSONObject().put("localVolumes", true).put("microSD", true)))
     }
 
-    fun runForever(onState: (String) -> Unit) {
-        while (true) {
+    fun runForever(shouldStop: () -> Boolean, onState: (String) -> Unit) {
+        while (!shouldStop()) {
             try {
                 if (nodeToken == null) register()
                 heartbeat()
-                onState("Connected to VPS control plane")
+                onState("ONLINE • heartbeat OK")
             } catch (e: Exception) {
                 nodeToken = null
-                onState("VPS connection retry: " + (e.message ?: "unknown error"))
+                onState("OFFLINE • retry: " + (e.message ?: "unknown"))
             }
-            Thread.sleep(15000)
+            repeat(15) { if (!shouldStop()) Thread.sleep(1000) }
         }
     }
 }
