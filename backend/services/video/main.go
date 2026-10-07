@@ -28,7 +28,7 @@ type channelInput struct { Handle string `json:"handle"`; Name string `json:"nam
 func main() {
   db,err:=pgxpool.New(context.Background(),mustEnv("DATABASE_URL"));if err!=nil{log.Fatal(err)};defer db.Close()
   mediaDir:=env("VIDEO_MEDIA_ROOT","/media")
-  s:=&server{db:db,mediaDir:mediaDir,jwtKey:[]byte(mustEnv("VIDEO_JWT_SECRET")),signKey:[]byte(mustEnv("VIDEO_SIGNING_SECRET")))}
+  s:=&server{db:db,mediaDir:mediaDir,jwtKey:[]byte(mustEnv("VIDEO_JWT_SECRET")),signKey:[]byte(mustEnv("VIDEO_SIGNING_SECRET"))}
   if len(s.signKey)<32{log.Fatal("VIDEO_SIGNING_SECRET must be at least 32 bytes")}
   if err:=os.MkdirAll(mediaDir,0750);err!=nil{log.Fatal(err)}
   mux:=http.NewServeMux()
