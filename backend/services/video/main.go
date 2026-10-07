@@ -78,7 +78,7 @@ func (s *server) videos(w http.ResponseWriter,r *http.Request){
   var owner string;if err:=s.db.QueryRow(r.Context(),"select owner_id from testagram_video.channels where id=$1",channelID).Scan(&owner);err!=nil||owner!=user{http.Error(w,"channel not found",404);return}
   file,hdr,err:=r.FormFile("video");if err!=nil{http.Error(w,"video file required",400);return};defer file.Close()
   var id string;if err:=s.db.QueryRow(r.Context(),"insert into testagram_video.videos(channel_id,owner_id,title,description,visibility,status) values($1,$2,$3,$4,$5,'uploading') returning id",channelID,user,title,description,visibility).Scan(&id);err!=nil{http.Error(w,"video creation failed",500);return}
-  ext:=safeExt(hdr);dir:=filepath.Join(s.mediaDir,"originals",id);if err:=os.MkdirAll(dir,0750);err!=nil{http.Error(w,"storage unavailable",500);return};path:=filepath.Join(dir,"source"+ext)
+  ext:=safeExt(hdr);dir:=filepath.Join(s.mediaDir,"videos","originals",id);if err:=os.MkdirAll(dir,0750);err!=nil{http.Error(w,"storage unavailable",500);return};path:=filepath.Join(dir,"source"+ext)
   dst,err:=os.OpenFile(path,os.O_CREATE|os.O_WRONLY|os.O_EXCL,0640);if err!=nil{http.Error(w,"storage unavailable",500);return};_,copyErr:=io.Copy(dst,io.LimitReader(file,20<<30));closeErr:=dst.Close()
   if copyErr!=nil||closeErr!=nil{_ = os.Remove(path);_,_=s.db.Exec(r.Context(),"update testagram_video.videos set status='failed',processing_error=$2 where id=$1",id,"upload failed");http.Error(w,"upload failed",500);return}
   rel:=strings.TrimPrefix(path,s.mediaDir+"/");if _,err=s.db.Exec(r.Context(),"update testagram_video.videos set original_object_key=$2,status='queued',updated_at=now() where id=$1",id,rel);err!=nil{_,_=s.db.Exec(r.Context(),"update testagram_video.videos set status='failed',processing_error=$2 where id=$1",id,"queue metadata update failed");http.Error(w,"queue failed",500);return}
@@ -110,7 +110,7 @@ func (s *server) manifest(w http.ResponseWriter,r *http.Request,id string){
 }
 func (s *server) hls(w http.ResponseWriter,r *http.Request,id,file string){
   token:=r.URL.Query().Get("token");if !s.validToken(id,token){http.Error(w,"forbidden",403);return};if strings.Contains(file,"..")||strings.ContainsAny(file,"/\\"){http.Error(w,"bad path",400);return}
-  path:=filepath.Join(s.mediaDir,"hls",id,file);data,err:=os.ReadFile(path);if err!=nil{http.NotFound(w,r);return}
+  path:=filepath.Join(s.mediaDir,"videos","hls",id,file);data,err:=os.ReadFile(path);if err!=nil{http.NotFound(w,r);return}
   if strings.HasSuffix(file,".m3u8"){lines:=strings.Split(string(data),"\n");for i,line:=range lines{if line!=""&&!strings.HasPrefix(line,"#")&&!strings.Contains(line,"?token="){lines[i]=line+"?token="+token}};w.Header().Set("Content-Type","application/vnd.apple.mpegurl");w.Header().Set("Cache-Control","private, no-store");_,_=w.Write([]byte(strings.Join(lines,"\n")));return}
   w.Header().Set("Cache-Control","private, max-age=300");http.ServeFile(w,r,path)
 }
