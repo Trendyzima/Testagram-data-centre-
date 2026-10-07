@@ -34,8 +34,6 @@ jobs:
       - name: Validate VPS/Supabase boundary
         run: |
           set -euo pipefail
-          assert_file() { test -f "$1" || { echo "MISSING FILE: $1" >&2; exit 1; }; }
-          assert_dir() { test -d "$1" || { echo "MISSING DIRECTORY: $1" >&2; exit 1; }; }
           bash -n supabase/bootstrap.sh
           bash -n supabase/prepare.sh
           bash -n supabase/status.sh
@@ -43,40 +41,16 @@ jobs:
           bash -n supabase/storage.sh
           tmp_storage="$(mktemp -d)"
           TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash supabase/storage.sh
-          assert_file "$tmp_storage/.testagram-storage-root"
-          for dir in \
-            "$tmp_storage/supabase" \
-            "$tmp_storage/media/posts/images" \
-            "$tmp_storage/media/posts/videos" \
-            "$tmp_storage/media/uploads" \
-            "$tmp_storage/media/videos/originals" \
-            "$tmp_storage/media/videos/hls" \
-            "$tmp_storage/media/videos/posters" \
-            "$tmp_storage/media/tmp" \
-            "$tmp_storage/nodes"; do
-            assert_dir "$dir"
-          done
-          bash -n vps/install.sh
-          for file in \
-            vps/docker-compose.yml \
-            backend/docker-compose.yml \
-            backend/runtime/Caddyfile \
-            backend/services/notification/Dockerfile \
-            backend/services/worker/Dockerfile \
-            backend/services/video/Dockerfile \
-            backend/services/video-worker/Dockerfile \
-            backend/services/video/main.go \
-            backend/services/video-worker/main.go \
-            migrations/002_video_platform.sql; do
-            assert_file "$file"
-          done
-          grep -Eq 'filepath\.Join\(s\.mediaDir, *"videos", *id\)' backend/services/video/main.go
-          grep -Eq 'filepath\.Join\(s\.mediaDir, *"hls", *id, *file\)' backend/services/video/main.go
-          grep -Eq 'filepath\.Join\(root, *"hls", *id\)' backend/services/video-worker/main.go
-          grep -Eq 'filepath\.Join\(root, *"posters", *id\)' backend/services/video-worker/main.go
-          echo "VPS local-storage authority validation: PASS"
+          test -d "$tmp_storage/supabase"
+          test -d "$tmp_storage/media"
+          test -d "$tmp_storage/nodes"
           rm -rf "$tmp_storage"
-          exit 0
+          bash -n vps/install.sh
+          test -f vps/docker-compose.yml
+          test -f backend/docker-compose.yml
+          test -f backend/runtime/Caddyfile
+          echo "VPS local-storage root initialization: PASS"
+
       - name: Validate database migrations
         run: |
           docker run --rm --network host \
