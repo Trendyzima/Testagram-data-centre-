@@ -39,9 +39,6 @@ testagram_owned_services:
   cache_queue:
     implementation: "local Redis-compatible cache and durable job queues"
     external_dependency: false
-  google:
-    implementation: "removed; no YouTube dependency"
-    external_dependency: false
   identity_verification:
     implementation: "KYC orchestration, evidence vault, verification state machine and audit trail"
     external_dependency: false
