@@ -166,7 +166,7 @@ func (s *service) deliverOne(ctx context.Context, user string, w http.ResponseWr
 	if errors.Is(err, pgx.ErrNoRows) { return nil }
 	if err != nil { return err }
 	data, _ := json.Marshal(n)
-	if _, err = w.Write([]byte("event: notification\\nid: " + n.ID + "\\ndata: " + string(data) + "\\n\\n")); err != nil { return err }
+	if _, err = w.Write([]byte("event: notification\nid: " + n.ID + "\ndata: " + string(data) + "\n\n")); err != nil { return err }
 	flusher.Flush()
 	if _, err = tx.Exec(ctx, `update public.testagram_notifications
 		set status='delivered',delivered_at=now(),updated_at=now(),attempts=attempts+1 where id=$1`, n.ID); err != nil { return err }
