@@ -255,7 +255,7 @@ func main() {
 		a.endpoint = "outbound-only"
 	}
 	if a.volumeRoot == "" {
-		a.volumeRoot = "./volumes"
+		a.volumeRoot = "/var/lib/testagram/storage/nodes"
 	}
 	if err := os.MkdirAll(a.volumeRoot, 0700); err != nil {
 		log.Fatal(err)
