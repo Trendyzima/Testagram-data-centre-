@@ -9,10 +9,22 @@ The VPS is the storage authority for this deployment. Persistent data is kept
 on the VPS filesystem rather than Firebase, Cloudinary, Cloudflare, Bunny,
 Upstash, or another hosted object store.
 
-Run storage.sh before starting the stack. It creates:
+Run storage.sh before starting the stack. It creates the VPS-owned storage tree:
 - TESTAGRAM_STORAGE_ROOT/supabase — Supabase Storage objects.
-- TESTAGRAM_STORAGE_ROOT/media — Testagram-owned video/media data.
+- TESTAGRAM_STORAGE_ROOT/media/posts — post media namespace.
+- TESTAGRAM_STORAGE_ROOT/media/images — image namespace.
+- TESTAGRAM_STORAGE_ROOT/media/videos — video namespace.
+- TESTAGRAM_STORAGE_ROOT/media/originals — uploaded originals.
+- TESTAGRAM_STORAGE_ROOT/media/hls — generated HLS playlists/segments.
+- TESTAGRAM_STORAGE_ROOT/media/posters — generated posters/thumbnails.
+- TESTAGRAM_STORAGE_ROOT/media/avatars — profile media.
+- TESTAGRAM_STORAGE_ROOT/media/stories — story media.
+- TESTAGRAM_STORAGE_ROOT/media/messages — message attachments.
+- TESTAGRAM_STORAGE_ROOT/media/attachments — general attachments.
+- TESTAGRAM_STORAGE_ROOT/media/tmp — transient processing data.
 - TESTAGRAM_STORAGE_ROOT/nodes — node-agent workload volumes.
+
+The VPS is the filesystem authority. Applications never receive arbitrary host-path access; they use explicit mounts or the authenticated Supabase Storage API. Logical object keys map into this persistent local backing store.
 
 The generated Supabase Compose override bind-mounts the VPS supabase directory
 into the official storage and imgproxy services and forces Storage to use its
