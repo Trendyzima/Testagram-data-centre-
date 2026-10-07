@@ -193,8 +193,8 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	if in.Image == "" {
-		reply(w, http.StatusBadRequest, map[string]string{"error": "image required"})
+	if in.Image == "" || !validImageDigest(in.ImageDigest) {
+		reply(w, http.StatusBadRequest, map[string]string{"error": "image and immutable sha256 imageDigest are required"})
 		return
 	}
 	if in.CPUMillis <= 0 {
@@ -329,6 +329,8 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 	}
 	reply(w, http.StatusOK, map[string]any{"ok": true, "status": status})
 }
+
+func validImageDigest(v string) bool { if len(v) != 71 || !strings.HasPrefix(v, "sha256:") { return false }; for _, c := range v[7:] { if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) { return false } }; return true }
 
 func main() {
 	dsn := os.Getenv("DATABASE_URL")
