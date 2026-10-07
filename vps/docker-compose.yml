@@ -8,6 +8,8 @@ services:
       VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN}
       VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN}
       VPS_CONTROL_PLANE_ADDR: :8787
+    ports:
+      - "127.0.0.1:8787:8787"
     networks: [supabase, internal]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8787/healthz"]
