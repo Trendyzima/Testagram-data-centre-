@@ -3,15 +3,29 @@ on:
   push:
     paths: ["go.mod","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**",".github/workflows/vps-ci.yml"]
   pull_request:
-    paths: ["go.mod","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**",".github/workflows/vps-ci.yml"]
 jobs:
   go:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: {go-version: "1.23"}
+        with:
+          go-version: "1.23"
       - run: gofmt -w control-plane node-agent internal
       - run: go test ./...
       - run: go vet ./...
-      - run: go build ./control-plane ./node-agent\n      - name: Validate Supabase VPS integration\n        run: |\n          bash -n supabase/bootstrap.sh\n          bash -n supabase/healthcheck.sh\n          test "$(grep -c \\x27^  - name:\\x27 supabase/UPSTREAMS.yaml)" -eq 8\n          grep -q \\x27supabase/postgres.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27supabase/auth.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27PostgREST/postgrest.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27supabase/realtime.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27supabase/storage.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27supabase/edge-runtime.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27supabase/postgres-meta.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27supabase/supavisor.git\\x27 supabase/UPSTREAMS.yaml
+      - run: go build ./control-plane ./node-agent
+      - name: Validate Supabase VPS integration
+        run: |
+          bash -n supabase/bootstrap.sh
+          bash -n supabase/healthcheck.sh
+          test "$(grep -c '^  - name:' supabase/UPSTREAMS.yaml)" -eq 8
+          grep -q 'supabase/postgres.git' supabase/UPSTREAMS.yaml
+          grep -q 'supabase/auth.git' supabase/UPSTREAMS.yaml
+          grep -q 'PostgREST/postgrest.git' supabase/UPSTREAMS.yaml
+          grep -q 'supabase/realtime.git' supabase/UPSTREAMS.yaml
+          grep -q 'supabase/storage.git' supabase/UPSTREAMS.yaml
+          grep -q 'supabase/edge-runtime.git' supabase/UPSTREAMS.yaml
+          grep -q 'supabase/postgres-meta.git' supabase/UPSTREAMS.yaml
+          grep -q 'supabase/supavisor.git' supabase/UPSTREAMS.yaml
