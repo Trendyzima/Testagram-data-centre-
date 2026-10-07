@@ -55,7 +55,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       VIDEO_MEDIA_ROOT: /media
-    volumes: [media_data:/media]
+    volumes:
+      - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/media:/media
     networks: [internal, supabase]
 
   notification:
