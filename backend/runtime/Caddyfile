@@ -17,6 +17,38 @@
     Referrer-Policy no-referrer
   }
 
+  handle /auth/* {
+    reverse_proxy api-gw:8000
+  }
+
+  handle /rest/* {
+    reverse_proxy api-gw:8000
+  }
+
+  handle /storage/* {
+    reverse_proxy api-gw:8000
+  }
+
+  handle /realtime/* {
+    reverse_proxy api-gw:8000
+  }
+
+  handle /functions/* {
+    reverse_proxy api-gw:8000
+  }
+
+  handle /graphql/* {
+    reverse_proxy api-gw:8000
+  }
+
+  handle /pg/* {
+    reverse_proxy api-gw:8000
+  }
+
+  handle /.well-known/* {
+    reverse_proxy api-gw:8000
+  }
+
   handle /v1/videos* {
     reverse_proxy video:8790
   }
@@ -32,4 +64,9 @@
   handle {
     reverse_proxy {$TESTAGRAM_ORIGIN}
   }
+}
+
+{$SUPABASE_STUDIO_DOMAIN} {
+  encode zstd gzip
+  reverse_proxy studio:3000
 }
