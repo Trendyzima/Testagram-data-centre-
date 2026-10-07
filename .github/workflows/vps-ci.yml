@@ -40,7 +40,12 @@ jobs:
           docker compose -f backend/docker-compose.yml config
       - name: Validate Caddy syntax
         run: |
-          docker run --rm -v "$PWD/backend/runtime/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10 caddy validate --config /etc/caddy/Caddyfile
+          docker run --rm \
+            -e TESTAGRAM_DOMAIN=video.testagram.local \
+            -e TESTAGRAM_ORIGIN=http://control-plane:8787 \
+            -e TLS_ADMIN_EMAIL=admin@testagram.local \
+            -v "$PWD/backend/runtime/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.10 caddy validate --config /etc/caddy/Caddyfile
       - name: Build backend containers
         run: |
           docker compose -f backend/docker-compose.yml build video video-worker notification worker
