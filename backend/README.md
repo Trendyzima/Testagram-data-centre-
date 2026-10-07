@@ -3,27 +3,39 @@
 This layer is the ownership boundary around the official self-hosted Supabase
 core. It does not modify Supabase internals.
 
-## Ownership model
+## Provider-free core
 
-Testagram owns the operational implementations for:
+The following capabilities are implemented as Testagram-owned infrastructure,
+not as calls to Firebase, FCM, Cloudinary, Cloudflare, Bunny, Upstash,
+Didit, Tenor, Newsify, Novu or a hosted AI platform:
 
-- notification broker and device delivery adapters
-- media/object pipeline and signed asset delivery
-- Redis-compatible cache, rate limiting and queues
-- edge gateway policy
-- OAuth/Google integration credentials and token lifecycle
-- KYC orchestration and audit records
-- payment ledger, idempotency, reconciliation and provider adapters
+- notification broker with device registration, preferences, retries and an
+  internal delivery protocol
+- local object/media storage with processing workers and signed asset URLs
+- Redis-compatible cache/rate-limit primitives backed by a local service
+- local edge gateway policy for TLS, routing, request limits and caching
 - RSS/GIF/news ingestion and normalization
-- ActivityPub federation and Matrix bridging
-- email queue/templates/provider adapters
-- geospatial primitives
-- AI gateway, moderation, transcription and support runtime
+- federation through ActivityPub and Matrix protocols
+- transactional email queue and provider-independent SMTP delivery interface
+- local geospatial/distance primitives and cache
+- local AI gateway contracts for moderation, transcription, embeddings and
+  support agents
+- payment ledger, idempotency, reconciliation and provider adapters
+- KYC orchestration and evidence/audit state
 
-External providers remain protocol/provider integrations where the capability
-cannot physically be local (for example Safaricom M-Pesa, PayPal, Pesapal and
-Google/YouTube).
+## External networks that cannot be made local
 
-The goal is provider independence: removing an external provider must not
-remove Testagram's core data model, queues, audit trail, ledger, media metadata,
-notification state or business logic.
+Some capabilities inherently terminate at a third-party network. Testagram
+owns the integration, credentials, ledger, retries and audit trail, but cannot
+turn those external networks into local infrastructure:
+
+- Safaricom M-Pesa
+- PayPal
+- Pesapal
+- Google OAuth / YouTube
+- remote federation peers
+- email recipient domains
+
+These are adapters, not dependencies of the core business logic.
+
+Firebase/FCM is deliberately **not** part of this architecture.
