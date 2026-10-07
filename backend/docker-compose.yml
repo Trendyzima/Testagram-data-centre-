@@ -73,7 +73,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-    networks: [internal, supabase]
 
   worker:
     build:
