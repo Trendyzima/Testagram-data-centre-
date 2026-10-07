@@ -49,6 +49,10 @@
     reverse_proxy api-gw:8000
   }
 
+  handle /v1/config/* {
+    reverse_proxy platform:8095
+  }
+
   handle /v1/videos* {
     reverse_proxy video:8790
   }
