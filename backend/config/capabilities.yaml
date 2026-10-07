@@ -30,7 +30,7 @@ components:
   notification_broker:
     enabled: true
     implementation: testagram-owned
-    transport: persistent_websocket_plus_local_delivery
+    transport: persistent_sse_plus_local_delivery
     queue: local_durable
     persistence: supabase_postgres
   media_pipeline:
