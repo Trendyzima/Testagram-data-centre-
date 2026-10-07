@@ -44,16 +44,27 @@ components:
     delivery: signed_or_public_storage_urls_through_local_edge
   cache_queue:
     enabled: true
-    implementation: local_redis_compatible_service
-    queue: durable_local
-    rate_limit: local
+    implementation: testagram-platform-over-valkey
+    cache: ttl_and_delete
+    queue: redis_streams_consumer_groups
+    delivery: at_least_once
+    rate_limit: atomic_fixed_window
+    persistence: valkey_aof
+  platform_core:
+    enabled: true
+    implementation: testagram-owned
+    feature_flags: postgres_backed_public_config
+    analytics_events: postgres_backed
+    audit_events: postgres_backed
+    metrics: prometheus_text
+    readiness: postgres_and_valkey
   edge:
     enabled: true
-    implementation: testagram-owned_gateway
+    implementation: caddy_plus_testagram_platform
     tls: required
-    rate_limit: local
-    cache: local
-    waf_policy: local
+    rate_limit: platform_service
+    cache: platform_service_and_storage_headers
+    waf_policy: local_policy_layer
   federation:
     activitypub: true
     matrix: true
