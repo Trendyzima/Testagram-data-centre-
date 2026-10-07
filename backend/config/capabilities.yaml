@@ -1,51 +1,78 @@
-version: 1
+version: 2
 ownership:
   mode: locally-owned
   external_providers_are_adapters: true
+  firebase_fcm: disabled
+  cloudinary: disabled
+  cloudflare: disabled
+  bunny: disabled
+  upstash: disabled
+  didit: disabled
+  tenor: disabled
+  newsify: disabled
+  novu: disabled
 
 components:
   notification_broker:
     enabled: true
-    queue: local
+    implementation: testagram-owned
+    transport: persistent_websocket_plus_local_delivery
+    queue: local_durable
     persistence: supabase_postgres
   media_pipeline:
     enabled: true
-    object_store: local
-    processing: local_workers
-  cache:
+    implementation: testagram-owned
+    object_store: local_private_volume
+    processing: local_ffmpeg_and_image_workers
+    delivery: signed_edge_urls
+  cache_queue:
     enabled: true
-    engine: redis_compatible
-    persistence: ephemeral_plus_postgres_jobs
+    implementation: local_redis_compatible_service
+    queue: durable_local
+    rate_limit: local
   edge:
     enabled: true
+    implementation: testagram-owned_gateway
     tls: required
     rate_limit: local
+    cache: local
+    waf_policy: local
   federation:
     activitypub: true
     matrix: true
+    implementation: testagram-owned_protocol_adapters
   feeds:
     rss: true
-    normalization: local
+    gifs: true
+    news: true
+    implementation: local_fetchers_and_normalizer
   email:
-    queue: local
-    delivery: smtp_adapter
+    queue: local_durable
+    templates: local
+    delivery: local_smtp_adapter
   geospatial:
     engine: local
+    distance: local
+    geocoding_cache: local
   ai:
     gateway: local
     moderation: local
     transcription: local
-    external_models: adapters_only
+    embeddings: local
+    support_agent: local
+    external_models: optional_adapter_only
   payments:
     ledger: local
+    idempotency: local
+    reconciliation: local
     providers:
       - mpesa
       - paypal
       - pesapal
   identity:
     auth: supabase_self_hosted
-    authorization: testagram_rls_and_policy
-    kyc: local_or_provider_adapter
+    authorization: testagram_policy_layer
+    kyc: testagram_owned_or_manual_review
 
 security:
   secrets_external_to_git: true
@@ -53,3 +80,5 @@ security:
   idempotency_required_for_payments: true
   signed_media_urls: true
   least_privilege_provider_credentials: true
+  postgres_public: false
+  internal_services_private_network: true
