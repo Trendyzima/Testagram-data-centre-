@@ -3,6 +3,7 @@ package com.testagram.node
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.os.StatFs
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -100,7 +101,7 @@ class MainActivity : Activity() {
     }
 
     private fun refreshStorage(root: File) {
-        val s = root.statfs()
+        val s = StatFs(root.path)
         val tree = StorageVolumeManager(this).tree()
         status.text = "Testagram Node\n\nApp storage: " + root.absolutePath +
             "\nFree: " + (s.availableBlocksLong * s.blockSizeLong / (1024 * 1024)) + " MB" +
