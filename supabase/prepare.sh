@@ -41,6 +41,27 @@ if [ -f "$PROJECT/.env" ]; then
     printf '\nCOMPOSE_FILE=docker-compose.yml:docker-compose.testagram.yml\n' >> "$PROJECT/.env"
   fi
 fi
+# Copy deployment-owned runtime settings into the VPS-only Supabase .env.
+set_env() {
+  key="$1"; value="$2"
+  if grep -q "^$key=" "$PROJECT/.env"; then
+    sed -i "s#^$key=.*#$key=$value#" "$PROJECT/.env"
+  else
+    printf "\n%s=%s\n" "$key" "$value" >> "$PROJECT/.env"
+  fi
+}
+set_env "POSTGRES_PASSWORD" "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+set_env "JWT_SECRET" "${JWT_SECRET:?JWT_SECRET is required}"
+set_env "ANON_KEY" "${ANON_KEY:?ANON_KEY is required}"
+set_env "SERVICE_ROLE_KEY" "${SERVICE_ROLE_KEY:?SERVICE_ROLE_KEY is required}"
+set_env "DASHBOARD_USERNAME" "${DASHBOARD_USERNAME:-admin}"
+set_env "DASHBOARD_PASSWORD" "${DASHBOARD_PASSWORD:?DASHBOARD_PASSWORD is required}"
+set_env "SUPABASE_PUBLIC_URL" "${SUPABASE_PUBLIC_URL:?SUPABASE_PUBLIC_URL is required}"
+set_env "API_EXTERNAL_URL" "${SUPABASE_API_EXTERNAL_URL:-${SUPABASE_PUBLIC_URL}/auth/v1}"
+set_env "API_GW_HTTP_PORT" "127.0.0.1:8000"
+set_env "POSTGRES_HOST" "db"
+set_env "POSTGRES_PORT" "5432"
+set_env "POSTGRES_DB" "postgres"
 printf 'Official Supabase release prepared at %s\n' "$PROJECT"
 printf 'Source ref: %s\n' "$REF"
 printf 'Source SHA: %s\n' "$(git -C "$UPSTREAM" rev-parse HEAD)"
