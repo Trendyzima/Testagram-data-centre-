@@ -34,7 +34,52 @@ class LocalMediaServer(private val context: Context, private val port: Int = 878
         reply(o,405,"method not allowed")
     }catch(_:Exception){try{reply(o,500,"media server error")}catch(_:Exception){}}}}
     private fun upload(i:InputStream,o:OutputStream,h:Map<String,String>,key:String){val n=h["content-length"]?.toLongOrNull()?:run{reply(o,411,"content-length required");return};if(n<0||n>21474836480L){reply(o,413,"payload too large");return};val f=try{storage.createFile(key,h["content-type"]?.substringBefore(';')?:"application/octet-stream")}catch(_:Exception){reply(o,409,"cannot create media object");return};try{val dst=context.contentResolver.openOutputStream(f.uri,"w")?:error("not writable");dst.use{copy(i,it,n)};replyJson(o,201,"{\"ok\":true}")}catch(_:Exception){f.delete();reply(o,500,"media write failed")}}
-    private fun download(o:OutputStream,h:Map<String,String>,key:String,head:Boolean){val f=find(key)?:run{reply(o,404,"not found");return};val d=context.contentResolver.openFileDescriptor(f.uri,"r")?:run{reply(o,500,"open failed");return};d.use{p->val size=p.statSize;if(size<0){reply(o,500,"size unavailable");return};var start=0L;var end=size-1;var partial=false;val r=h["range"];if(r?.startsWith("bytes=")==true){val q=r.removePrefix("bytes=").substringBefore('-');start=q.toLongOrNull()?:0L;end=r.substringAfter('-', "").toLongOrNull()?:end;if(start>=size){reply(o,416,"range not satisfiable");return};end=end.coerceAtMost(size-1);partial=true};val len=end-start+1;o.write(("HTTP/1.1 "+if(partial)"206 Partial Content" else "200 OK")+"\r\nContent-Type: "+mime(key)+"\r\nContent-Length: "+len+"\r\nAccept-Ranges: bytes\r\n"+if(partial)"Content-Range: bytes "+start+"-"+end+"/"+size+"\r\n" else ""+"Access-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n").toByteArray());if(!head){FileInputStream(p.fileDescriptor).use{src->src.channel.position(start);val b=ByteArray(65536);var left=len;while(left>0){val k=src.read(b,0,minOf(b.size.toLong(),left).toInt());if(k<0)break;o.write(b,0,k);left-=k}}};o.flush()}}
+    private fun download(o:OutputStream,h:Map<String,String>,key:String,head:Boolean){
+        val f=find(key) ?: run { reply(o,404,"not found"); return }
+        val d=context.contentResolver.openFileDescriptor(f.uri,"r") ?: run { reply(o,500,"open failed"); return }
+        d.use { p ->
+            val size=p.statSize
+            if(size<0){reply(o,500,"size unavailable");return}
+            var start=0L
+            var end=size-1
+            var partial=false
+            val r=h["range"]
+            if(r!=null && r.startsWith("bytes=")){
+                val spec=r.removePrefix("bytes=").substringBefore(',')
+                val dash=spec.indexOf('-')
+                if(dash>=0){
+                    start=spec.substring(0,dash).toLongOrNull()?:0L
+                    end=spec.substring(dash+1).toLongOrNull()?:end
+                    if(dash==0){
+                        val suffix=spec.substring(1).toLongOrNull()?:0L
+                        start=(size-suffix).coerceAtLeast(0)
+                    }
+                    if(start>=size || end<start){reply(o,416,"range not satisfiable");return}
+                    end=end.coerceAtMost(size-1)
+                    partial=true
+                }
+            }
+            val len=end-start+1
+            val status=if(partial) "206 Partial Content" else "200 OK"
+            val rangeHeader=if(partial) "Content-Range: bytes $start-$end/$size\r\n" else ""
+            val headers="HTTP/1.1 $status\r\nContent-Type: "+mime(key)+"\r\nContent-Length: $len\r\nAccept-Ranges: bytes\r\n"+rangeHeader+"Access-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n"
+            o.write(headers.toByteArray())
+            if(!head){
+                FileInputStream(p.fileDescriptor).use { src ->
+                    src.channel.position(start)
+                    val b=ByteArray(65536)
+                    var left=len
+                    while(left>0){
+                        val k=src.read(b,0,minOf(b.size.toLong(),left).toInt())
+                        if(k<0)break
+                        o.write(b,0,k)
+                        left-=k
+                    }
+                }
+            }
+            o.flush()
+        }
+    }
     private fun find(k:String):DocumentFile?{val ps=k.split('/').filter{it.isNotBlank()};if(ps.isEmpty())return null;var c=storage.root()?:return null;for(x in ps.dropLast(1))c=c.findFile(x)?.takeIf{it.isDirectory}?:return null;return c.findFile(ps.last())?.takeIf{it.isFile}}
     private fun valid(m:String,k:String,t:String):Boolean{val p=t.split('.',limit=2);if(p.size!=2)return false;val e=p[1].toLongOrNull()?:return false;if(System.currentTimeMillis()/1000>=e)return false;val s=context.getSharedPreferences("node-config",0).getString("media_signing_secret","")?:"";if(s.length<32)return false;val mac=Mac.getInstance("HmacSHA256");mac.init(SecretKeySpec(s.toByteArray(StandardCharsets.UTF_8),"HmacSHA256"));val x=mac.doFinal((m+"|"+k+"|"+e).toByteArray()).joinToString(""){"%02x".format(it)};return MessageDigest.isEqual(x.toByteArray(),p[0].toByteArray())}
     private fun safe(k:String)=k.isNotBlank()&&!k.startsWith("/")&&!k.contains("..")&&!k.contains('\\')&&k.length<=1024
