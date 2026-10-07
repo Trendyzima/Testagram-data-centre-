@@ -25,6 +25,10 @@
     reverse_proxy video:8790
   }
 
+  handle /v1/feed {
+    reverse_proxy video:8790
+  }
+
   handle {
     reverse_proxy {$TESTAGRAM_ORIGIN}
   }
