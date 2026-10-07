@@ -71,10 +71,10 @@ jobs:
             migrations/002_video_platform.sql; do
             assert_file "$file"
           done
-          grep -q 'filepath.Join(s.mediaDir,"videos","originals",id)' backend/services/video/main.go
-          grep -q 'filepath.Join(s.mediaDir,"videos","hls",id,file)' backend/services/video/main.go
-          grep -q 'filepath.Join(root,"videos","hls",id)' backend/services/video-worker/main.go
-          grep -q 'filepath.Join(root,"videos","posters",id)' backend/services/video-worker/main.go
+          grep -q 'filepath.Join(s.mediaDir,"videos",id)' backend/services/video/main.go
+          grep -q 'filepath.Join(s.mediaDir,"hls",id,file)' backend/services/video/main.go
+          grep -q 'filepath.Join(root,"hls",id)' backend/services/video-worker/main.go
+          grep -q 'filepath.Join(root,"posters",id)' backend/services/video-worker/main.go
           echo "VPS local-storage authority validation: PASS"
       - name: Validate database migrations
         run: |
