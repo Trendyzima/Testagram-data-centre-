@@ -4,22 +4,27 @@ services:
   edge:
     image: caddy:2.10
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
+    ports: ["80:80", "443:443"]
     volumes:
       - ./runtime/Caddyfile:/etc/caddy/Caddyfile:ro
       - edge_data:/data
       - edge_config:/config
+    depends_on:
+      video:
+        condition: service_healthy
     networks: [edge, internal]
 
   redis:
     image: valkey/valkey:8
     restart: unless-stopped
     command: ["valkey-server", "--appendonly", "yes"]
-    volumes:
-      - redis_data:/data
+    volumes: [redis_data:/data]
     networks: [internal]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   video:
     build:
@@ -32,9 +37,14 @@ services:
       VIDEO_SIGNING_SECRET: ${VIDEO_SIGNING_SECRET}
       VIDEO_MEDIA_ROOT: /media
       VIDEO_ADDR: :8790
-    volumes:
-      - media_data:/media
+    volumes: [media_data:/media]
     networks: [internal]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8790/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
 
   video-worker:
     build:
@@ -44,8 +54,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       VIDEO_MEDIA_ROOT: /media
-    volumes:
-      - media_data:/media
+    volumes: [media_data:/media]
     networks: [internal]
 
   notification:
@@ -66,8 +75,7 @@ services:
       REDIS_URL: redis://redis:6379
       SUPABASE_URL: ${SUPABASE_URL}
       SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
-    volumes:
-      - media_data:/media
+    volumes: [media_data:/media]
     networks: [internal]
 
 networks:
