@@ -1,7 +1,7 @@
 name: testagram-vps-ci
 on:
   push:
-    paths: ["go.mod","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**",".github/workflows/vps-ci.yml"]
   pull_request:
     paths: ["go.mod","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**",".github/workflows/vps-ci.yml"]
 jobs:
@@ -14,4 +14,4 @@ jobs:
       - run: gofmt -w control-plane node-agent internal
       - run: go test ./...
       - run: go vet ./...
-      - run: go build ./control-plane ./node-agent
+      - run: go build ./control-plane ./node-agent\n      - name: Validate Supabase VPS integration\n        run: |\n          bash -n supabase/bootstrap.sh\n          bash -n supabase/healthcheck.sh\n          test "$(grep -c \\x27^  - name:\\x27 supabase/UPSTREAMS.yaml)" -eq 8\n          grep -q \\x27supabase/postgres.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27supabase/auth.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27PostgREST/postgrest.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27supabase/realtime.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27supabase/storage.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27supabase/edge-runtime.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27supabase/postgres-meta.git\\x27 supabase/UPSTREAMS.yaml\n          grep -q \\x27supabase/supavisor.git\\x27 supabase/UPSTREAMS.yaml
