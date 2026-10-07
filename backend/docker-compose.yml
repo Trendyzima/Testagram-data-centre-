@@ -55,7 +55,7 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       VIDEO_MEDIA_ROOT: /media
     volumes: [media_data:/media]
-    networks: [internal]
+    networks: [internal, supabase]
 
   notification:
     build:
