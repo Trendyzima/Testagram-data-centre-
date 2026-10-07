@@ -59,12 +59,20 @@ services:
 
   notification:
     build:
-      context: ./services/notification
+      context: ..
+      dockerfile: backend/services/notification/Dockerfile
     restart: unless-stopped
     environment:
-      REDIS_URL: redis://redis:6379
-      SUPABASE_URL: ${SUPABASE_URL}
-      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+      DATABASE_URL: ${DATABASE_URL}
+      NOTIFICATION_JWT_SECRET: ${NOTIFICATION_JWT_SECRET}
+      NOTIFICATION_INTERNAL_TOKEN: ${NOTIFICATION_INTERNAL_TOKEN}
+      NOTIFICATION_ADDR: :8090
+    networks: [internal, supabase]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8090/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
     networks: [internal, supabase]
 
   worker:
@@ -72,9 +80,7 @@ services:
       context: ./services/worker
     restart: unless-stopped
     environment:
-      REDIS_URL: redis://redis:6379
-      SUPABASE_URL: ${SUPABASE_URL}
-      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY}
+      DATABASE_URL: ${DATABASE_URL}
     volumes: [media_data:/media]
     networks: [internal]
 
