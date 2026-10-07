@@ -113,11 +113,29 @@ func (a *Agent) post(path string, body any, out any) (int, error) {
 	return resp.StatusCode, nil
 }
 
+func (a *Agent) memory() int64 {
+	if value, err := strconv.ParseInt(os.Getenv("VPS_MEMORY_BYTES"), 10, 64); err == nil && value > 0 {
+		return value
+	}
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == "MemTotal:" {
+			kb, _ := strconv.ParseInt(fields[1], 10, 64)
+			return kb * 1024
+		}
+	}
+	return 0
+}
+
 func (a *Agent) register() error {
 	total, free := a.disk()
 	body := Registration{
 		Name: a.name, Platform: runtime.GOOS, Arch: runtime.GOARCH,
-		CPUCores: runtime.NumCPU(), StorageBytes: total, FreeBytes: free,
+		CPUCores: runtime.NumCPU(), MemoryBytes: a.memory(), StorageBytes: total, FreeBytes: free,
 		Endpoint: a.endpoint,
 		Capabilities: map[string]any{
 			"containers": runtimeBin() != "",
@@ -145,7 +163,7 @@ func (a *Agent) register() error {
 func (a *Agent) heartbeat() error {
 	total, free := a.disk()
 	body := Registration{
-		CPUCores: runtime.NumCPU(), StorageBytes: total, FreeBytes: free,
+		CPUCores: runtime.NumCPU(), MemoryBytes: a.memory(), StorageBytes: total, FreeBytes: free,
 		Capabilities: map[string]any{"containers": runtimeBin() != ""},
 	}
 	_, err := a.post("/v1/nodes/heartbeat", body, nil)
