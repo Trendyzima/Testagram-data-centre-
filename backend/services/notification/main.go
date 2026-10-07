@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -162,16 +163,14 @@ func (s *service) deliverOne(ctx context.Context, user string, w http.ResponseWr
 		where user_id=$1 and status='queued' and available_at<=now()
 		order by created_at for update skip locked limit 1`, user).
 		Scan(&n.ID, &n.UserID, &n.Title, &n.Body, &n.Payload)
-	if err != nil {
-		return nil
-	}
+	if errors.Is(err, pgx.ErrNoRows) { return nil }
+	if err != nil { return err }
+	data, _ := json.Marshal(n)
+	if _, err = w.Write([]byte("event: notification\\nid: " + n.ID + "\\ndata: " + string(data) + "\\n\\n")); err != nil { return err }
+	flusher.Flush()
 	if _, err = tx.Exec(ctx, `update public.testagram_notifications
 		set status='delivered',delivered_at=now(),updated_at=now(),attempts=attempts+1 where id=$1`, n.ID); err != nil { return err }
-	if err = tx.Commit(ctx); err != nil { return err }
-	data, _ := json.Marshal(n)
-	_, err = w.Write([]byte("event: notification\nid: " + n.ID + "\ndata: " + string(data) + "\n\n"))
-	if err == nil { flusher.Flush() }
-	return err
+	return tx.Commit(ctx)
 }
 
 func (s *service) user(r *http.Request) (string, bool) {
