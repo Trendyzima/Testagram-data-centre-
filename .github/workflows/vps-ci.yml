@@ -127,22 +127,62 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
+
       - name: Validate Android VPS runtime sources
         run: |
           test -f android-node/app/src/main/java/com/testagram/node/LocalMediaServer.kt
           test -f android-node/app/src/main/java/com/testagram/node/LocalMediaService.kt
           grep -q 'android:name=".LocalMediaService"' android-node/app/src/main/AndroidManifest.xml
           grep -q 'foregroundServiceType="specialUse"' android-node/app/src/main/AndroidManifest.xml
-      - name: Build Android node
+          grep -q 'android:usesCleartextTraffic="false"' android-node/app/src/main/AndroidManifest.xml
+
+      - name: Build Android debug node
         run: gradle -p android-node assembleDebug
-      - name: Package Android installer
+
+      - name: Package Android installers
         run: |
+          set -euo pipefail
           mkdir -p android-node/dist
           cp android-node/app/build/outputs/apk/debug/app-debug.apk android-node/dist/TestagramNode-debug.apk
           cp android-node/install-apk.sh android-node/dist/install-apk.sh
-      - name: Upload Android installer
+          sha256sum android-node/dist/TestagramNode-debug.apk > android-node/dist/TestagramNode-debug.apk.sha256
+
+      - name: Check release signing configuration
+        id: release-signing
+        env:
+          KEYSTORE: '${{ secrets.ANDROID_KEYSTORE_BASE64 }}'
+          STORE_PASSWORD: '${{ secrets.ANDROID_KEYSTORE_PASSWORD }}'
+          KEY_ALIAS: '${{ secrets.ANDROID_KEY_ALIAS }}'
+          KEY_PASSWORD: '${{ secrets.ANDROID_KEY_PASSWORD }}'
+        run: |
+          if [[ -n "$KEYSTORE" && -n "$STORE_PASSWORD" && -n "$KEY_ALIAS" && -n "$KEY_PASSWORD" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Release signing is not configured. The debug APK remains available; configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD for the signed release APK."
+          fi
+
+      - name: Build signed Android release
+        if: steps.release-signing.outputs.configured == 'true'
+        env:
+          ANDROID_KEYSTORE_BASE64: '${{ secrets.ANDROID_KEYSTORE_BASE64 }}'
+          ANDROID_KEYSTORE_PASSWORD: '${{ secrets.ANDROID_KEYSTORE_PASSWORD }}'
+          ANDROID_KEY_ALIAS: '${{ secrets.ANDROID_KEY_ALIAS }}'
+          ANDROID_KEY_PASSWORD: '${{ secrets.ANDROID_KEY_PASSWORD }}'
+        run: |
+          set -euo pipefail
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android-node/ci-release.keystore
+          export ANDROID_KEYSTORE_FILE="$GITHUB_WORKSPACE/android-node/ci-release.keystore"
+          gradle -p android-node assembleRelease
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          "$APKSIGNER" verify --verbose android-node/app/build/outputs/apk/release/app-release.apk
+          cp android-node/app/build/outputs/apk/release/app-release.apk android-node/dist/TestagramNode-release.apk
+          sha256sum android-node/dist/TestagramNode-release.apk > android-node/dist/TestagramNode-release.apk.sha256
+          rm -f android-node/ci-release.keystore
+
+      - name: Upload Android packages
         uses: actions/upload-artifact@v6
         with:
           name: testagram-android-node
           path: android-node/dist/
-          retention-days: 14
+          retention-days: 90
