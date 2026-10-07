@@ -1,44 +1,10 @@
 name: testagram-supabase
 
-# This file is the Testagram VPS integration layer.
-# For the complete self-hosted Supabase service graph, keep the official
-# supabase/supabase docker directory as the upstream source of truth.
-# Do not copy or silently fork that stack here.
-#
-# The VPS deployment process should render the official compose files into
-# SUPABASE_DATA_ROOT and apply this network/volume policy as an override.
-
-services:
-  db:
-    networks: [testagram-supabase]
-    volumes:
-      - ${SUPABASE_DATA_ROOT:-/var/lib/testagram/supabase}/data/db:/var/lib/postgresql/data
-
-  auth:
-    networks: [testagram-supabase]
-
-  rest:
-    networks: [testagram-supabase]
-
-  realtime:
-    networks: [testagram-supabase]
-
-  storage:
-    networks: [testagram-supabase]
-    volumes:
-      - ${SUPABASE_DATA_ROOT:-/var/lib/testagram/supabase}/data/storage:/var/lib/storage
-
-  functions:
-    networks: [testagram-supabase]
-    volumes:
-      - ${SUPABASE_DATA_ROOT:-/var/lib/testagram/supabase}/functions:/home/deno/functions
-
-  meta:
-    networks: [testagram-supabase]
-
-  supavisor:
-    networks: [testagram-supabase]
+# Testagram integration override only.
+# The official Supabase self-hosted docker-compose.yml remains the source
+# of truth for service structure, images, healthchecks, and dependencies.
+# This file changes only the Compose network identity.
 
 networks:
-  testagram-supabase:
+  default:
     name: testagram-supabase
