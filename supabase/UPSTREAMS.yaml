@@ -1,0 +1,50 @@
+version: 1
+purpose: "Official Supabase backend components for the Testagram VPS"
+policy:
+  source_of_truth: "Official upstream repositories only"
+  source_repos_are_not_forks: true
+  runtime: "Official upstream container images / builds"
+services:
+  - name: postgres
+    repo: https://github.com/supabase/postgres.git
+    ref: develop
+    role: "PostgreSQL database with Supabase extensions"
+  - name: auth
+    repo: https://github.com/supabase/auth.git
+    ref: master
+    role: "JWT authentication and user management"
+  - name: rest
+    repo: https://github.com/PostgREST/postgrest.git
+    ref: main
+    role: "PostgreSQL REST API"
+  - name: realtime
+    repo: https://github.com/supabase/realtime.git
+    ref: main
+    role: "WebSocket realtime and Postgres change delivery"
+  - name: storage
+    repo: https://github.com/supabase/storage.git
+    ref: master
+    role: "S3-compatible object storage API with Postgres metadata"
+  - name: edge-runtime
+    repo: https://github.com/supabase/edge-runtime.git
+    ref: main
+    role: "Deno Edge Functions runtime"
+  - name: postgres-meta
+    repo: https://github.com/supabase/postgres-meta.git
+    ref: master
+    role: "Postgres metadata/admin API used by Studio"
+  - name: supavisor
+    repo: https://github.com/supabase/supavisor.git
+    ref: main
+    role: "Postgres connection pooler"
+integration:
+  database_url: "${DATABASE_URL}"
+  stack_network: "testagram-supabase"
+  persistent_root: "${SUPABASE_DATA_ROOT:-/var/lib/testagram/supabase}"
+  api_gateway: "testagram-vps-control-plane remains the infrastructure control plane; Supabase API traffic is isolated behind the stack gateway"
+security:
+  never_commit_secrets: true
+  tls_required_at_edge: true
+  service_role_key_server_only: true
+  anon_key_client_safe_only: true
+  database_port_public: false
