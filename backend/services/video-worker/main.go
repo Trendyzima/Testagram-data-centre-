@@ -23,7 +23,7 @@ func main() {
 func runOne(ctx context.Context,db *pgxpool.Pool,root string)error{
   tx,err:=db.Begin(ctx);if err!=nil{return err};defer tx.Rollback(ctx)
   if _,err=tx.Exec(ctx,`update testagram_video.video_jobs set status='failed',lease_until=null,last_error=coalesce(last_error,'processing lease exhausted'),updated_at=now() where status='running' and lease_until<now() and attempts>=3`);err!=nil{return err}
-  if _,err=tx.Exec(ctx,`update testagram_video.videos v set status='failed',processing_error='video processing lease exhausted',updated_at=now() where status in ('queued','processing') and exists (select 1 from testagram_video.video_jobs j where j.video_id=v.id and j.status='failed' and j.attempts>=3`);err!=nil{return err}
+  if _,err=tx.Exec(ctx,`update testagram_video.videos v set status='failed',processing_error='video processing lease exhausted',updated_at=now() where status in ('queued','processing') and exists (select 1 from testagram_video.video_jobs j where j.video_id=v.id and j.status='failed' and j.attempts>=3)`);err!=nil{return err}
   var j job
   err=tx.QueryRow(ctx,`with picked as (
     select id from testagram_video.video_jobs
