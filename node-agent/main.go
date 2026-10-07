@@ -19,7 +19,7 @@ import (
 )
 
 type Agent struct {
-	control, bootstrap, nodeToken, nodeID, name, endpoint, volumeRoot string
+	control, bootstrap, nodeToken, nodeID, name, endpoint, volumeRoot, stateFile string
 	mu sync.RWMutex
 }
 
@@ -132,6 +132,25 @@ func (a *Agent) memory() int64 {
 	return 0
 }
 
+func (a *Agent) loadState() error {
+	data, err := os.ReadFile(a.stateFile)
+	if err != nil { return nil }
+	var state struct { ID string `json:"id"`; Token string `json:"token"` }
+	if err := json.Unmarshal(data, &state); err != nil { return err }
+	if state.ID == "" || state.Token == "" { return errors.New("invalid node state") }
+	a.mu.Lock(); a.nodeID, a.nodeToken = state.ID, state.Token; a.mu.Unlock()
+	return nil
+}
+
+func (a *Agent) saveState(id, token string) error {
+	if err := os.MkdirAll(filepath.Dir(a.stateFile), 0700); err != nil { return err }
+	data, err := json.Marshal(struct { ID string `json:"id"`; Token string `json:"token"` }{id, token})
+	if err != nil { return err }
+	tmp := a.stateFile + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil { return err }
+	return os.Rename(tmp, a.stateFile)
+}
+
 func (a *Agent) register() error {
 	total, free := a.disk()
 	body := Registration{
@@ -155,6 +174,7 @@ func (a *Agent) register() error {
 	if out.ID == "" || out.Token == "" {
 		return errors.New("control plane returned incomplete node credentials")
 	}
+	if err := a.saveState(out.ID, out.Token); err != nil { return err }
 	a.mu.Lock()
 	a.nodeID, a.nodeToken = out.ID, out.Token
 	a.mu.Unlock()
@@ -247,6 +267,7 @@ func main() {
 		name: os.Getenv("VPS_NODE_NAME"),
 		endpoint: os.Getenv("VPS_NODE_ENDPOINT"),
 		volumeRoot: os.Getenv("VPS_VOLUME_ROOT"),
+		stateFile: os.Getenv("VPS_NODE_STATE_FILE"),
 	}
 	if a.name == "" {
 		a.name = "testagram-node"
@@ -254,9 +275,9 @@ func main() {
 	if a.endpoint == "" {
 		a.endpoint = "outbound-only"
 	}
-	if a.volumeRoot == "" {
-		a.volumeRoot = "/var/lib/testagram/storage/nodes"
-	}
+	if a.volumeRoot == "" { a.volumeRoot = "/var/lib/testagram/storage/nodes" }
+	if a.stateFile == "" { a.stateFile = "/var/lib/testagram/storage/nodes/node-state.json" }
+	if err := a.loadState(); err != nil { log.Printf("load node state: %v", err); a.mu.Lock(); a.nodeToken = ""; a.mu.Unlock() }
 	if err := os.MkdirAll(a.volumeRoot, 0700); err != nil {
 		log.Fatal(err)
 	}
