@@ -32,7 +32,7 @@ jobs:
           git diff --exit-code -- go.mod go.sum
       - run: go test -race ./...
       - run: go vet ./...
-      - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker
+      - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker ./backend/services/platform
       - name: Validate VPS/Supabase boundary
         run: |
           set -euo pipefail
@@ -61,7 +61,7 @@ jobs:
             -e PGPASSWORD=testagram \
             -v "$PWD:/workspace:ro" \
             postgres:17-alpine \
-            sh -c "psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/001_vps.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/002_video_platform.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/003_production_hardening.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/004_storage_buckets.sql"
+            sh -c "psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/001_vps.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/002_video_platform.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/003_production_hardening.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/004_storage_buckets.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/005_platform.sql"
       - name: Validate Compose syntax
         run: |
           docker compose -f backend/docker-compose.yml config
@@ -88,7 +88,7 @@ jobs:
             caddy:2.10 caddy validate --config /etc/caddy/Caddyfile
       - name: Build backend containers
         run: |
-          docker compose -f backend/docker-compose.yml build video video-worker notification worker
+          docker compose -f backend/docker-compose.yml build platform video video-worker notification worker
       - name: Backend runtime smoke test
         run: |
           set -euo pipefail
@@ -100,18 +100,20 @@ jobs:
             sleep 2
           done
           docker exec testagram-postgres pg_isready -U postgres -d postgres
-          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c "psql -h testagram-postgres -U postgres -d postgres -f /migrations/001_vps.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/002_video_platform.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/003_production_hardening.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/004_storage_buckets.sql"
+          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c "psql -h testagram-postgres -U postgres -d postgres -f /migrations/001_vps.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/002_video_platform.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/003_production_hardening.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/004_storage_buckets.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/005_platform.sql"
           export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/postgres
           export VIDEO_JWT_SECRET=ci-test-jwt-secret
           export VIDEO_SIGNING_SECRET=ci-test-signing-secret-at-least-32-bytes
           export NOTIFICATION_JWT_SECRET=ci-test-jwt-secret
           export NOTIFICATION_INTERNAL_TOKEN=ci-test-internal-token
+          export PLATFORM_INTERNAL_TOKEN=ci-platform-internal-token
           export SUPABASE_NETWORK=testagram-supabase
-          docker compose -f backend/docker-compose.yml up -d video notification worker
+          docker compose -f backend/docker-compose.yml up -d platform video notification worker
           for i in $(seq 1 30); do
             docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz >/dev/null 2>&1 && break
             sleep 2
           done
+          docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - http://127.0.0.1:8095/readyz
           docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz
           docker compose -f backend/docker-compose.yml exec -T notification wget -q -O - http://127.0.0.1:8090/readyz
           docker compose -f backend/docker-compose.yml exec -T worker wget -q -O - http://127.0.0.1:8091/readyz
