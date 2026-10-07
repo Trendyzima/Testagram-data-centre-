@@ -71,10 +71,10 @@ jobs:
             migrations/002_video_platform.sql; do
             assert_file "$file"
           done
-          grep -q 'filepath.Join(s.mediaDir,"videos",id)' backend/services/video/main.go
-          grep -q 'filepath.Join(s.mediaDir,"hls",id,file)' backend/services/video/main.go
-          grep -q 'filepath.Join(root,"hls",id)' backend/services/video-worker/main.go
-          grep -q 'filepath.Join(root,"posters",id)' backend/services/video-worker/main.go
+          grep -q 'filepath.Join(s.mediaDir,"videos","originals",id)' backend/services/video/main.go
+          grep -q 'filepath.Join(s.mediaDir,"videos","hls",id,file)' backend/services/video/main.go
+          grep -q 'filepath.Join(root,"videos","hls",id)' backend/services/video-worker/main.go
+          grep -q 'filepath.Join(root,"videos","posters",id)' backend/services/video-worker/main.go
           compose_output="$(mktemp)"
           if ! TESTAGRAM_STORAGE_ROOT=/var/lib/testagram/storage docker compose -f backend/docker-compose.yml config >"$compose_output" 2>&1; then
             cat "$compose_output" >&2
