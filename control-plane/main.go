@@ -1,15 +1,369 @@
 package main
-import ("context";"crypto/rand";"crypto/subtle";"encoding/hex";"encoding/json";"errors";"log";"net/http";"os";"strings";"time";"github.com/jackc/pgx/v5";"github.com/jackc/pgx/v5/pgxpool";"github.com/Trendyzima/Testagram-data-centre-/internal/crypto")
-type Server struct{db *pgxpool.Pool;internal,bootstrap string}
-type Registration struct{Name string;Platform string;Arch string;CPUCores int;MemoryBytes int64;StorageBytes int64;FreeBytes int64;Endpoint string;Capabilities map[string]any}
-type Heartbeat struct{CPUCores int;MemoryBytes int64;StorageBytes int64;FreeBytes int64;Status string;Capabilities map[string]any}
-type Workload struct{Image string;ImageDigest string;Command []string;Env map[string]string;CPUMillis int;MemoryBytes int64;Volume string;Arch string}
-func bearer(r *http.Request)string{v:=strings.TrimSpace(r.Header.Get("Authorization"));if strings.HasPrefix(v,"Bearer "){return strings.TrimSpace(strings.TrimPrefix(v,"Bearer "))};return ""}
-func eq(a,b string)bool{if a==""||b==""{return false};return subtle.ConstantTimeCompare([]byte(a),[]byte(b))==1}
-func token(n int)(string,error){b:=make([]byte,n);if _,e:=rand.Read(b);e!=nil{return "",e};return hex.EncodeToString(b),nil}
-func reply(w http.ResponseWriter,c int,v any){w.Header().Set("Content-Type","application/json");w.WriteHeader(c);_=json.NewEncoder(w).Encode(v)}
-func(s *Server)internalOnly(w http.ResponseWriter,r *http.Request)bool{if !eq(bearer(r),s.internal){reply(w,401,map[string]string{"error":"unauthorized"});return false};return true}
-func(s *Server)register(w http.ResponseWriter,r *http.Request){if !eq(bearer(r),s.bootstrap){reply(w,401,map[string]string{"error":"invalid bootstrap token"});return};var in Registration;if e:=json.NewDecoder(http.MaxBytesReader(w,r.Body,1<<20)).Decode(&in);e!=nil{reply(w,400,map[string]string{"error":"invalid json"});return};if in.Name==""||in.Arch==""||in.Endpoint==""{reply(w,400,map[string]string{"error":"name, arch and endpoint are required"});return};tok,e:=token(32);if e!=nil{reply(w,500,map[string]string{"error":"token generation failed"});return};ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel();var id string;q:="insert into public.vps_nodes(name,platform,arch,cpu_cores,memory_bytes,storage_bytes,free_bytes,capabilities,endpoint,token_hash) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id";e=s.db.QueryRow(ctx,q,in.Name,in.Platform,in.Arch,in.CPUCores,in.MemoryBytes,in.StorageBytes,in.FreeBytes,in.Capabilities,in.Endpoint,crypto.HashToken(tok)).Scan(&id);if e!=nil{reply(w,500,map[string]string{"error":"registration failed"});return};reply(w,201,map[string]any{"id":id,"token":tok,"heartbeatSeconds":15})}
-func(s *Server)heartbeat(w http.ResponseWriter,r *http.Request){tok:=bearer(r);if tok==""{reply(w,401,map[string]string{"error":"missing node token"});return};var in Heartbeat;if e:=json.NewDecoder(http.MaxBytesReader(w,r.Body,1<<20)).Decode(&in);e!=nil{reply(w,400,map[string]string{"error":"invalid json"});return};ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel();var id string;q:="update public.vps_nodes set cpu_cores=$1,memory_bytes=$2,storage_bytes=$3,free_bytes=$4,status=case when $5=$6 then status else $5 end,capabilities=$7,last_seen_at=now() where token_hash=$8 returning id";e:=s.db.QueryRow(ctx,q,in.CPUCores,in.MemoryBytes,in.StorageBytes,in.FreeBytes,in.Status,"",in.Capabilities,crypto.HashToken(tok)).Scan(&id);if errors.Is(e,pgx.ErrNoRows){reply(w,401,map[string]string{"error":"unknown node"});return};if e!=nil{reply(w,500,map[string]string{"error":"heartbeat failed"});return};reply(w,200,map[string]any{"ok":true,"nodeId":id})}
-func(s *Server)schedule(w http.ResponseWriter,r *http.Request){if !s.internalOnly(w,r){return};var in Workload;if e:=json.NewDecoder(http.MaxBytesReader(w,r.Body,1<<20)).Decode(&in);e!=nil{reply(w,400,map[string]string{"error":"invalid json"});return};if in.Image==""{reply(w,400,map[string]string{"error":"image required"});return};if in.CPUMillis<=0{in.CPUMillis=250};if in.MemoryBytes<=0{in.MemoryBytes=268435456};ctx,cancel:=context.WithTimeout(r.Context(),5*time.Second);defer cancel();var id,endpoint string;q:="select id,endpoint from public.vps_nodes where status=$4 and last_seen_at>now()-interval '45 seconds' and cpu_cores*1000>=$1 and memory_bytes>=$2 and free_bytes>=$2 and ($3=arch or $3='') order by free_bytes desc limit 1";e:=s.db.QueryRow(ctx,q,in.CPUMillis,in.MemoryBytes,in.Arch,"online").Scan(&id,&endpoint);if errors.Is(e,pgx.ErrNoRows){reply(w,503,map[string]string{"error":"no suitable node"});return};if e!=nil{reply(w,500,map[string]string{"error":"scheduler failed"});return};var wid string;q="insert into public.vps_workloads(node_id,image,image_digest,command,env,cpu_millis,memory_bytes,volume,status) values($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id";e=s.db.QueryRow(ctx,q,id,in.Image,in.ImageDigest,in.Command,in.Env,in.CPUMillis,in.MemoryBytes,in.Volume,"assigned").Scan(&wid);if e!=nil{reply(w,500,map[string]string{"error":"workload persist failed"});return};reply(w,201,map[string]any{"workloadId":wid,"nodeId":id,"endpoint":endpoint})}
-func main(){dsn:=os.Getenv("DATABASE_URL");internal:=os.Getenv("VPS_INTERNAL_TOKEN");bootstrap:=os.Getenv("VPS_NODE_BOOTSTRAP_TOKEN");if dsn==""||internal==""||bootstrap==""{log.Fatal("DATABASE_URL, VPS_INTERNAL_TOKEN and VPS_NODE_BOOTSTRAP_TOKEN are required")};db,e:=pgxpool.New(context.Background(),dsn);if e!=nil{log.Fatal(e)};defer db.Close();s:=&Server{db:db,internal:internal,bootstrap:bootstrap};mux:=http.NewServeMux();mux.HandleFunc("/healthz",func(w http.ResponseWriter,r *http.Request){reply(w,200,map[string]string{"status":"ok"})});mux.HandleFunc("/v1/nodes/register",s.register);mux.HandleFunc("/v1/nodes/heartbeat",s.heartbeat);mux.HandleFunc("/v1/workloads",s.schedule);addr:=os.Getenv("VPS_CONTROL_PLANE_ADDR");if addr==""{addr=":8787"};log.Printf("Testagram VPS control plane listening on %s",addr);log.Fatal((&http.Server{Addr:addr,Handler:mux,ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:30*time.Second,IdleTimeout:60*time.Second}).ListenAndServe())}
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/Trendyzima/Testagram-data-centre-/internal/crypto"
+)
+
+type Server struct {
+	db        *pgxpool.Pool
+	internal  string
+	bootstrap string
+}
+
+type Registration struct {
+	Name         string         `json:"name"`
+	Platform     string         `json:"platform"`
+	Arch         string         `json:"arch"`
+	CPUCores     int            `json:"cpuCores"`
+	MemoryBytes  int64          `json:"memoryBytes"`
+	StorageBytes int64          `json:"storageBytes"`
+	FreeBytes    int64          `json:"freeBytes"`
+	Endpoint     string         `json:"endpoint"`
+	Capabilities map[string]any `json:"capabilities"`
+}
+
+type Heartbeat struct {
+	CPUCores     int            `json:"cpuCores"`
+	MemoryBytes  int64          `json:"memoryBytes"`
+	StorageBytes int64          `json:"storageBytes"`
+	FreeBytes    int64          `json:"freeBytes"`
+	Status       string         `json:"status"`
+	Capabilities map[string]any `json:"capabilities"`
+}
+
+type Workload struct {
+	Image       string            `json:"image"`
+	ImageDigest string            `json:"imageDigest"`
+	Command     []string          `json:"command"`
+	Env         map[string]string `json:"env"`
+	CPUMillis   int               `json:"cpuMillis"`
+	MemoryBytes int64             `json:"memoryBytes"`
+	Volume      string            `json:"volume"`
+	Arch        string            `json:"arch"`
+}
+
+type WorkloadResult struct {
+	Success bool   `json:"success"`
+}
+
+func bearer(r *http.Request) string {
+	v := strings.TrimSpace(r.Header.Get("Authorization"))
+	if strings.HasPrefix(v, "Bearer ") {
+		return strings.TrimSpace(strings.TrimPrefix(v, "Bearer "))
+	}
+	return ""
+}
+
+func equalSecret(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+func newToken(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func reply(w http.ResponseWriter, code int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func (s *Server) internalOnly(w http.ResponseWriter, r *http.Request) bool {
+	if !equalSecret(bearer(r), s.internal) {
+		reply(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return false
+	}
+	return true
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	return json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(dst)
+}
+
+func (s *Server) register(w http.ResponseWriter, r *http.Request) {
+	if !equalSecret(bearer(r), s.bootstrap) {
+		reply(w, http.StatusUnauthorized, map[string]string{"error": "invalid bootstrap token"})
+		return
+	}
+
+	var in Registration
+	if err := decodeJSON(w, r, &in); err != nil {
+		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if in.Name == "" || in.Arch == "" || in.Endpoint == "" {
+		reply(w, http.StatusBadRequest, map[string]string{"error": "name, arch and endpoint are required"})
+		return
+	}
+
+	nodeToken, err := newToken(32)
+	if err != nil {
+		reply(w, http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var id string
+	const q = `insert into public.vps_nodes
+		(name,platform,arch,cpu_cores,memory_bytes,storage_bytes,free_bytes,capabilities,endpoint,token_hash)
+		values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id`
+	err = s.db.QueryRow(ctx, q, in.Name, in.Platform, in.Arch, in.CPUCores,
+		in.MemoryBytes, in.StorageBytes, in.FreeBytes, in.Capabilities, in.Endpoint,
+		crypto.HashToken(nodeToken)).Scan(&id)
+	if err != nil {
+		reply(w, http.StatusInternalServerError, map[string]string{"error": "registration failed"})
+		return
+	}
+
+	reply(w, http.StatusCreated, map[string]any{
+		"id":               id,
+		"token":            nodeToken,
+		"heartbeatSeconds": 15,
+	})
+}
+
+func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
+	nodeToken := bearer(r)
+	if nodeToken == "" {
+		reply(w, http.StatusUnauthorized, map[string]string{"error": "missing node token"})
+		return
+	}
+
+	var in Heartbeat
+	if err := decodeJSON(w, r, &in); err != nil {
+		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var id string
+	status := in.Status
+	if status == "" {
+		status = "online"
+	}
+	const q = `update public.vps_nodes
+		set cpu_cores=$1,memory_bytes=$2,storage_bytes=$3,free_bytes=$4,
+		    status=$5,capabilities=$6,last_seen_at=now()
+		where token_hash=$7 returning id`
+	err := s.db.QueryRow(ctx, q, in.CPUCores, in.MemoryBytes, in.StorageBytes,
+		in.FreeBytes, status, in.Capabilities, crypto.HashToken(nodeToken)).Scan(&id)
+	if err == pgx.ErrNoRows {
+		reply(w, http.StatusUnauthorized, map[string]string{"error": "unknown node"})
+		return
+	}
+	if err != nil {
+		reply(w, http.StatusInternalServerError, map[string]string{"error": "heartbeat failed"})
+		return
+	}
+
+	reply(w, http.StatusOK, map[string]any{"ok": true, "nodeId": id})
+}
+
+func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOnly(w, r) {
+		return
+	}
+
+	var in Workload
+	if err := decodeJSON(w, r, &in); err != nil {
+		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if in.Image == "" {
+		reply(w, http.StatusBadRequest, map[string]string{"error": "image required"})
+		return
+	}
+	if in.CPUMillis <= 0 {
+		in.CPUMillis = 250
+	}
+	if in.MemoryBytes <= 0 {
+		in.MemoryBytes = 268435456
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var nodeID, endpoint string
+	const nodeQ = `select id,endpoint from public.vps_nodes
+		where status='online' and last_seen_at>now()-interval '45 seconds'
+		  and cpu_cores*1000 >= $1 and memory_bytes >= $2 and free_bytes >= $2
+		  and ($3='' or arch=$3)
+		order by free_bytes desc limit 1`
+	err := s.db.QueryRow(ctx, nodeQ, in.CPUMillis, in.MemoryBytes, in.Arch).Scan(&nodeID, &endpoint)
+	if err == pgx.ErrNoRows {
+		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "no suitable node"})
+		return
+	}
+	if err != nil {
+		reply(w, http.StatusInternalServerError, map[string]string{"error": "scheduler failed"})
+		return
+	}
+
+	var workloadID string
+	const workloadQ = `insert into public.vps_workloads
+		(node_id,image,image_digest,command,env,cpu_millis,memory_bytes,volume,status)
+		values($1,$2,$3,$4,$5,$6,$7,$8,'assigned') returning id`
+	err = s.db.QueryRow(ctx, workloadQ, nodeID, in.Image, in.ImageDigest, in.Command,
+		in.Env, in.CPUMillis, in.MemoryBytes, in.Volume).Scan(&workloadID)
+	if err != nil {
+		reply(w, http.StatusInternalServerError, map[string]string{"error": "workload persist failed"})
+		return
+	}
+
+	reply(w, http.StatusCreated, map[string]any{
+		"workloadId": workloadID,
+		"nodeId":     nodeID,
+		"endpoint":   endpoint,
+	})
+}
+
+func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
+	nodeToken := bearer(r)
+	if nodeToken == "" {
+		reply(w, http.StatusUnauthorized, map[string]string{"error": "missing node token"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	var workloadID string
+	var work Workload
+	const q = `select w.id,w.image,w.image_digest,w.command,w.env,w.cpu_millis,w.memory_bytes,w.volume
+		from public.vps_workloads w
+		join public.vps_nodes n on n.id=w.node_id
+		where n.token_hash=$1 and n.status='online' and w.status='assigned'
+		order by w.created_at asc
+		limit 1`
+	err := s.db.QueryRow(ctx, q, crypto.HashToken(nodeToken)).Scan(
+		&workloadID, &work.Image, &work.ImageDigest, &work.Command, &work.Env,
+		&work.CPUMillis, &work.MemoryBytes, &work.Volume)
+	if err == pgx.ErrNoRows {
+		reply(w, http.StatusNoContent, nil)
+		return
+	}
+	if err != nil {
+		reply(w, http.StatusInternalServerError, map[string]string{"error": "poll failed"})
+		return
+	}
+
+	const claim = `update public.vps_workloads w
+		set status='running',started_at=now()
+		from public.vps_nodes n
+		where w.id=$1 and w.node_id=n.id and n.token_hash=$2 and w.status='assigned'`
+	tag, err := s.db.Exec(ctx, claim, workloadID, crypto.HashToken(nodeToken))
+	if err != nil || tag.RowsAffected() != 1 {
+		reply(w, http.StatusConflict, map[string]string{"error": "workload claim lost"})
+		return
+	}
+
+	reply(w, http.StatusOK, map[string]any{"id": workloadID, "workload": work})
+}
+
+func (s *Server) result(w http.ResponseWriter, r *http.Request) {
+	nodeToken := bearer(r)
+	if nodeToken == "" {
+		reply(w, http.StatusUnauthorized, map[string]string{"error": "missing node token"})
+		return
+	}
+
+	id := strings.TrimPrefix(r.URL.Path, "/v1/workloads/")
+	id = strings.TrimSuffix(id, "/result")
+	if id == "" {
+		reply(w, http.StatusBadRequest, map[string]string{"error": "workload id required"})
+		return
+	}
+
+	var in WorkloadResult
+	if err := decodeJSON(w, r, &in); err != nil {
+		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+
+	status := "failed"
+	if in.Success {
+		status = "stopped"
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	const q = `update public.vps_workloads w
+		set status=$1,finished_at=now()
+		from public.vps_nodes n
+		where w.id=$2 and w.node_id=n.id and n.token_hash=$3
+		  and w.status='running'`
+	tag, err := s.db.Exec(ctx, q, status, id, crypto.HashToken(nodeToken))
+	if err != nil {
+		reply(w, http.StatusInternalServerError, map[string]string{"error": "result update failed"})
+		return
+	}
+	if tag.RowsAffected() != 1 {
+		reply(w, http.StatusNotFound, map[string]string{"error": "workload not found"})
+		return
+	}
+	reply(w, http.StatusOK, map[string]any{"ok": true, "status": status})
+}
+
+func main() {
+	dsn := os.Getenv("DATABASE_URL")
+	internal := os.Getenv("VPS_INTERNAL_TOKEN")
+	bootstrap := os.Getenv("VPS_NODE_BOOTSTRAP_TOKEN")
+	if dsn == "" || internal == "" || bootstrap == "" {
+		log.Fatal("DATABASE_URL, VPS_INTERNAL_TOKEN and VPS_NODE_BOOTSTRAP_TOKEN are required")
+	}
+
+	db, err := pgxpool.New(context.Background(), dsn)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	s := &Server{db: db, internal: internal, bootstrap: bootstrap}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		reply(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("/v1/nodes/register", s.register)
+	mux.HandleFunc("/v1/nodes/heartbeat", s.heartbeat)
+	mux.HandleFunc("/v1/nodes/poll", s.poll)
+	mux.HandleFunc("/v1/workloads", s.schedule)
+	mux.HandleFunc("/v1/workloads/", s.result)
+
+	addr := os.Getenv("VPS_CONTROL_PLANE_ADDR")
+	if addr == "" {
+		addr = ":8787"
+	}
+	log.Printf("Testagram VPS control plane listening on %s", addr)
+	log.Fatal((&http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}).ListenAndServe())
+}
