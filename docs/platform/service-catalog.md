@@ -47,7 +47,7 @@ This catalogue separates the Testagram-owned service boundary from implementatio
 - Internal APIs require bearer credentials or stronger workload identity. Never ship internal tokens to browsers or mobile apps.
 - Cache is never authoritative for users, credentials, posts, payments, job completion, or media ownership.
 - Durable jobs need idempotency, leases, bounded retries, dead-letter/reconciliation paths, and queue-age metrics.
-- Adapters need contract tests so implementations can change without rewriting business logic.
+- Adapters need contract tests so implementations can change without rewriting business logic. The reusable Go client in internal/platformclient exposes Cache, RateLimiter, and Queue interfaces over the versioned internal HTTP API; consumers should depend on these interfaces rather than importing a Redis/Valkey SDK. New consumers still need to be migrated and tested before claiming full decoupling.
 
 ## Migration and production cutover gate
 
