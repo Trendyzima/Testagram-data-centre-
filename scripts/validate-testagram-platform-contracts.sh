@@ -6,7 +6,8 @@ for script in \
   testagram-platform/status.sh \
   testagram-platform/healthcheck.sh \
   testagram-platform/storage.sh \
-  testagram-platform/preflight.sh; do
+  testagram-platform/preflight.sh \
+  testagram-platform/deploy.sh; do
   bash -n "$script"
 done
 grep -q 'STAGE=.*BASHPID' testagram-platform/prepare.sh
