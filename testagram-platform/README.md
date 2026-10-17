@@ -23,6 +23,14 @@ The upstream release checkout is under `$TESTAGRAM_PLATFORM_ROOT/upstream/supaba
 
 ## Operations
 
+Run the read-only host/configuration preflight before a deployment. It checks Docker Compose, required secret presence, restrictive env-file permissions, RAM/disk recommendations, and Compose rendering. It never prints secret values or starts/stops containers:
+
+```bash
+TESTAGRAM_ENV_FILE=/opt/testagram/.env bash testagram-platform/preflight.sh
+```
+
+On small hosts, resource thresholds warn by default. To make RAM/disk baselines hard requirements, set `TESTAGRAM_PREFLIGHT_STRICT_RESOURCES=1` and adjust `TESTAGRAM_PREFLIGHT_MIN_RAM_GB` / `TESTAGRAM_PREFLIGHT_MIN_FREE_GB` deliberately.
+
 ```bash
 TESTAGRAM_PLATFORM_ROOT=/var/lib/testagram/platform \
 TESTAGRAM_STORAGE_ROOT=/var/lib/testagram/storage \
