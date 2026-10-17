@@ -42,6 +42,7 @@ type Workload struct {
 	Env map[string]string `json:"env"`
 	CPUMillis int `json:"cpuMillis"`
 	MemoryBytes int64 `json:"memoryBytes"`
+	StorageBytes int64 `json:"storageBytes"`
 	Volume string `json:"volume"`
 }
 
@@ -212,6 +213,12 @@ func (a *Agent) report(id string, success bool) error {
 }
 
 func (a *Agent) execute(w Workload) error {
+	if w.StorageBytes > 0 {
+		_, free := a.disk()
+		if free < w.StorageBytes {
+			return errors.New("insufficient free disk space for workload storage reservation")
+		}
+	}
 	rt := runtimeBin()
 	if rt == "" {
 		return errors.New("docker or podman is required on this execution node")
