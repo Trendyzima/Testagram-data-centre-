@@ -94,6 +94,14 @@ jobs:
           curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/dns/records | grep -q 'demo-app.example.testagram.invalid'
           curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/nodes >/dev/null
           curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/usage >/dev/null
+          register_code="$(curl -sS -o /tmp/testagram-node.json -w '%{http_code}' -H 'Authorization: Bearer ci-bootstrap' -H 'Content-Type: application/json' -d '{"name":"ci-node","platform":"linux","arch":"amd64","cpuCores":2,"memoryBytes":2147483648,"storageBytes":10737418240,"freeBytes":8589934592,"endpoint":"ci-node","capabilities":{}}' http://127.0.0.1:8787/v1/nodes/register)"
+          test "$register_code" = "201"
+          deploy_code="$(curl -sS -o /tmp/testagram-deployment.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d '{"appName":"ci-demo","image":"registry.example/testagram-demo","imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","arch":"amd64","cpuMillis":100,"memoryBytes":134217728,"storageBytes":134217728,"publicEnv":{"APP_MODE":"ci"},"command":["/bin/true"],"volume":"ci-volume"}' http://127.0.0.1:8787/v1/hosting/deployments)"
+          test "$deploy_code" = "201"
+          grep -q '"status":"assigned"' /tmp/testagram-deployment.json
+          overcommit_code="$(curl -sS -o /tmp/testagram-overcommit.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d '{"appName":"ci-heavy","image":"registry.example/testagram-heavy","imageDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","arch":"amd64","cpuMillis":1950,"memoryBytes":134217728,"storageBytes":134217728,"command":["/bin/true"]}' http://127.0.0.1:8787/v1/hosting/deployments)"
+          test "$overcommit_code" = "503"
+          grep -q 'no healthy node has sufficient unreserved CPU' /tmp/testagram-overcommit.json
           backup_hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           curl -fsS -H "$auth_header" -H 'Content-Type: application/json' -d "{\"kind\":\"full\",\"storageUri\":\"s3://ci-backups/test/full.tar\",\"sha256\":\"$backup_hash\",\"sizeBytes\":123,\"sourceHost\":\"ci\"}" http://127.0.0.1:8787/v1/hosting/backups > /tmp/testagram-backup.json
           backup_id="$(python -c 'import json; print(json.load(open("/tmp/testagram-backup.json"))["id"])')"
