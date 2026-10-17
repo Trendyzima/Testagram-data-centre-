@@ -305,7 +305,7 @@ func (s *Server) hostingDeployments(w http.ResponseWriter,r *http.Request) {
 		defer func(){ _=tx.Rollback(context.Background()) }()
 		var nodeID,endpoint string
 		err=tx.QueryRow(ctx,"select n.id::text,n.endpoint from public.vps_nodes n "+
-			"left join lateral (select coalesce(sum(cpu_millis),0)::bigint cpu_reserved,coalesce(sum(memory_bytes),0)::bigint memory_reserved "+
+			"left join lateral (select coalesce(sum(cpu_millis),0)::bigint cpu_reserved,coalesce(sum(memory_bytes),0)::bigint memory_reserved,coalesce(sum(storage_bytes),0)::bigint storage_reserved "+
 			"from public.vps_workloads where node_id=n.id and status in ('assigned','running')) r on true "+
 			"where n.status='online' and n.last_seen_at>now()-interval '45 seconds' "+
 			"and n.cpu_cores*1000-r.cpu_reserved >= $1 and n.memory_bytes-r.memory_reserved >= $2 and n.free_bytes-r.storage_reserved >= $3 "+
@@ -337,10 +337,10 @@ func (s *Server) hostingDeploymentDetail(w http.ResponseWriter,r *http.Request) 
 	id:=strings.Trim(strings.TrimPrefix(r.URL.Path,"/v1/hosting/deployments/"),"/")
 	if id=="" || strings.Contains(id,"/") { reply(w,400,map[string]string{"error":"deployment id required"}); return }
 	ctx,cancel:=context.WithTimeout(r.Context(),3*time.Second); defer cancel()
-	var app,image,digest,status string; var node,workload *string; var cpu int; var memory int64; var created,updated time.Time
-	err:=s.db.QueryRow(ctx,"select app_name,image,image_digest,node_id::text,workload_id::text,cpu_millis,memory_bytes,status,created_at,updated_at from testagram_hosting.deployments where id=$1::uuid",id).Scan(&app,&image,&digest,&node,&workload,&cpu,&memory,&status,&created,&updated)
+	var app,image,digest,status string; var node,workload *string; var cpu int; var memory,storage int64; var created,updated time.Time
+	err:=s.db.QueryRow(ctx,"select app_name,image,image_digest,node_id::text,workload_id::text,cpu_millis,memory_bytes,storage_bytes,status,created_at,updated_at from testagram_hosting.deployments where id=$1::uuid",id).Scan(&app,&image,&digest,&node,&workload,&cpu,&memory,&storage,&status,&created,&updated)
 	if err!=nil { reply(w,404,map[string]string{"error":"deployment not found"}); return }
-	reply(w,200,map[string]any{"id":id,"appName":app,"image":image,"imageDigest":digest,"nodeId":node,"workloadId":workload,"cpuMillis":cpu,"memoryBytes":memory,"status":status,"createdAt":created,"updatedAt":updated})
+	reply(w,200,map[string]any{"id":id,"appName":app,"image":image,"imageDigest":digest,"nodeId":node,"workloadId":workload,"cpuMillis":cpu,"memoryBytes":memory,"storageBytes":storage,"status":status,"createdAt":created,"updatedAt":updated})
 }
 
 func (s *Server) hostingBackups(w http.ResponseWriter,r *http.Request) {
