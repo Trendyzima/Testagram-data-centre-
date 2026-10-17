@@ -1,4 +1,4 @@
-name: testagram-platform
+name: testagram-supabase # Keep the Compose project identity stable to preserve existing named volumes
 services:
   studio:
     ports: !override
