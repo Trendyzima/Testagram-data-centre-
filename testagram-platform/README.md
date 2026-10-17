@@ -27,6 +27,12 @@ Run the read-only host/configuration preflight before a deployment. It checks Do
 
 ```bash
 TESTAGRAM_ENV_FILE=/opt/testagram/.env bash testagram-platform/preflight.sh
+
+# Optional: validate config without changing containers
+TESTAGRAM_ENV_FILE=/opt/testagram/.env TESTAGRAM_DEPLOY_DRY_RUN=1 bash testagram-platform/deploy.sh
+
+# Explicit deployment (builds and starts services; does not change DNS or migrate schemas)
+TESTAGRAM_ENV_FILE=/opt/testagram/.env bash testagram-platform/deploy.sh
 ```
 
 On small hosts, resource thresholds warn by default. To make RAM/disk baselines hard requirements, set `TESTAGRAM_PREFLIGHT_STRICT_RESOURCES=1` and adjust `TESTAGRAM_PREFLIGHT_MIN_RAM_GB` / `TESTAGRAM_PREFLIGHT_MIN_FREE_GB` deliberately.
