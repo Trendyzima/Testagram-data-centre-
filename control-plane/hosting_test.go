@@ -121,3 +121,27 @@ func TestDomainReservationNeedsConfiguredBaseDomainAndAllowlistedTarget(t *testi
 		t.Fatalf("wanted 503 when no base domain is configured, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestDomainActivationFailsClosedWithoutExpectedOriginIP(t *testing.T) {
+	t.Setenv("TESTAGRAM_BASE_DOMAIN", "testagram.site")
+	t.Setenv("TESTAGRAM_PUBLIC_ORIGIN_IP", "")
+	s := &Server{internal: "unit-test-token"}
+	req := httptest.NewRequest(http.MethodPost, "/v1/hosting/domains/demo/activate", nil)
+	req.Header.Set("Authorization", "Bearer unit-test-token")
+	rec := httptest.NewRecorder()
+	s.hostingDomainActions(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("wanted 503 without expected origin IP, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTLSAuthorizationRejectsHostOutsideManagedZone(t *testing.T) {
+	t.Setenv("TESTAGRAM_BASE_DOMAIN", "testagram.site")
+	s := &Server{}
+	req := httptest.NewRequest(http.MethodGet, "/v1/hosting/tls/authorize?domain=attacker.example", nil)
+	rec := httptest.NewRecorder()
+	s.hostingTLSAuthorize(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("wanted 403 for external host, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
