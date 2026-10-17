@@ -26,7 +26,7 @@ test "$(git -C "$UPSTREAM" branch --show-current)" = "$REF"
 # Build the new runtime in a staging directory. Never delete the active project
 # or its .env; keep a timestamped rollback copy before switching directories.
 PROJECT_PARENT="$(dirname "$PROJECT")"
-STAGE="$PROJECT_PARENT/.project.stage.$"
+STAGE="$PROJECT_PARENT/.project.stage.$BASHPID"
 BACKUP="$PROJECT_PARENT/$(basename "$PROJECT").previous.$(date -u +%Y%m%dT%H%M%SZ)"
 cleanup() { rm -rf "$STAGE"; }
 trap cleanup EXIT
