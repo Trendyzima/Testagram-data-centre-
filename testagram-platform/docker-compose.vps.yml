@@ -1,0 +1,20 @@
+name: testagram-platform
+services:
+  studio:
+    ports: !override
+      - "127.0.0.1:3000:3000"
+  api-gw:
+    ports: !override
+      - "127.0.0.1:8000:8000"
+  storage:
+    volumes:
+      - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/supabase:/var/lib/storage:z
+    environment:
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+  imgproxy:
+    volumes:
+      - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/supabase:/var/lib/storage:z
+networks:
+  default:
+    name: testagram-platform
