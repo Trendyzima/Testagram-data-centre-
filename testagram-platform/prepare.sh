@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="${TESTAGRAM_PLATFORM_ROOT:-${SUPABASE_DATA_ROOT:-/var/lib/testagram/platform}}"
+ROOT="${TESTAGRAM_PLATFORM_ROOT:-${SUPABASE_DATA_ROOT:-/var/lib/testagram/supabase}}"
 UPSTREAM="${TESTAGRAM_PLATFORM_UPSTREAM_ROOT:-${SUPABASE_UPSTREAM_ROOT:-$ROOT/upstream/supabase}}"
 PROJECT="${TESTAGRAM_PLATFORM_PROJECT_ROOT:-${SUPABASE_PROJECT_ROOT:-$ROOT/project}}"
 REF="${TESTAGRAM_PLATFORM_RELEASE:-${SUPABASE_SELF_HOSTED_REF:-self-hosted/v0.8.2}}"
@@ -25,8 +25,9 @@ test "$(git -C "$UPSTREAM" branch --show-current)" = "$REF"
 
 # Build the new runtime in a staging directory. Never delete the active project
 # or its .env; keep a timestamped rollback copy before switching directories.
-STAGE="$ROOT/.project.stage.$$"
-BACKUP="$ROOT/project.previous.$(date -u +%Y%m%dT%H%M%SZ)"
+PROJECT_PARENT="$(dirname "$PROJECT")"
+STAGE="$PROJECT_PARENT/.project.stage.$"
+BACKUP="$PROJECT_PARENT/$(basename "$PROJECT").previous.$(date -u +%Y%m%dT%H%M%SZ)"
 cleanup() { rm -rf "$STAGE"; }
 trap cleanup EXIT
 mkdir -p "$STAGE"
