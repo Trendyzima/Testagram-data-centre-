@@ -1,5 +1,7 @@
 create schema if not exists testagram_hosting;
 
+alter table public.vps_workloads add column if not exists storage_bytes bigint not null default 268435456 check (storage_bytes > 0);
+
 create table if not exists testagram_hosting.domains (
   id uuid primary key default gen_random_uuid(),
   slug text not null unique,
@@ -20,7 +22,8 @@ create table if not exists testagram_hosting.deployments (
   node_id uuid references public.vps_nodes(id) on delete set null,
   workload_id uuid references public.vps_workloads(id) on delete set null,
   cpu_millis integer not null check (cpu_millis between 50 and 64000),
-  memory_bytes bigint not null check (memory_bytes between 67108864 and 274877906944),
+  memory_bytes bigint not null check (memory_bytes between 67108864 and 68719476736),
+  storage_bytes bigint not null default 268435456 check (storage_bytes between 67108864 and 1099511627776),
   public_env jsonb not null default '{}'::jsonb,
   secret_refs jsonb not null default '{}'::jsonb,
   status text not null default 'queued' check (status in ('queued','assigned','running','stopped','failed')),
