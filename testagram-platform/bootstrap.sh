@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${TESTAGRAM_PLATFORM_ROOT:-${SUPABASE_DATA_ROOT:-/var/lib/testagram/supabase}}"
+ROOT="${TESTAGRAM_PLATFORM_ROOT:-${SUPABASE_DATA_ROOT:-/var/lib/testagram/platform}}"
 SRC="$ROOT/upstream"
 mkdir -p "$SRC"
 
