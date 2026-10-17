@@ -17,4 +17,4 @@ services:
       - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/supabase:/var/lib/storage:z
 networks:
   default:
-    name: testagram-platform
+    name: testagram-supabase
