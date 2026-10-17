@@ -35,6 +35,7 @@ type DeploymentRequest struct {
 	Arch        string            `json:"arch"`
 	CPUMillis   int               `json:"cpuMillis"`
 	MemoryBytes int64             `json:"memoryBytes"`
+	StorageBytes int64             `json:"storageBytes"`
 	PublicEnv   map[string]string `json:"publicEnv"`
 	SecretRefs  map[string]string `json:"secretRefs"`
 	Command     []string          `json:"command"`
@@ -256,15 +257,15 @@ func (s *Server) hostingDeployments(w http.ResponseWriter,r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		ctx,cancel:=context.WithTimeout(r.Context(),4*time.Second); defer cancel()
-		rows,err:=s.db.Query(ctx,"select id::text,app_name,image,image_digest,node_id::text,workload_id::text,cpu_millis,memory_bytes,status,created_at,updated_at from testagram_hosting.deployments order by created_at desc limit 500")
+		rows,err:=s.db.Query(ctx,"select id::text,app_name,image,image_digest,node_id::text,workload_id::text,cpu_millis,memory_bytes,storage_bytes,status,created_at,updated_at from testagram_hosting.deployments order by created_at desc limit 500")
 		if err!=nil { reply(w,503,map[string]string{"error":"deployment inventory unavailable"}); return }
 		defer rows.Close()
 		items:=make([]map[string]any,0)
 		for rows.Next() {
 			var id,app,image,digest,status string; var node,workload *string
-			var cpu int; var memory int64; var created,updated time.Time
-			if err:=rows.Scan(&id,&app,&image,&digest,&node,&workload,&cpu,&memory,&status,&created,&updated); err!=nil { reply(w,500,map[string]string{"error":"deployment inventory decode failed"}); return }
-			items=append(items,map[string]any{"id":id,"appName":app,"image":image,"imageDigest":digest,"nodeId":node,"workloadId":workload,"cpuMillis":cpu,"memoryBytes":memory,"status":status,"createdAt":created,"updatedAt":updated})
+			var cpu int; var memory,storage int64; var created,updated time.Time
+			if err:=rows.Scan(&id,&app,&image,&digest,&node,&workload,&cpu,&memory,&storage,&status,&created,&updated); err!=nil { reply(w,500,map[string]string{"error":"deployment inventory decode failed"}); return }
+			items=append(items,map[string]any{"id":id,"appName":app,"image":image,"imageDigest":digest,"nodeId":node,"workloadId":workload,"cpuMillis":cpu,"memoryBytes":memory,"storageBytes":storage,"status":status,"createdAt":created,"updatedAt":updated})
 		}
 		if err:=rows.Err(); err!=nil { reply(w,503,map[string]string{"error":"deployment inventory unavailable"}); return }
 		reply(w,200,map[string]any{"deployments":items,"count":len(items)})
@@ -279,8 +280,9 @@ func (s *Server) hostingDeployments(w http.ResponseWriter,r *http.Request) {
 		}
 		if in.CPUMillis==0 { in.CPUMillis=250 }
 		if in.MemoryBytes==0 { in.MemoryBytes=268435456 }
-		if in.CPUMillis<50 || in.CPUMillis>64000 || in.MemoryBytes<67108864 || in.MemoryBytes>68719476736 {
-			reply(w,400,map[string]string{"error":"resource request is outside supported bounds (50-64000 CPU millis, 64MiB-64GiB RAM)"}); return
+		if in.StorageBytes==0 { in.StorageBytes=268435456 }
+		if in.CPUMillis<50 || in.CPUMillis>64000 || in.MemoryBytes<67108864 || in.MemoryBytes>68719476736 || in.StorageBytes<67108864 || in.StorageBytes>1099511627776 {
+			reply(w,400,map[string]string{"error":"resource request is outside supported bounds (50-64000 CPU millis, 64MiB-64GiB RAM, 64MiB-1TiB storage)"}); return
 		}
 		if len(in.Command)>16 { reply(w,400,map[string]string{"error":"command exceeds 16 arguments"}); return }
 		for _,arg:=range in.Command { if len(arg)>256 || strings.ContainsRune(arg,0) { reply(w,400,map[string]string{"error":"command argument invalid or too long"}); return } }
@@ -306,23 +308,23 @@ func (s *Server) hostingDeployments(w http.ResponseWriter,r *http.Request) {
 			"left join lateral (select coalesce(sum(cpu_millis),0)::bigint cpu_reserved,coalesce(sum(memory_bytes),0)::bigint memory_reserved "+
 			"from public.vps_workloads where node_id=n.id and status in ('assigned','running')) r on true "+
 			"where n.status='online' and n.last_seen_at>now()-interval '45 seconds' "+
-			"and n.cpu_cores*1000-r.cpu_reserved >= $1 and n.memory_bytes-r.memory_reserved >= $2 and n.free_bytes >= $2 "+
-			"and ($3='' or n.arch=$3) order by (n.free_bytes-r.memory_reserved) desc limit 1 for update of n skip locked",
-			in.CPUMillis,in.MemoryBytes,in.Arch).Scan(&nodeID,&endpoint)
+			"and n.cpu_cores*1000-r.cpu_reserved >= $1 and n.memory_bytes-r.memory_reserved >= $2 and n.free_bytes-r.storage_reserved >= $3 "+
+			"and ($4='' or n.arch=$4) order by (n.free_bytes-r.storage_reserved) desc limit 1 for update of n skip locked",
+			in.CPUMillis,in.MemoryBytes,in.StorageBytes,in.Arch).Scan(&nodeID,&endpoint)
 		if err==pgx.ErrNoRows { reply(w,503,map[string]string{"error":"no healthy node has sufficient unreserved CPU, RAM and storage"}); return }
 		if err!=nil { reply(w,503,map[string]string{"error":"resource-aware scheduler failed"}); return }
 		var workloadID string
-		err=tx.QueryRow(ctx,"insert into public.vps_workloads(node_id,image,image_digest,command,env,cpu_millis,memory_bytes,volume,status) "+
-			"values($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8,'assigned') returning id::text",
-			nodeID,in.Image,in.ImageDigest,cmdJSON,envJSON,in.CPUMillis,in.MemoryBytes,nullIfEmpty(in.Volume)).Scan(&workloadID)
+		err=tx.QueryRow(ctx,"insert into public.vps_workloads(node_id,image,image_digest,command,env,cpu_millis,memory_bytes,storage_bytes,volume,status) "+
+			"values($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8,$9,'assigned') returning id::text",
+			nodeID,in.Image,in.ImageDigest,cmdJSON,envJSON,in.CPUMillis,in.MemoryBytes,in.StorageBytes,nullIfEmpty(in.Volume)).Scan(&workloadID)
 		if err!=nil { reply(w,500,map[string]string{"error":"workload could not be persisted"}); return }
 		var deploymentID string
-		err=tx.QueryRow(ctx,"insert into testagram_hosting.deployments(app_name,image,image_digest,node_id,workload_id,cpu_millis,memory_bytes,public_env,secret_refs,status) "+
-			"values($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'{}'::jsonb,'assigned') returning id::text",
-			in.AppName,in.Image,in.ImageDigest,nodeID,workloadID,in.CPUMillis,in.MemoryBytes,envJSON).Scan(&deploymentID)
+		err=tx.QueryRow(ctx,"insert into testagram_hosting.deployments(app_name,image,image_digest,node_id,workload_id,cpu_millis,memory_bytes,storage_bytes,public_env,secret_refs,status) "+
+			"values($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,'{}'::jsonb,'assigned') returning id::text",
+			in.AppName,in.Image,in.ImageDigest,nodeID,workloadID,in.CPUMillis,in.MemoryBytes,in.StorageBytes,envJSON).Scan(&deploymentID)
 		if err!=nil { reply(w,500,map[string]string{"error":"deployment record could not be persisted"}); return }
 		if err=tx.Commit(ctx); err!=nil { reply(w,500,map[string]string{"error":"deployment transaction commit failed"}); return }
-		reply(w,http.StatusCreated,map[string]any{"id":deploymentID,"appName":in.AppName,"workloadId":workloadID,"nodeId":nodeID,"nodeEndpoint":endpoint,"status":"assigned","imageDigest":in.ImageDigest,"cpuMillis":in.CPUMillis,"memoryBytes":in.MemoryBytes,"note":"Runtime execution is asynchronous; poll deployment status. No public DNS or route is changed by this API."})
+		reply(w,http.StatusCreated,map[string]any{"id":deploymentID,"appName":in.AppName,"workloadId":workloadID,"nodeId":nodeID,"nodeEndpoint":endpoint,"status":"assigned","imageDigest":in.ImageDigest,"cpuMillis":in.CPUMillis,"memoryBytes":in.MemoryBytes,"storageBytes":in.StorageBytes,"note":"Runtime execution is asynchronous; poll deployment status. No public DNS or route is changed by this API."})
 	default: methodNotAllowed(w)
 	}
 }
