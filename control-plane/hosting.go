@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"regexp"
@@ -70,6 +71,8 @@ func (s *Server) registerHostingRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/hosting/nodes", s.hostingNodes)
 	mux.HandleFunc("/v1/hosting/usage", s.hostingUsage)
 	mux.HandleFunc("/v1/hosting/domains", s.hostingDomains)
+	mux.HandleFunc("/v1/hosting/domains/", s.hostingDomainActions)
+	mux.HandleFunc("/v1/hosting/tls/authorize", s.hostingTLSAuthorize)
 	mux.HandleFunc("/v1/hosting/dns/records", s.hostingDNSRecords)
 	mux.HandleFunc("/v1/hosting/deployments", s.hostingDeployments)
 	mux.HandleFunc("/v1/hosting/deployments/", s.hostingDeploymentDetail)
@@ -224,6 +227,104 @@ func (s *Server) hostingDomains(w http.ResponseWriter, r *http.Request) {
 			"createdAt":created})
 	default: methodNotAllowed(w)
 	}
+}
+
+func (s *Server) hostingDomainActions(w http.ResponseWriter, r *http.Request) {
+	if !s.internalOnly(w, r) { return }
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/hosting/domains/"), "/"), "/")
+	if len(parts) != 2 || parts[0] == "" { reply(w, 404, map[string]string{"error":"expected /v1/hosting/domains/{slug}/activate or /disable"}); return }
+	slug, action := strings.ToLower(parts[0]), parts[1]
+	if r.Method != http.MethodPost { methodNotAllowed(w); return }
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	switch action {
+	case "activate":
+		base, err := normalizedBaseDomain()
+		if err != nil { reply(w, 503, map[string]string{"error":err.Error()}); return }
+		host := slug + "." + base
+		expected := strings.TrimSpace(os.Getenv("TESTAGRAM_PUBLIC_ORIGIN_IP"))
+		if net.ParseIP(expected) == nil { reply(w, 503, map[string]string{"error":"TESTAGRAM_PUBLIC_ORIGIN_IP must be configured before DNS activation"}); return }
+		resolverCtx, resolverCancel := context.WithTimeout(ctx, 3*time.Second)
+		defer resolverCancel()
+		addresses, err := net.DefaultResolver.LookupIPAddr(resolverCtx, host)
+		matched := false
+		if err == nil {
+			for _, address := range addresses { if address.IP.Equal(net.ParseIP(expected)) { matched = true; break } }
+		}
+		if !matched { reply(w, 409, map[string]string{"error":"DNS does not currently resolve to the configured Testagram origin IP","hostname":host}); return }
+		var targetService string
+		err = s.db.QueryRow(ctx, "select target_service from testagram_hosting.domains where slug=$1 and hostname=$2 and status='pending_dns'", slug, host).Scan(&targetService)
+		if err != nil { reply(w, 404, map[string]string{"error":"pending domain reservation not found"}); return }
+		if _, ok := domainTargets()[targetService]; !ok { reply(w, 409, map[string]string{"error":"domain target is no longer allowlisted"}); return }
+		_, err = s.db.Exec(ctx, "update testagram_hosting.domains set status='active',updated_at=now() where slug=$1 and hostname=$2 and status='pending_dns'", slug, host)
+		if err != nil { reply(w, 500, map[string]string{"error":"domain activation failed"}); return }
+		reply(w, 200, map[string]any{"slug":slug,"hostname":host,"status":"active","dnsVerified":true,"https":"Caddy on-demand TLS will request a certificate when the hostname is first accessed"})
+	case "disable":
+		tag, err := s.db.Exec(ctx, "update testagram_hosting.domains set status='disabled',updated_at=now() where slug=$1 and status <> 'disabled'", slug)
+		if err != nil { reply(w, 500, map[string]string{"error":"domain disable failed"}); return }
+		if tag.RowsAffected() != 1 { reply(w, 404, map[string]string{"error":"domain reservation not found"}); return }
+		reply(w, 200, map[string]any{"slug":slug,"status":"disabled"})
+	default:
+		reply(w, 404, map[string]string{"error":"unsupported domain action"})
+	}
+}
+
+// hostingTLSAuthorize is an internal Caddy on-demand TLS ask endpoint. Caddy
+// may request a certificate only for a hostname that has been DNS-verified and activated.
+func (s *Server) hostingTLSAuthorize(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet { methodNotAllowed(w); return }
+	host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(r.URL.Query().Get("domain")), "."))
+	base, err := normalizedBaseDomain()
+	if err != nil || !strings.HasSuffix(host, "."+base) { http.Error(w, "denied", http.StatusForbidden); return }
+	label := strings.TrimSuffix(host, "."+base)
+	if !hostingSlugPattern.MatchString(label) || isReservedDomainSlug(label) { http.Error(w, "denied", http.StatusForbidden); return }
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	var targetService string
+	err = s.db.QueryRow(ctx, "select target_service from testagram_hosting.domains where hostname=$1 and status='active'", host).Scan(&targetService)
+	if err != nil { http.Error(w, "denied", http.StatusForbidden); return }
+	if _, ok := domainTargets()[targetService]; !ok { http.Error(w, "denied", http.StatusForbidden); return }
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("allowed"))
+}
+
+func normalizeRequestHost(value string) string {
+	host := strings.TrimSpace(value)
+	if parsed, _, err := net.SplitHostPort(host); err == nil { host = parsed }
+	return strings.ToLower(strings.TrimSuffix(host, "."))
+}
+
+// withManagedDomainRouting sends activated tenant subdomains to their explicitly
+// allowlisted private service origin. Unknown, pending and disabled subdomains fail closed.
+func (s *Server) withManagedDomainRouting(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		base, err := normalizedBaseDomain()
+		host := normalizeRequestHost(r.Host)
+		mainDomain := strings.ToLower(strings.TrimSpace(os.Getenv("TESTAGRAM_DOMAIN")))
+		if parsed, parseErr := url.Parse(mainDomain); parseErr == nil && parsed.Host != "" { mainDomain = parsed.Host }
+		if err == nil && host != "" && host != mainDomain && strings.HasSuffix(host, "."+base) {
+			s.proxyManagedDomain(w, r, host)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) proxyManagedDomain(w http.ResponseWriter, r *http.Request, host string) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	var targetService string
+	err := s.db.QueryRow(ctx, "select target_service from testagram_hosting.domains where hostname=$1 and status='active'", host).Scan(&targetService)
+	if err != nil { http.NotFound(w, r); return }
+	target, ok := domainTargets()[targetService]
+	if !ok { http.Error(w, "domain target unavailable", http.StatusBadGateway); return }
+	targetURL, err := url.Parse(target)
+	if err != nil { http.Error(w, "domain target invalid", http.StatusBadGateway); return }
+	proxy := httputil.NewSingleHostReverseProxy(targetURL)
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		http.Error(w, "managed application temporarily unavailable", http.StatusBadGateway)
+	}
+	proxy.ServeHTTP(w, r)
 }
 
 func isReservedDomainSlug(slug string) bool {
