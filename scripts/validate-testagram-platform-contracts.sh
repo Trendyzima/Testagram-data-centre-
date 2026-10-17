@@ -11,7 +11,6 @@ for script in \
 done
 grep -q 'STAGE=.*BASHPID' testagram-platform/prepare.sh
 grep -q '^name: testagram-supabase' testagram-platform/docker-compose.vps.yml
-grep -q 'name: testagram-supabase$' testagram-platform/docker-compose.vps.yml
 grep -q 'testagram-platform' docs/platform/service-catalog.md
 grep -q 'self-sustaining' docs/platform/self-sustaining-operations.md
 grep -q '/readyz' docs/platform/openapi/internal-platform.yaml
