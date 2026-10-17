@@ -80,6 +80,44 @@ paths:
         '401': {description: Unauthorized}
         '409': {description: Slug or hostname already reserved}
         '503': {description: Base domain is not configured}
+  /v1/hosting/domains/{slug}/activate:
+    post:
+      summary: Activate a reservation only after DNS resolves to the configured origin IP
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: DNS verified and domain activated for gated HTTPS routing}
+        '401': {description: Unauthorized}
+        '409': {description: DNS does not resolve to the configured origin IP}
+        '503': {description: Base domain or origin IP not configured}
+  /v1/hosting/domains/{slug}/disable:
+    post:
+      summary: Disable a managed subdomain
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Domain disabled; proxy and new certificate authorization fail closed}
+        '401': {description: Unauthorized}
+        '404': {description: Reservation not found}
+  /v1/hosting/tls/authorize:
+    get:
+      security: []
+      summary: Private Caddy on-demand TLS authorization callback
+      description: Only returns success for an active, DNS-verified subdomain whose target remains allowlisted. Must remain private to the service network.
+      parameters:
+        - in: query
+          name: domain
+          required: true
+          schema: {type: string, format: hostname}
+      responses:
+        '200': {description: Domain may receive a certificate}
+        '403': {description: Domain not active or not authorized}
   /v1/hosting/dns/records:
     get:
       summary: Export DNS desired state
@@ -113,6 +151,7 @@ paths:
                 arch: {type: string}
                 cpuMillis: {type: integer, minimum: 50, maximum: 64000, default: 250}
                 memoryBytes: {type: integer, minimum: 67108864, maximum: 68719476736, default: 268435456}
+                storageBytes: {type: integer, minimum: 67108864, maximum: 1099511627776, default: 268435456}
                 publicEnv:
                   type: object
                   maxProperties: 64
