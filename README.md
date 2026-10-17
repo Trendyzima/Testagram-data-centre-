@@ -91,6 +91,8 @@ That gate is not marked green until a physical device supplies evidence for ever
 - [Internal platform OpenAPI contract](docs/platform/openapi/internal-platform.yaml)
 - [Testagram-branded self-hosted runtime and safe preparation](testagram-platform/README.md)
 - [Read-only deployment preflight](testagram-platform/preflight.sh)
+- [Authenticated hosting control plane API](docs/platform/openapi/hosting-control-plane.yaml)
+- [Hosting control plane implementation boundaries](docs/platform/service-catalog.md#hosting-control-plane-implementation-boundary)
 - [Bounded deployment command with health gates](testagram-platform/deploy.sh)
 - [Provider-independent internal platform client](internal/platformclient/client.go)
 
