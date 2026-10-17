@@ -82,3 +82,12 @@ The required physical path remains:
 **real Android storage → real MP4 upload → Android local media server → real FFmpeg HLS → reachable Testagram frontend → actual playback**
 
 That gate is not marked green until a physical device supplies evidence for every hop.
+
+
+## Testagram platform architecture
+
+- [Service catalogue, APIs, health checks, and migration gates](docs/platform/service-catalog.md)
+- [Internal platform OpenAPI contract](docs/platform/openapi/internal-platform.yaml)
+- [Testagram-branded self-hosted runtime and safe preparation](testagram-platform/README.md)
+
+The platform rebrand preserves compatibility with the existing runtime paths and Compose identity. It does not itself migrate production authentication, database policies, media, or traffic.
