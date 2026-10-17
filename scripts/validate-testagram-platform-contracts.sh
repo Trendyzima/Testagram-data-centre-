@@ -9,8 +9,15 @@ for script in \
   bash -n "$script"
 done
 grep -q 'STAGE=.*BASHPID' testagram-platform/prepare.sh
-grep -q 'name: testagram-supabase' testagram-platform/docker-compose.vps.yml
-grep -q 'name: testagram-supabase' testagram-platform/docker-compose.vps.yml
+grep -q '^name: testagram-supabase' testagram-platform/docker-compose.vps.yml
+grep -q 'name: testagram-supabase
+grep -q 'testagram-platform' docs/platform/service-catalog.md
+grep -q '/readyz' docs/platform/openapi/internal-platform.yaml
+grep -q '/v1/cache/set' docs/platform/openapi/internal-platform.yaml
+grep -q '/v1/queue/claim' docs/platform/openapi/internal-platform.yaml
+grep -q '/v1/audit' docs/platform/openapi/internal-platform.yaml
+echo "Testagram platform shell and contract smoke checks: PASS"
+ testagram-platform/docker-compose.vps.yml
 grep -q 'testagram-platform' docs/platform/service-catalog.md
 grep -q '/readyz' docs/platform/openapi/internal-platform.yaml
 grep -q '/v1/cache/set' docs/platform/openapi/internal-platform.yaml
