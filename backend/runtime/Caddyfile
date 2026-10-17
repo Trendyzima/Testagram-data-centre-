@@ -1,5 +1,8 @@
 {
   email {$TLS_ADMIN_EMAIL}
+  on_demand_tls {
+    ask http://control-plane:8787/v1/hosting/tls/authorize
+  }
 }
 
 :80 {
@@ -70,3 +73,23 @@
   }
 }
 
+
+# Catch-all for Testagram-managed tenant subdomains. The control plane only
+# authorizes hostnames that were DNS-verified and activated by an operator.
+# Caddy obtains per-host certificates on demand; the ask endpoint prevents
+# arbitrary hostname certificate issuance.
+https:// {
+  tls {
+    on_demand
+  }
+  encode zstd gzip
+  request_body {
+    max_size 100MB
+  }
+  header {
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy no-referrer
+  }
+  reverse_proxy control-plane:8787
+}
