@@ -30,7 +30,6 @@ type Registration struct {
 	CPUCores int `json:"cpuCores"`
 	MemoryBytes int64 `json:"memoryBytes"`
 	StorageBytes int64 `json:"storageBytes"`
-	StorageBytes int64 `json:"storageBytes"`
 	FreeBytes int64 `json:"freeBytes"`
 	Endpoint string `json:"endpoint"`
 	Capabilities map[string]any `json:"capabilities"`
@@ -43,6 +42,7 @@ type Workload struct {
 	Env map[string]string `json:"env"`
 	CPUMillis int `json:"cpuMillis"`
 	MemoryBytes int64 `json:"memoryBytes"`
+	StorageBytes int64 `json:"storageBytes"`
 	Volume string `json:"volume"`
 }
 
