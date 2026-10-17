@@ -9,7 +9,7 @@ The authentication, Postgres API, realtime, and object-storage containers are cu
 ## Paths and configuration
 
 - Canonical deployment scripts: `testagram-platform/`
-- Runtime root: `TESTAGRAM_PLATFORM_ROOT` (default `/var/lib/testagram/platform`)
+- Runtime root: `TESTAGRAM_PLATFORM_ROOT` (default `/var/lib/testagram/supabase` for compatibility)
 - Local media and object storage root: `TESTAGRAM_STORAGE_ROOT` (default `/var/lib/testagram/storage`)
 - Testagram API URL: `TESTAGRAM_PLATFORM_URL` / `TESTAGRAM_PUBLIC_URL`
 - Legacy `SUPABASE_DATA_ROOT`, `SUPABASE_PROJECT_ROOT`, and `SUPABASE_PUBLIC_URL` settings remain accepted during migration.
