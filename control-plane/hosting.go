@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
@@ -212,7 +213,7 @@ func (s *Server) hostingDomains(w http.ResponseWriter, r *http.Request) {
 		err=s.db.QueryRow(ctx,"insert into testagram_hosting.domains(slug,hostname,target_service,status,dns_record) "+
 			"values($1,$2,$3,'pending_dns',$4) returning id::text,created_at",in.Slug,host,in.TargetService,dnsJSON).Scan(&id,&created)
 		if err!=nil {
-			var pgErr *pgx.PgError
+			var pgErr *pgconn.PgError
 			if errors.As(err,&pgErr) && pgErr.Code=="23505" { reply(w,409,map[string]string{"error":"slug or hostname already reserved"}); return }
 			reply(w,500,map[string]string{"error":"domain reservation failed"}); return
 		}
