@@ -223,7 +223,7 @@ func (s *Server) hostingDomains(w http.ResponseWriter, r *http.Request) {
 		}
 		reply(w,http.StatusCreated,map[string]any{"id":id,"slug":in.Slug,"hostname":host,"targetService":in.TargetService,
 			"targetOrigin":target,"status":"pending_dns","dnsRecord":dns,
-			"nextStep":"Apply the record at the authoritative DNS zone, validate HTTPS and route configuration, then activate through the reviewed operator workflow.",
+			"nextStep":"Apply the DNS record and confirm the allowlisted target is reachable, then activate; Caddy will request HTTPS automatically on first access.",
 			"createdAt":created})
 	default: methodNotAllowed(w)
 	}
