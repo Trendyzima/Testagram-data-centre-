@@ -46,5 +46,5 @@ for path, expected_title, required in contracts:
             assert method in {"get", "post", "put", "patch", "delete"}, f"{path}: invalid method {method} on {route}"
             assert isinstance(operation.get("responses"), dict) and operation["responses"], f"{path}: missing responses for {method.upper()} {route}"
             if route.startswith("/v1/"):
-                assert operation.get("security"), f"{path}: internal route lacks declared auth: {method.upper()} {route}"
+                assert operation.get("security", doc.get("security")), f"{path}: internal route lacks declared auth: {method.upper()} {route}"
     print(f"OpenAPI structure validation passed: {path} ({len(paths)} paths)")
