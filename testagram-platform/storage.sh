@@ -19,6 +19,6 @@ touch "$ROOT/.testagram-storage-root"
 chmod 0660 "$ROOT/.testagram-storage-root"
 
 printf 'Testagram VPS storage ready: %s\n' "$ROOT"
-printf '  Supabase objects: %s\n' "$SUPABASE"
+printf '  Platform object backing store (legacy-compatible path): %s\n' "$PLATFORM_OBJECTS"
 printf '  Testagram media:  %s\n' "$MEDIA"
 printf '  Node volumes:     %s\n' "$NODES"
