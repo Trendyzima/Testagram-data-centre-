@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -137,9 +136,3 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	return nil
 }
 
-// ParseRetryAfterSeconds is available to callers handling HTTP status errors.
-func ParseRetryAfterSeconds(value string) int64 {
-	n, _ := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-	if n < 0 { return 0 }
-	return n
-}
