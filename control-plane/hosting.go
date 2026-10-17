@@ -535,3 +535,7 @@ func (s *Server) hostingRecoveryDrills(w http.ResponseWriter,r *http.Request) {
 	default: methodNotAllowed(w)
 	}
 }
+
+func methodNotAllowed(w http.ResponseWriter) {
+	reply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+}
