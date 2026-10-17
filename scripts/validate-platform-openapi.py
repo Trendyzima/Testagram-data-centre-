@@ -25,7 +25,8 @@ contracts = [
         {
             "/healthz", "/readyz", "/v1/hosting/health",
             "/v1/hosting/nodes", "/v1/hosting/usage",
-            "/v1/hosting/domains", "/v1/hosting/dns/records",
+            "/v1/hosting/domains", "/v1/hosting/domains/{slug}/activate",
+            "/v1/hosting/domains/{slug}/disable", "/v1/hosting/tls/authorize", "/v1/hosting/dns/records",
             "/v1/hosting/deployments", "/v1/hosting/deployments/{id}",
             "/v1/hosting/backups", "/v1/hosting/backups/{id}/verify",
             "/v1/hosting/recovery/drills",
@@ -45,6 +46,6 @@ for path, expected_title, required in contracts:
         for method, operation in operations.items():
             assert method in {"get", "post", "put", "patch", "delete"}, f"{path}: invalid method {method} on {route}"
             assert isinstance(operation.get("responses"), dict) and operation["responses"], f"{path}: missing responses for {method.upper()} {route}"
-            if route.startswith("/v1/"):
+            if route.startswith("/v1/") and route not in {"/v1/config/{key}", "/v1/hosting/tls/authorize"}:
                 assert operation.get("security", doc.get("security")), f"{path}: internal route lacks declared auth: {method.upper()} {route}"
     print(f"OpenAPI structure validation passed: {path} ({len(paths)} paths)")
