@@ -15,7 +15,7 @@ fail() { printf 'FAIL  %s\n' "$1" >&2; errors=$((errors + 1)); }
 warn() { printf 'WARN  %s\n' "$1" >&2; warnings=$((warnings + 1)); }
 ok() { printf 'OK    %s\n' "$1"; }
 
-for cmd in docker awk df grep stat; do
+for cmd in docker awk df grep stat curl; do
   if command -v "$cmd" >/dev/null 2>&1; then ok "command $cmd"; else fail "required command missing: $cmd"; fi
 done
 
