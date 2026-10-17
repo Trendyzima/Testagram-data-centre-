@@ -18,7 +18,7 @@ import (
 )
 
 var (
-	hostingSlugPattern = regexp.MustCompile("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+	hostingSlugPattern = regexp.MustCompile("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 	envKeyPattern      = regexp.MustCompile("^[A-Z][A-Z0-9_]{0,63}$")
 	secretRefPattern   = regexp.MustCompile("^secret://[a-zA-Z0-9._/-]{1,180}$")
 	sha256Pattern      = regexp.MustCompile("^[0-9a-f]{64}$")
@@ -158,6 +158,7 @@ func (s *Server) hostingUsage(w http.ResponseWriter, r *http.Request) {
 func normalizedBaseDomain() (string,error) {
 	domain:=strings.ToLower(strings.TrimSuffix(strings.TrimSpace(os.Getenv("TESTAGRAM_BASE_DOMAIN")),"."))
 	if domain=="" { return "",errors.New("TESTAGRAM_BASE_DOMAIN is not configured") }
+	if len(strings.Split(domain,".")) < 2 { return "",errors.New("TESTAGRAM_BASE_DOMAIN must be a fully qualified domain") }
 	if strings.Contains(domain,":") || net.ParseIP(domain)!=nil || len(domain)>253 { return "",errors.New("TESTAGRAM_BASE_DOMAIN is invalid") }
 	for _,label:=range strings.Split(domain,".") { if !hostingSlugPattern.MatchString(label) { return "",errors.New("TESTAGRAM_BASE_DOMAIN is invalid") } }
 	return domain,nil
