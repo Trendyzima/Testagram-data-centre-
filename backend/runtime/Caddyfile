@@ -6,7 +6,7 @@
 }
 
 :80 {
-  respond "Testagram edge requires HTTPS" 421
+  redir https://{host}{uri} permanent
 }
 
 {$TESTAGRAM_DOMAIN} {
