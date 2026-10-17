@@ -20,6 +20,7 @@ This catalogue separates the Testagram-owned service boundary from implementatio
 | Notifications | Testagram notification API | /v1/devices, /v1/notifications, /v1/stream | /healthz, /readyz | Preferences and delivery state durable; streams can be transient | Implemented; delivery channels are adapters |
 | Maintenance jobs | Testagram worker | Internal maintenance loop | /healthz, /readyz | PostgreSQL remains source of truth | Implemented |
 | Distributed compute | Testagram control plane and node agent | Authenticated control-plane API; outbound node channel | control plane /healthz and /readyz | Node/workload state in PostgreSQL; scratch is disposable | Baseline implemented; keep control endpoints private |
+| Hosting control plane | Testagram control-plane hosting API | /v1/hosting/domains, /v1/hosting/deployments, /v1/hosting/nodes, /v1/hosting/usage | /v1/hosting/health plus /healthz and /readyz | PostgreSQL hosting schema; workload state in PostgreSQL | API implemented in progress; domains are desired-state reservations, DNS/TLS application and secret resolver are not automatic |
 | Search | PostgreSQL search first; optional search engine behind adapter | App-owned search interface | Adapter-specific readiness probe | Index is rebuildable; canonical content in PostgreSQL | Architecture target; no separate search engine claimed |
 | Email | Durable transactional outbox plus SMTP/provider adapter | Internal enqueue/send contract to finalize | Queue/worker readiness and adapter probe | Outbox and retry state durable | Adapter boundary planned |
 | AI | Local inference adapter plus optional external provider adapters | Versioned AI gateway contract to finalize | Model availability, timeout, queue depth | Outputs/embeddings follow retention policy | Architecture target; no local GPU service claimed |
@@ -48,6 +49,12 @@ This catalogue separates the Testagram-owned service boundary from implementatio
 - Cache is never authoritative for users, credentials, posts, payments, job completion, or media ownership.
 - Durable jobs need idempotency, leases, bounded retries, dead-letter/reconciliation paths, and queue-age metrics.
 - Adapters need contract tests so implementations can change without rewriting business logic. The reusable Go client in internal/platformclient exposes Cache, RateLimiter, and Queue interfaces over the versioned internal HTTP API; consumers should depend on these interfaces rather than importing a Redis/Valkey SDK. New consumers still need to be migrated and tested before claiming full decoupling.
+
+## Hosting control plane implementation boundary
+
+The private operator API is documented in [hosting-control-plane.yaml](openapi/hosting-control-plane.yaml). It reserves a subdomain beneath `TESTAGRAM_BASE_DOMAIN` only when `targetService` maps to an explicit `TESTAGRAM_DOMAIN_TARGETS` allowlist. DNS output is desired state only: it does not register a domain, modify authoritative DNS, configure a Caddy route, or issue a certificate. Do not mark a reservation live until DNS, ingress routing and HTTPS have been tested. Deployment scheduling pins an immutable image digest and reserves only capacity on a fresh node, counting active workload CPU/RAM reservations. Secret references are deliberately rejected until a real secret resolver exists; public environment keys that look secret-bearing are rejected.
+
+The backup endpoints store manifests and verification/drill reports. A matching hash report is not by itself proof of disaster recovery; a trusted worker must read the backup and restore it to an isolated target before submitting the report. The CI contract tests do not yet substitute for a production backup restore drill.
 
 ## Migration and production cutover gate
 
