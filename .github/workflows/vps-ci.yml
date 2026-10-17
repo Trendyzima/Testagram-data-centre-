@@ -83,9 +83,24 @@ jobs:
           docker exec vps-ci-db pg_isready -U postgres -d postgres
           docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'for f in /migrations/*.sql; do psql -h vps-ci-db -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
           POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase docker compose -f vps/docker-compose.yml build control-plane
-          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase docker compose -f vps/docker-compose.yml up -d control-plane
+          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase TESTAGRAM_BASE_DOMAIN=example.testagram.invalid TESTAGRAM_DOMAIN_TARGETS=web=http://web:3000 TESTAGRAM_PUBLIC_DNS_TARGET=edge.testagram.invalid docker compose -f vps/docker-compose.yml up -d control-plane
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/readyz >/dev/null 2>&1 && break; sleep 2; done
           curl -fsS http://127.0.0.1:8787/healthz
+          auth_header="Authorization: Bearer ci-internal"
+          curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/health | grep -q '"status":"ok"'
+          domain_code="$(curl -sS -o /tmp/testagram-domain.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d '{"slug":"demo-app","targetService":"web"}' http://127.0.0.1:8787/v1/hosting/domains)"
+          test "$domain_code" = "201"
+          grep -q 'demo-app.example.testagram.invalid' /tmp/testagram-domain.json
+          curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/dns/records | grep -q 'demo-app.example.testagram.invalid'
+          curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/nodes >/dev/null
+          curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/usage >/dev/null
+          backup_hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          curl -fsS -H "$auth_header" -H 'Content-Type: application/json' -d "{\"kind\":\"full\",\"storageUri\":\"s3://ci-backups/test/full.tar\",\"sha256\":\"$backup_hash\",\"sizeBytes\":123,\"sourceHost\":\"ci\"}" http://127.0.0.1:8787/v1/hosting/backups > /tmp/testagram-backup.json
+          backup_id="$(python -c 'import json; print(json.load(open("/tmp/testagram-backup.json"))["id"])')"
+          curl -fsS -H "$auth_header" -H 'Content-Type: application/json' -d "{\"observedSha256\":\"$backup_hash\",\"observedBytes\":123}" "http://127.0.0.1:8787/v1/hosting/backups/$backup_id/verify" | grep -q '"status":"verified"'
+          drill_code="$(curl -sS -o /tmp/testagram-drill.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d "{\"backupId\":\"$backup_id\",\"targetId\":\"ci-isolated-target\",\"restoredSha256\":\"$backup_hash\",\"success\":false,\"notes\":\"Contract test: deliberately reported failure; no restore was attempted.\",\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"completedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" http://127.0.0.1:8787/v1/hosting/recovery/drills)"
+          test "$drill_code" = "422"
+          grep -q '"success":false' /tmp/testagram-drill.json
 
       - name: Validate Caddy syntax
         run: |
