@@ -1,7 +1,7 @@
 name: testagram-vps-ci
 on:
   push:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
   pull_request:
     paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**",".github/workflows/vps-ci.yml"]
   workflow_dispatch:
@@ -41,6 +41,14 @@ jobs:
           bash -n supabase/status.sh
           bash -n supabase/healthcheck.sh
           bash -n supabase/storage.sh
+          bash scripts/validate-testagram-platform-contracts.sh
+          python -m pip install --disable-pip-version-check PyYAML
+          python scripts/validate-platform-openapi.py
+          bash -n testagram-platform/bootstrap.sh
+          bash -n testagram-platform/prepare.sh
+          bash -n testagram-platform/status.sh
+          bash -n testagram-platform/healthcheck.sh
+          bash -n testagram-platform/storage.sh
           tmp_storage="$(mktemp -d)"
           TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash supabase/storage.sh
           test -d "$tmp_storage/supabase"
