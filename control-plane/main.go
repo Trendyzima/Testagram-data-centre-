@@ -277,6 +277,7 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, _ = s.db.Exec(ctx, "update testagram_hosting.deployments set status='running',updated_at=now() where workload_id=$1::uuid", workloadID)
 	reply(w, http.StatusOK, map[string]any{"id": workloadID, "workload": work})
 }
 
@@ -331,6 +332,7 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusNotFound, map[string]string{"error": "workload not found"})
 		return
 	}
+	_, _ = s.db.Exec(ctx, "update testagram_hosting.deployments set status=$2,updated_at=now() where workload_id=$1::uuid", id, status)
 	reply(w, http.StatusOK, map[string]any{"ok": true, "status": status})
 }
 
@@ -359,6 +361,7 @@ func main() {
 	mux.HandleFunc("/v1/nodes/poll", s.poll)
 	mux.HandleFunc("/v1/workloads", s.schedule)
 	mux.HandleFunc("/v1/workloads/", s.result)
+	s.registerHostingRoutes(mux)
 
 	addr := os.Getenv("VPS_CONTROL_PLANE_ADDR")
 	if addr == "" {
