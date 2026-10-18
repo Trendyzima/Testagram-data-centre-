@@ -210,6 +210,7 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 	var nodeID, endpoint string
 	const nodeQ = `select id,endpoint from public.vps_nodes
 		where status='online' and last_seen_at>now()-interval '45 seconds'
+		  and capabilities @> '{"workloadExecution":true}'::jsonb
 		  and cpu_cores*1000 >= $1 and memory_bytes >= $2 and free_bytes >= $2
 		  and ($3='' or arch=$3)
 		order by free_bytes desc limit 1`
