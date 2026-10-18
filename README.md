@@ -75,6 +75,35 @@ Check the stack:
 docker compose --env-file /opt/testagram/.env -f /opt/testagram/vps/docker-compose.yml ps
 ```
 
+## Encrypted off-host backups and restore drills
+
+The VPS now includes operator-run scripts for an encrypted database + storage backup and a non-production restore drill.
+
+Before using them:
+- Install Docker Compose v2, `age`, `rsync`, `tar`, `flock`, and `sha256sum`.
+- Configure SSH key authentication and verify the backup host key in `known_hosts`; the script intentionally does not disable SSH host-key checking.
+- Set `TESTAGRAM_BACKUP_REMOTE=user@backup-host:/absolute/path` and `TESTAGRAM_BACKUP_AGE_RECIPIENT=age1...` in the operator's environment.
+- Ensure `TESTAGRAM_ENV_FILE` points to the deployment environment file and `TESTAGRAM_STORAGE_ROOT` points to the actual persistent storage root.
+- Schedule a maintenance window. The backup script stops application writers while capturing the database and files, then starts services before transferring the encrypted archive. Users may experience downtime during capture.
+- Store the age private identity separately from the VPS and backup host.
+
+Run the backup from the checked-out deployment repository:
+
+```bash
+sudo --preserve-env=TESTAGRAM_BACKUP_REMOTE,TESTAGRAM_BACKUP_AGE_RECIPIENT,TESTAGRAM_ENV_FILE,TESTAGRAM_STORAGE_ROOT \
+  bash vps/backup.sh
+```
+
+For a restore drill, obtain the encrypted `.tar.gz.age` artifact and its `.sha256` sidecar, then use the separately held age identity and the exact approved Supabase Postgres image digest used by the deployment:
+
+```bash
+TESTAGRAM_BACKUP_AGE_IDENTITY_FILE=/secure/off-host-age-identity.txt \
+TESTAGRAM_RESTORE_POSTGRES_IMAGE='registry.example/supabase-postgres@sha256:REPLACE_WITH_APPROVED_DIGEST' \
+  bash vps/restore-drill.sh /secure/backup/testagram-YYYYMMDDTHHMMSSZ.tar.gz.age
+```
+
+The restore drill verifies the ciphertext checksum, decrypts the archive, validates the storage tar, restores PostgreSQL into a network-isolated temporary container, and checks for expected Testagram tables. It does **not** prove full login, upload, private-media, or playback recovery, and it does not by itself measure RPO/RTO. Record the drill date, artifact ID, elapsed restore time, and application-level E2E results before declaring disaster recovery ready.
+
 ## Forensic E2E gate
 
 The required physical path remains:
