@@ -219,15 +219,20 @@ func (a *Agent) execute(w Workload) error {
 		return errors.New("docker or podman is required on this execution node")
 	}
 	if w.Image == "" || !validImageDigest(w.ImageDigest) { return errors.New("immutable sha256 image digest required") }
-	if len(w.Command) == 0 || strings.TrimSpace(w.Command[0]) == "" { return errors.New("workload command is required") }
 	image := w.Image + "@" + w.ImageDigest
+	if !allowedWorkloadImage(image, os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) {
+		return errors.New("workload image is not in VPS_ALLOWED_WORKLOAD_IMAGES")
+	}
+	if len(w.Command) == 0 || strings.TrimSpace(w.Command[0]) == "" { return errors.New("workload command is required") }
+	if w.CPUMillis <= 0 || w.CPUMillis > 2000 { return errors.New("workload CPU request must be between 1 and 2000 millicores") }
+	if w.MemoryBytes <= 0 || w.MemoryBytes > 4*1024*1024*1024 { return errors.New("workload memory request must be between 1 byte and 4 GiB") }
 	cidFile, err := os.CreateTemp("", "testagram-workload-*.cid")
 	if err != nil { return err }
 	cidPath := cidFile.Name()
 	if err := cidFile.Close(); err != nil { _ = os.Remove(cidPath); return err }
 	if err := os.Remove(cidPath); err != nil { return err }
 	defer os.Remove(cidPath)
-	args := []string{"run", "--cidfile", cidPath, "--rm", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=256"}
+	args := []string{"run", "--cidfile", cidPath, "--rm", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=256", "--network=none"}
 	if w.CPUMillis > 0 {
 		args = append(args, "--cpus", strconv.FormatFloat(float64(w.CPUMillis)/1000, 'f', 3, 64))
 	}
@@ -242,17 +247,8 @@ func (a *Agent) execute(w Workload) error {
 		args = append(args, "--env", key+"="+value)
 	}
 	if w.Volume != "" {
-		root, err := filepath.Abs(a.volumeRoot)
-		if err != nil {
-			return err
-		}
-		path, err := filepath.Abs(filepath.Join(root, filepath.Clean(w.Volume)))
-		if err != nil {
-			return err
-		}
-		if path != root && !strings.HasPrefix(path, root+string(os.PathSeparator)) {
-			return errors.New("volume escapes root")
-		}
+		path, err := resolveVolumePath(a.volumeRoot, w.Volume)
+		if err != nil { return err }
 		args = append(args, "--volume", path+":/data:rw")
 	}
 	args = append(args, image)
@@ -278,6 +274,40 @@ func (a *Agent) execute(w Workload) error {
 		return fmt.Errorf("workload execution timed out after %s", a.workloadTimeout)
 	}
 	return err
+}
+
+func allowedWorkloadImage(image, configured string) bool {
+	if strings.TrimSpace(configured) == "" { return false }
+	for _, candidate := range strings.Split(configured, ",") {
+		if strings.TrimSpace(candidate) == image { return true }
+	}
+	return false
+}
+
+// resolveVolumePath accepts a single volume name, never a host path. It
+// resolves symlinks after creation and verifies the canonical path remains
+// below the canonical root before exposing it to a container.
+func resolveVolumePath(root, volume string) (string, error) {
+	if strings.TrimSpace(volume) == "" || volume == "." || volume == ".." ||
+		filepath.IsAbs(volume) || strings.ContainsAny(volume, "/\\\\") ||
+		strings.ContainsRune(volume, 0) {
+		return "", errors.New("volume must be a single safe name")
+	}
+	if err := os.MkdirAll(root, 0700); err != nil { return "", err }
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil { return "", err }
+	canonicalRoot, err = filepath.Abs(canonicalRoot)
+	if err != nil { return "", err }
+	target := filepath.Join(canonicalRoot, volume)
+	if err := os.MkdirAll(target, 0700); err != nil { return "", err }
+	canonicalTarget, err := filepath.EvalSymlinks(target)
+	if err != nil { return "", err }
+	canonicalTarget, err = filepath.Abs(canonicalTarget)
+	if err != nil { return "", err }
+	if canonicalTarget == canonicalRoot || !strings.HasPrefix(canonicalTarget, canonicalRoot+string(os.PathSeparator)) {
+		return "", errors.New("volume resolves outside storage root")
+	}
+	return canonicalTarget, nil
 }
 
 func parseWorkloadTimeout(value string) (time.Duration, error) {
