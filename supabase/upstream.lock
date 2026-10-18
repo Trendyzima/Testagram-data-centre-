@@ -1,0 +1,9 @@
+# name<TAB>repository URL<TAB>upstream branch used for selection<TAB>immutable commit SHA
+postgres	https://github.com/supabase/postgres.git	develop	d8666db883fd1bc3bc06654c8db1f8dc39812b82
+auth	https://github.com/supabase/auth.git	master	ce9a8eee0cc042be8c7a42981a7ddae631e41d91
+rest	https://github.com/PostgREST/postgrest.git	main	922f635dc19edc1abdcc614c22535763dc7d4669
+realtime	https://github.com/supabase/realtime.git	main	5bce1ee2a887e5d00a305a2be1c81dced6b94b7a
+storage	https://github.com/supabase/storage.git	master	c826a70ac6e6f56d3e6033ccb164fb1ff5282570
+edge-runtime	https://github.com/supabase/edge-runtime.git	main	d4a4f606a90e8c66864219c9b1d31ef0e3e3f626
+postgres-meta	https://github.com/supabase/postgres-meta.git	master	ecc19497dcfcb4dc6a83d02e49d812f747cbf981
+supavisor	https://github.com/supabase/supavisor.git	main	e7c72bd9e8fe73409bdcd4817fdfee3e513bcc8c
