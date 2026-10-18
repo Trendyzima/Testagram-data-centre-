@@ -59,6 +59,8 @@ services:
       VIDEO_SIGNING_SECRET: ${VIDEO_SIGNING_SECRET}
       VIDEO_MEDIA_ROOT: /media
       VIDEO_ADDR: :8790
+      VIDEO_ACCOUNT_QUOTA_BYTES: ${VIDEO_ACCOUNT_QUOTA_BYTES:-21474836480}
+      VIDEO_MIN_FREE_BYTES: ${VIDEO_MIN_FREE_BYTES:-2147483648}
     volumes:
       - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/media:/media
     networks: [internal, supabase]
