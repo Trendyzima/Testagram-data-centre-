@@ -262,7 +262,7 @@ func (a *Agent) execute(w Workload) error {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, rt, args...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
 		// Killing the runtime CLI does not guarantee that the container stops.
 		// Best-effort force removal by its recorded ID prevents orphaned work.
