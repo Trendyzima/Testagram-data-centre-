@@ -1,7 +1,7 @@
 name: testagram-vps-ci
 on:
   push:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**","vps/**",".github/workflows/vps-ci.yml"]
   pull_request:
     paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**",".github/workflows/vps-ci.yml"]
   workflow_dispatch:
@@ -41,6 +41,8 @@ jobs:
           bash -n supabase/status.sh
           bash -n supabase/healthcheck.sh
           bash -n supabase/storage.sh
+          bash -n vps/backup.sh
+          bash -n vps/restore-drill.sh
           tmp_storage="$(mktemp -d)"
           TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash supabase/storage.sh
           test -d "$tmp_storage/supabase"
