@@ -8,9 +8,6 @@
 
 {$TESTAGRAM_DOMAIN} {
   encode zstd gzip
-  request_body {
-    max_size 20GB
-  }
   header {
     X-Content-Type-Options nosniff
     X-Frame-Options DENY
@@ -18,54 +15,74 @@
   }
 
   handle /auth/* {
+    request_body { max_size 10MB }
     reverse_proxy api-gw:8000
   }
 
   handle /rest/* {
+    request_body { max_size 10MB }
     reverse_proxy api-gw:8000
   }
 
   handle /storage/* {
+    # Object uploads may be large; keep this allowance scoped to storage only.
+    request_body { max_size 20GB }
     reverse_proxy api-gw:8000
   }
 
   handle /realtime/* {
+    request_body { max_size 10MB }
     reverse_proxy api-gw:8000
   }
 
   handle /functions/* {
+    request_body { max_size 10MB }
     reverse_proxy api-gw:8000
   }
 
   handle /graphql/* {
+    request_body { max_size 10MB }
     reverse_proxy api-gw:8000
   }
 
   handle /pg/* {
+    request_body { max_size 10MB }
     reverse_proxy api-gw:8000
   }
 
   handle /.well-known/* {
+    request_body { max_size 10MB }
     reverse_proxy api-gw:8000
   }
 
   handle /v1/config/* {
+    request_body { max_size 10MB }
     reverse_proxy platform:8095
   }
 
-  handle /v1/videos* {
+  handle /v1/videos {
+    # The upload endpoint is the only video route that accepts large bodies.
+    request_body { max_size 20GB }
+    reverse_proxy video:8790
+  }
+
+  handle /v1/videos/* {
+    request_body { max_size 10MB }
     reverse_proxy video:8790
   }
 
   handle /v1/channels* {
+    request_body { max_size 10MB }
     reverse_proxy video:8790
   }
 
   handle /v1/feed {
+    request_body { max_size 10MB }
     reverse_proxy video:8790
   }
 
   handle {
+    request_body { max_size 10MB }
     reverse_proxy {$TESTAGRAM_ORIGIN}
   }
 }
