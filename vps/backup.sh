@@ -53,8 +53,11 @@ restart_services() {
 cleanup() {
   restart_services
   rm -rf "$STAGE"
+  rm -f "$ARCHIVE" "$ENCRYPTED.partial"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Quiesce every application writer while taking the DB dump and storage
 # archive. This is a deliberate maintenance window to avoid a split-brain
