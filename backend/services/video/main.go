@@ -111,6 +111,13 @@ func nonnegativeLimitEnv(name string, fallback int64) (int64, error) {
   value,err:=strconv.ParseInt(raw,10,64);if err!=nil||value<0{return 0,fmt.Errorf("%s must be a non-negative integer",name)}
   return value,nil
 }
+
+func quotaAllows(used,reserved,requested,limit int64) bool {
+  if used<0||reserved<0||requested<=0||limit<=0||requested>limit{return false}
+  remaining:=limit-requested
+  return used<=remaining && reserved<=remaining-used
+}
+
 func ensureFreeDisk(root string, minimum int64) error {
   var stat syscall.Statfs_t
   if err:=syscall.Statfs(root,&stat);err!=nil{return err}
@@ -124,7 +131,7 @@ func (s *server) reserveVideoUpload(ctx context.Context,channelID,ownerID,title,
   var used,reserved int64
   if err=tx.QueryRow(ctx,"select coalesce(sum(original_size_bytes),0) from testagram_video.videos where owner_id=$1 and status <> 'failed'",ownerID).Scan(&used);err!=nil{return "",err}
   if err=tx.QueryRow(ctx,"select coalesce(sum(reserved_bytes),0) from testagram_video.video_upload_reservations where owner_id=$1 and status='reserved' and expires_at>now()",ownerID).Scan(&reserved);err!=nil{return "",err}
-  if size<=0||size>s.accountQuotaBytes||used+reserved>s.accountQuotaBytes-size{return "",errVideoQuotaExceeded}
+  if !quotaAllows(used,reserved,size,s.accountQuotaBytes){return "",errVideoQuotaExceeded}
   var id string
   if err=tx.QueryRow(ctx,"insert into testagram_video.videos(channel_id,owner_id,title,description,visibility,status) values($1,$2,$3,$4,$5,'uploading') returning id",channelID,ownerID,title,description,visibility).Scan(&id);err!=nil{return "",err}
   if _,err=tx.Exec(ctx,"insert into testagram_video.video_upload_reservations(video_id,owner_id,reserved_bytes,expires_at) values($1,$2,$3,now()+interval '2 hours')",id,ownerID,size);err!=nil{return "",err}
