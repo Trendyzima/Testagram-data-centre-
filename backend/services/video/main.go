@@ -37,7 +37,7 @@ func main() {
   if err:=os.MkdirAll(mediaDir,0750);err!=nil{log.Fatal(err)}
   mux:=http.NewServeMux()
   mux.HandleFunc("/healthz",s.health);mux.HandleFunc("/readyz",s.ready);mux.HandleFunc("/v1/channels",s.channels);mux.HandleFunc("/v1/channels/",s.channelRoute);mux.HandleFunc("/v1/feed",s.feed);mux.HandleFunc("/v1/videos",s.videos);mux.HandleFunc("/v1/videos/",s.videoRoute)
-  srv:=&http.Server{Addr:env("VIDEO_ADDR",":8790"),Handler:securityHeaders(mux),ReadHeaderTimeout:10*time.Second,ReadTimeout:60*time.Second,WriteTimeout:60*time.Second,IdleTimeout:120*time.Second}
+  srv:=&http.Server{Addr:env("VIDEO_ADDR",":8790"),Handler:securityHeaders(mux),ReadHeaderTimeout:10*time.Second,ReadTimeout:2*time.Hour,WriteTimeout:2*time.Hour,IdleTimeout:120*time.Second}
   log.Fatal(srv.ListenAndServe())
 }
 
