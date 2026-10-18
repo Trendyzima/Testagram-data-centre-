@@ -163,6 +163,7 @@ func (a *Agent) register() error {
 		Capabilities: map[string]any{
 			"containers": runtimeBin() != "",
 			"localVolumes": true,
+			"workloadExecution": strings.TrimSpace(os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) != "",
 		},
 	}
 	var out struct {
@@ -187,7 +188,10 @@ func (a *Agent) heartbeat() error {
 	total, free := a.disk()
 	body := Registration{
 		CPUCores: runtime.NumCPU(), MemoryBytes: a.memory(), StorageBytes: total, FreeBytes: free,
-		Capabilities: map[string]any{"containers": runtimeBin() != ""},
+		Capabilities: map[string]any{
+			"containers": runtimeBin() != "",
+			"workloadExecution": strings.TrimSpace(os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) != "",
+		},
 	}
 	_, err := a.post("/v1/nodes/heartbeat", body, nil)
 	return err
@@ -341,6 +345,9 @@ func main() {
 		endpoint: os.Getenv("VPS_NODE_ENDPOINT"),
 		volumeRoot: os.Getenv("VPS_VOLUME_ROOT"),
 		stateFile: os.Getenv("VPS_NODE_STATE_FILE"),
+	}
+	if strings.TrimSpace(os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) == "" {
+		log.Printf("workload execution is disabled until VPS_ALLOWED_WORKLOAD_IMAGES contains approved image@sha256 references")
 	}
 	if a.name == "" {
 		a.name = "testagram-node"
