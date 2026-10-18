@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,6 +21,7 @@ import (
 
 type Agent struct {
 	control, bootstrap, nodeToken, nodeID, name, endpoint, volumeRoot, stateFile string
+	workloadTimeout time.Duration
 	mu sync.RWMutex
 }
 
@@ -160,7 +162,6 @@ func (a *Agent) register() error {
 		Capabilities: map[string]any{
 			"containers": runtimeBin() != "",
 			"localVolumes": true,
-			"encryptedVolumes": true,
 		},
 	}
 	var out struct {
@@ -217,13 +218,21 @@ func (a *Agent) execute(w Workload) error {
 		return errors.New("docker or podman is required on this execution node")
 	}
 	if w.Image == "" || !validImageDigest(w.ImageDigest) { return errors.New("immutable sha256 image digest required") }
+	if len(w.Command) == 0 || strings.TrimSpace(w.Command[0]) == "" { return errors.New("workload command is required") }
 	image := w.Image + "@" + w.ImageDigest
-	args := []string{"run", "--rm", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges"}
+	cidFile, err := os.CreateTemp("", "testagram-workload-*.cid")
+	if err != nil { return err }
+	cidPath := cidFile.Name()
+	if err := cidFile.Close(); err != nil { _ = os.Remove(cidPath); return err }
+	if err := os.Remove(cidPath); err != nil { return err }
+	defer os.Remove(cidPath)
+	args := []string{"run", "--cidfile", cidPath, "--rm", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=256"}
 	if w.CPUMillis > 0 {
 		args = append(args, "--cpus", strconv.FormatFloat(float64(w.CPUMillis)/1000, 'f', 3, 64))
 	}
 	if w.MemoryBytes > 0 {
-		args = append(args, "--memory", strconv.FormatInt(w.MemoryBytes, 10))
+		memory := strconv.FormatInt(w.MemoryBytes, 10)
+		args = append(args, "--memory", memory, "--memory-swap", memory)
 	}
 	for key, value := range w.Env {
 		if key == "" || strings.ContainsAny(key, "=\x00\r\n") {
@@ -248,9 +257,42 @@ func (a *Agent) execute(w Workload) error {
 	args = append(args, image)
 	args = append(args, w.Command...)
 
-	cmd := exec.Command(rt, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), a.workloadTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, rt, args...)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	return cmd.Run()
+	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		// Killing the runtime CLI does not guarantee that the container stops.
+		// Best-effort force removal by its recorded ID prevents orphaned work.
+		if data, readErr := os.ReadFile(cidPath); readErr == nil {
+			id := strings.TrimSpace(string(data))
+			if validContainerID(id) {
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				cleanup := exec.CommandContext(cleanupCtx, rt, "rm", "-f", id)
+				_ = cleanup.Run()
+				cleanupCancel()
+			}
+		}
+		return fmt.Errorf("workload execution timed out after %s", a.workloadTimeout)
+	}
+	return err
+}
+
+func parseWorkloadTimeout(value string) (time.Duration, error) {
+	if strings.TrimSpace(value) == "" { return 30 * time.Minute, nil }
+	d, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil { return 0, err }
+	if d < time.Second || d > 24*time.Hour { return 0, errors.New("must be between 1s and 24h") }
+	return d, nil
+}
+
+func validContainerID(id string) bool {
+	if len(id) < 12 || len(id) > 64 { return false }
+	for _, c := range id {
+		if !((c >= 48 && c <= 57) || (c >= 97 && c <= 102)) { return false }
+	}
+	return true
 }
 
 func validImageDigest(v string) bool { if len(v) != 71 || !strings.HasPrefix(v, "sha256:") { return false }; for _, c := range v[7:] { if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) { return false } }; return true }
@@ -276,6 +318,9 @@ func main() {
 		a.endpoint = "outbound-only"
 	}
 	if a.volumeRoot == "" { a.volumeRoot = "/var/lib/testagram/storage/nodes" }
+	timeout, err := parseWorkloadTimeout(os.Getenv("VPS_WORKLOAD_TIMEOUT"))
+	if err != nil { log.Fatalf("invalid VPS_WORKLOAD_TIMEOUT: %v", err) }
+	a.workloadTimeout = timeout
 	if a.stateFile == "" { a.stateFile = "/var/lib/testagram/storage/nodes/node-state.json" }
 	if err := a.loadState(); err != nil { log.Printf("load node state: %v", err); a.mu.Lock(); a.nodeToken = ""; a.mu.Unlock() }
 	if err := os.MkdirAll(a.volumeRoot, 0700); err != nil {
