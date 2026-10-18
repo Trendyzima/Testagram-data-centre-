@@ -3,7 +3,8 @@ ALTER TABLE testagram_video.videos
   CHECK (original_size_bytes >= 0);
 
 CREATE TABLE IF NOT EXISTS testagram_video.video_upload_reservations (
-  video_id uuid PRIMARY KEY REFERENCES testagram_video.videos(id) ON DELETE CASCADE,
+  reservation_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  video_id uuid UNIQUE REFERENCES testagram_video.videos(id) ON DELETE CASCADE,
   owner_id uuid NOT NULL,
   reserved_bytes bigint NOT NULL CHECK (reserved_bytes > 0),
   status text NOT NULL DEFAULT 'reserved'
