@@ -36,7 +36,8 @@ ENCRYPTED="$ARCHIVE.age"
 SUPABASE_STOPPED=0
 BACKEND_STOPPED=0
 PROJECT_COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$PROJECT/docker-compose.yml" -f "$PROJECT/docker-compose.testagram.yml")
-BACKEND_COMPOSE=(docker compose --env-file "$REPO_ROOT/vps/.env" -f "$REPO_ROOT/vps/docker-compose.yml")
+BACKEND_ENV_FILE="${TESTAGRAM_ENV_FILE:-$REPO_ROOT/.env}"
+BACKEND_COMPOSE=(docker compose --env-file "$BACKEND_ENV_FILE" -f "$REPO_ROOT/vps/docker-compose.yml")
 
 restart_services() {
   if [ "$BACKEND_STOPPED" -eq 1 ]; then
@@ -60,11 +61,11 @@ trap cleanup EXIT INT TERM
 # backup where DB metadata and object files represent different moments.
 mapfile -t supabase_services < <("${PROJECT_COMPOSE[@]}" config --services | grep -vx 'db' || true)
 if [ "${#supabase_services[@]}" -gt 0 ]; then
-  "${PROJECT_COMPOSE[@]}" stop "${supabase_services[@]}"
   SUPABASE_STOPPED=1
+  "${PROJECT_COMPOSE[@]}" stop "${supabase_services[@]}"
 fi
-"${BACKEND_COMPOSE[@]}" stop
 BACKEND_STOPPED=1
+"${BACKEND_COMPOSE[@]}" stop
 
 "${PROJECT_COMPOSE[@]}" exec -T db pg_dump -U postgres -d postgres --format=custom --no-owner --no-acl > "$STAGE/database.dump"
 test -s "$STAGE/database.dump"
