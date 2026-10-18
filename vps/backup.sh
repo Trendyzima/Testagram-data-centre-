@@ -80,7 +80,7 @@ tar -C "$STAGE" -czf "$ARCHIVE" database.dump storage.tar.gz metadata.txt
 test -s "$ARCHIVE"
 age -r "$AGE_RECIPIENT" -o "$ENCRYPTED.partial" "$ARCHIVE"
 mv "$ENCRYPTED.partial" "$ENCRYPTED"
-sha256sum "$ENCRYPTED" > "$ENCRYPTED.sha256"
+(cd "$BACKUP_ROOT" && sha256sum "$(basename "$ENCRYPTED")" > "$(basename "$ENCRYPTED").sha256")
 chmod 0600 "$ENCRYPTED" "$ENCRYPTED.sha256"
 
 # Restore service availability before the network transfer.
