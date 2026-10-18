@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -56,5 +59,41 @@ func TestValidImageDigest(t *testing.T) {
 		if validImageDigest(digest) {
 			t.Errorf("validImageDigest(%q) = true, want false", digest)
 		}
+	}
+}
+
+func TestAllowedWorkloadImage(t *testing.T) {
+	image := "registry.example/testagram/worker@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	for _, configured := range []string{image, "other/image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, " + image} {
+		if !allowedWorkloadImage(image, configured) {
+			t.Errorf("allowedWorkloadImage rejected configured image %q", configured)
+		}
+	}
+	for _, configured := range []string{"", " ", "registry.example/testagram/worker", "registry.example/testagram/worker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"} {
+		if allowedWorkloadImage(image, configured) {
+			t.Errorf("allowedWorkloadImage accepted unapproved image with config %q", configured)
+		}
+	}
+}
+
+func TestResolveVolumePath(t *testing.T) {
+	root := t.TempDir()
+	got, err := resolveVolumePath(root, "account-123")
+	if err != nil { t.Fatalf("resolveVolumePath: %v", err) }
+	canonicalRoot, err := filepath.EvalSymlinks(root)
+	if err != nil { t.Fatal(err) }
+	if !strings.HasPrefix(got, canonicalRoot+string(os.PathSeparator)) {
+		t.Fatalf("resolved volume %q is outside root %q", got, canonicalRoot)
+	}
+	for _, name := range []string{"", ".", "..", "../escape", "/tmp/escape", "nested/name", `nested\\name`} {
+		if _, err := resolveVolumePath(root, name); err == nil {
+			t.Errorf("resolveVolumePath accepted unsafe name %q", name)
+		}
+	}
+	outside := t.TempDir()
+	link := filepath.Join(root, "escape")
+	if err := os.Symlink(outside, link); err != nil { t.Fatal(err) }
+	if _, err := resolveVolumePath(root, "escape"); err == nil {
+		t.Fatal("resolveVolumePath accepted symlink escaping the storage root")
 	}
 }
