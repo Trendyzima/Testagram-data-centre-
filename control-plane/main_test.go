@@ -17,3 +17,18 @@ func TestHealth(t *testing.T) {
 }
 
 func TestValidImageDigest(t *testing.T) { if !validImageDigest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") { t.Fatal("expected valid digest") }; if validImageDigest("sha256:bad") { t.Fatal("expected invalid digest") }; if validImageDigest("sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") { t.Fatal("expected lowercase-only digest") } }
+
+
+func TestNormalizeWorkloadDefaultsNilJSONCollections(t *testing.T) {
+	work := Workload{}
+	normalizeWorkload(&work)
+	if work.Command == nil {
+		t.Fatal("command must be an empty JSON array, not nil")
+	}
+	if work.Env == nil {
+		t.Fatal("env must be an empty JSON object, not nil")
+	}
+	if len(work.Command) != 0 || len(work.Env) != 0 {
+		t.Fatalf("expected empty collections, got command=%v env=%v", work.Command, work.Env)
+	}
+}
