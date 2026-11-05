@@ -61,6 +61,16 @@ class StorageVolumeManager(private val context: Context) {
         return isRemovableCardTree(uri) && root.isDirectory && root.canRead() && root.canWrite()
     }
 
+    fun mountedRemovableCards(): List<String> = storageManager.storageVolumes
+        .filter { it.isRemovable && it.state == Environment.MEDIA_MOUNTED && !it.uuid.isNullOrBlank() }
+        .map { volume ->
+            val size = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                volume.directory?.let { runCatching { StatFs(it.absolutePath).totalBytes }.getOrNull() }
+            } else null
+            val capacity = size?.let { String.format("%.1f GiB", it / (1024.0 * 1024.0 * 1024.0)) } ?: "capacity unavailable"
+            "${volume.getDescription(context)} • ${volume.uuid} • $capacity"
+        }
+
     fun selectedCardInfo(): SdCardInfo? {
         val uri = tree() ?: return null
         val volume = removableVolumeForTree(uri) ?: return null
