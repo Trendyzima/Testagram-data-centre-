@@ -42,7 +42,6 @@ android {
 
 dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
-    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.9")
 }
 
 kotlin { jvmToolchain(17) }
