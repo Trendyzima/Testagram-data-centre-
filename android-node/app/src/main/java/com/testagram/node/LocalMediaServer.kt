@@ -17,7 +17,7 @@ class LocalMediaServer(private val context: Context, private val port: Int = 878
         if(running || !storage.hasPersistentAccess() || storage.ensureLayout().isFailure) return false
         return try { server=ServerSocket(port); running=true; Thread({loop()}).start(); true } catch(_:Exception){false}
     }
-    fun stop(){running=false;try{server?.close()}catch(_:Exception){};server=null;transcoder.shutdown()}
+    fun stop(){running=false;try{server?.close()}catch(_:Exception){};server=null}
     private fun loop(){while(running)try{val s=server?.accept();if(s!=null)Thread{handle(s)}.start()}catch(_:Exception){}}
     private fun handle(s:Socket){s.use{socket->val i=BufferedInputStream(socket.getInputStream());val o=BufferedOutputStream(socket.getOutputStream());try{
         val first=line(i)?:return;val p=first.split(' ');if(p.size!=3){reply(o,400,"bad request");return}
