@@ -9,6 +9,7 @@ import android.os.StatFs
 import android.os.storage.StorageManager
 import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
+import java.io.File
 import java.io.IOException
 import java.util.UUID
 
@@ -64,9 +65,9 @@ class StorageVolumeManager(private val context: Context) {
     fun mountedRemovableCards(): List<String> = storageManager.storageVolumes
         .filter { it.isRemovable && it.state == Environment.MEDIA_MOUNTED && !it.uuid.isNullOrBlank() }
         .map { volume ->
-            val size = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                volume.directory?.let { runCatching { StatFs(it.absolutePath).totalBytes }.getOrNull() }
-            } else null
+            val size = volumeDirectory(volume)?.let {
+                runCatching { StatFs(it.absolutePath).totalBytes }.getOrNull()
+            }
             val capacity = size?.let { String.format("%.1f GiB", it / (1024.0 * 1024.0 * 1024.0)) } ?: "capacity unavailable"
             "${volume.getDescription(context)} • ${volume.uuid} • $capacity"
         }
@@ -75,8 +76,7 @@ class StorageVolumeManager(private val context: Context) {
         val uri = tree() ?: return null
         val volume = removableVolumeForTree(uri) ?: return null
         if (volume.state != Environment.MEDIA_MOUNTED) return null
-        val directory = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) volume.directory else null)
-            ?: return null
+        val directory = volumeDirectory(volume) ?: return null
         return runCatching {
             val stat = StatFs(directory.absolutePath)
             val total = stat.totalBytes
@@ -149,6 +149,14 @@ class StorageVolumeManager(private val context: Context) {
         require(path.isNotBlank() && !path.startsWith("/") && !path.contains("..") && !path.contains('\\')) {
             "invalid media path"
         }
+    }
+
+    private fun volumeDirectory(volume: android.os.storage.StorageVolume): File? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) return volume.directory
+        val uuid = volume.uuid ?: return null
+        return context.getExternalFilesDirs(null)
+            .filterNotNull()
+            .firstOrNull { file -> file.absolutePath.split(File.separator).any { it.equals(uuid, ignoreCase = true) } }
     }
 
     private fun isRemovableCardTree(uri: Uri): Boolean = removableVolumeForTree(uri) != null
