@@ -51,7 +51,9 @@ class StorageVolumeManager(private val context: Context) {
     }
 
     fun tree(): Uri? = prefs.getString(TREE_KEY, null)?.let(Uri::parse)
-    fun root(): DocumentFile? = tree()?.let { DocumentFile.fromTreeUri(context, it) }
+    fun selectedTreeRoot(): DocumentFile? = tree()?.let { DocumentFile.fromTreeUri(context, it) }
+
+    fun root(): DocumentFile? = selectedTreeRoot()?.findFile("TestagramNode")?.takeIf { it.isDirectory }
 
     fun hasPersistentAccess(): Boolean {
         val uri = tree() ?: return false
@@ -63,7 +65,7 @@ class StorageVolumeManager(private val context: Context) {
         val uri = tree() ?: return null
         val volume = removableVolumeForTree(uri) ?: return null
         if (volume.state != Environment.MEDIA_MOUNTED) return null
-        val directory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) volume.directory else null
+        val directory = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) volume.directory else null)
             ?: return null
         return runCatching {
             val stat = StatFs(directory.absolutePath)
@@ -80,14 +82,14 @@ class StorageVolumeManager(private val context: Context) {
     }
 
     fun ensureLayout(): Result<List<String>> = runCatching {
-        val root = root() ?: error("removable SD card is not selected")
+        val root = selectedTreeRoot() ?: error("removable SD card is not selected")
         if (!hasPersistentAccess()) error("selected SD card is unavailable or read-only")
         REQUIRED_DIRECTORIES.forEach { ensureDirectory(root, it) }
         REQUIRED_DIRECTORIES
     }
 
     fun verifyWritable(): Result<Unit> = runCatching {
-        val root = root() ?: error("removable SD card is not selected")
+        val root = selectedTreeRoot() ?: error("removable SD card is not selected")
         if (!hasPersistentAccess()) error("selected SD card is unavailable or read-only")
         val name = ".testagram-write-${UUID.randomUUID()}.tmp"
         val probe = root.createFile("application/octet-stream", name)
