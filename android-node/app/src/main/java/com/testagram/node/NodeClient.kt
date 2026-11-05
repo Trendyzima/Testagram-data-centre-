@@ -9,8 +9,16 @@ import java.net.URL
 data class NodeConfig(val controlPlaneUrl: String, val bootstrapToken: String, val nodeName: String)
 
 class NodeClient(private val context: Context, private val config: NodeConfig) {
-    private var nodeToken: String? = null
+    private val authPrefs = context.getSharedPreferences("node-auth", Context.MODE_PRIVATE)
+    private var nodeToken: String? = authPrefs.getString("node_token", null)
+    private var registeredStorageIdentity: String? = authPrefs.getString("storage_identity", null)
     private val storage = StorageVolumeManager(context)
+
+    private fun clearCredentials() {
+        nodeToken = null
+        registeredStorageIdentity = null
+        authPrefs.edit().remove("node_token").remove("storage_identity").apply()
+    }
 
     private fun post(path: String, body: JSONObject): JSONObject? {
         val connection = (URL(config.controlPlaneUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
@@ -74,11 +82,17 @@ class NodeClient(private val context: Context, private val config: NodeConfig) {
             .put("capabilities", storageCapabilities(card)))
             ?: throw IllegalStateException("empty registration response")
         nodeToken = result.getString("token")
+        registeredStorageIdentity = card.uuid
+        authPrefs.edit()
+            .putString("node_token", nodeToken)
+            .putString("storage_identity", registeredStorageIdentity)
+            .apply()
     }
 
     private fun heartbeat() {
-        if (nodeToken == null) register()
         val card = card()
+        if (nodeToken != null && registeredStorageIdentity != card.uuid) clearCredentials()
+        if (nodeToken == null) register()
         post("/v1/nodes/heartbeat", JSONObject()
             .put("cpuCores", Runtime.getRuntime().availableProcessors())
             .put("memoryBytes", memoryBytes())
@@ -96,7 +110,7 @@ class NodeClient(private val context: Context, private val config: NodeConfig) {
                 val currentCard = card()
                 onState("ONLINE • SD card " + currentCard.name + " • " + currentCard.availableBytes + " bytes free • heartbeat OK")
             } catch (error: Exception) {
-                nodeToken = null
+                if (error.message?.contains("control plane HTTP 401") == true) clearCredentials()
                 onState("OFFLINE • retry: " + (error.message ?: "unknown"))
             }
             repeat(15) { if (!shouldStop()) Thread.sleep(1000) }
