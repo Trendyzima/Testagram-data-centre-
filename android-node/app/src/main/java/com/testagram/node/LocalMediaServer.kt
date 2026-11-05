@@ -13,7 +13,6 @@ class LocalMediaServer(private val context: Context, private val port: Int = 878
     @Volatile private var running=false
     private var server:ServerSocket?=null
     private val storage=StorageVolumeManager(context)
-    private val transcoder=LocalMediaTranscoder(context,storage)
     fun start():Boolean {
         if(running || !storage.hasPersistentAccess() || storage.ensureLayout().isFailure) return false
         return try { server=ServerSocket(port); running=true; Thread({loop()}).start(); true } catch(_:Exception){false}
@@ -34,7 +33,7 @@ class LocalMediaServer(private val context: Context, private val port: Int = 878
         if(method=="GET"||method=="HEAD"){download(o,h,key,method=="HEAD");return}
         reply(o,405,"method not allowed")
     }catch(_:Exception){try{reply(o,500,"media server error")}catch(_:Exception){}}}}
-    private fun upload(i:InputStream,o:OutputStream,h:Map<String,String>,key:String){val n=h["content-length"]?.toLongOrNull()?:run{reply(o,411,"content-length required");return};if(n<0||n>21474836480L){reply(o,413,"payload too large");return};val f=try{storage.createFile(key,h["content-type"]?.substringBefore(';')?:"application/octet-stream")}catch(_:Exception){reply(o,409,"cannot create media object");return};try{val dst=context.contentResolver.openOutputStream(f.uri,"w")?:error("not writable");dst.use{copy(i,it,n)};replyJson(o,201,"{\"ok\":true}");transcoder.enqueue(key)}catch(_:Exception){f.delete();reply(o,500,"media write failed")}}
+    private fun upload(i:InputStream,o:OutputStream,h:Map<String,String>,key:String){val n=h["content-length"]?.toLongOrNull()?:run{reply(o,411,"content-length required");return};if(n<0||n>21474836480L){reply(o,413,"payload too large");return};val f=try{storage.createFile(key,h["content-type"]?.substringBefore(';')?:"application/octet-stream")}catch(_:Exception){reply(o,409,"cannot create media object");return};try{val dst=context.contentResolver.openOutputStream(f.uri,"w")?:error("not writable");dst.use{copy(i,it,n)};replyJson(o,201,"{\"ok\":true}")}catch(_:Exception){f.delete();reply(o,500,"media write failed")}}
     private fun download(o:OutputStream,h:Map<String,String>,key:String,head:Boolean){
         val f=find(key) ?: run { reply(o,404,"not found"); return }
         val d=context.contentResolver.openFileDescriptor(f.uri,"r") ?: run { reply(o,500,"open failed"); return }
