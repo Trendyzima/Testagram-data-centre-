@@ -129,7 +129,7 @@ class MainActivity : Activity() {
         val running = runtime.getBoolean(NodeService.KEY_RUNNING, false)
         power.text = if (running) "TURN NODE OFF" else "TURN NODE ON"
         status.text = "TESTAGRAM NODE B\n" +
-            if (running) "● RUNNING" else "○ STOPPED" +
+            (if (running) "● RUNNING" else "○ STOPPED") +
             "\n" + (runtime.getString(NodeService.KEY_STATE, "Idle") ?: "Idle")
 
         val card = storage.selectedCardInfo()
