@@ -133,6 +133,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		in.MemoryBytes, in.StorageBytes, in.FreeBytes, in.Capabilities, in.Endpoint,
 		crypto.HashToken(nodeToken)).Scan(&id)
 	if err != nil {
+		log.Printf("node registration database error: %v", err)
 		reply(w, http.StatusInternalServerError, map[string]string{"error": "registration failed"})
 		return
 	}
@@ -220,6 +221,7 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		log.Printf("workload scheduler query failed: %v", err)
 		reply(w, http.StatusInternalServerError, map[string]string{"error": "scheduler failed"})
 		return
 	}
@@ -231,6 +233,7 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 	err = s.db.QueryRow(ctx, workloadQ, nodeID, in.Image, in.ImageDigest, in.Command,
 		in.Env, in.CPUMillis, in.MemoryBytes, in.Volume).Scan(&workloadID)
 	if err != nil {
+		log.Printf("workload persistence failed: %v", err)
 		reply(w, http.StatusInternalServerError, map[string]string{"error": "workload persist failed"})
 		return
 	}
