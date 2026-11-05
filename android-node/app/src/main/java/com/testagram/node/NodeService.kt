@@ -74,7 +74,7 @@ class NodeService : Service() {
 
     private fun publish(state: String) {
         getSharedPreferences(PREFS, 0).edit()
-            .putBoolean(KEY_RUNNING, state == "Stopped" || state.startsWith("STOPPED") .not())
+            .putBoolean(KEY_RUNNING, state != "Stopped" && !state.startsWith("STOPPED"))
             .putString(KEY_STATE, state)
             .apply()
     }
