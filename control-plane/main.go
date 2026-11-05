@@ -116,6 +116,10 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if in.Capabilities == nil {
+		in.Capabilities = map[string]any{}
+	}
+
 	nodeToken, err := newToken(32)
 	if err != nil {
 		reply(w, http.StatusInternalServerError, map[string]string{"error": "token generation failed"})
@@ -157,6 +161,9 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
+	if in.Capabilities == nil {
+		in.Capabilities = map[string]any{}
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
@@ -193,6 +200,14 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &in); err != nil {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
+	}
+	// JSONB columns are NOT NULL. Treat omitted optional collections as empty
+	// collections instead of passing SQL NULL into the persistence layer.
+	if in.Command == nil {
+		in.Command = []string{}
+	}
+	if in.Env == nil {
+		in.Env = map[string]string{}
 	}
 	if in.Image == "" || !validImageDigest(in.ImageDigest) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "image and immutable sha256 imageDigest are required"})
