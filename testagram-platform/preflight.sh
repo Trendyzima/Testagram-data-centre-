@@ -87,6 +87,12 @@ else
         fail "Appwrite is selected but APPWRITE_ENDPOINT or APPWRITE_PROJECT_ID is invalid"
       fi
       appwrite_ingest_token="$(awk 'index($0, "APPWRITE_IDENTITY_INGEST_TOKEN=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+      appwrite_kyc_binding="$(awk 'index($0, "APPWRITE_KYC_BINDING_ENABLED=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+      if [ "$appwrite_kyc_binding" = "true" ]; then
+        ok "trusted Appwrite KYC binding is explicitly enabled"
+      else
+        fail "APPWRITE_KYC_BINDING_ENABLED must be true before Appwrite production cutover"
+      fi
       if [ "${#appwrite_ingest_token}" -ge 32 ] && ! printf '%s' "$appwrite_ingest_token" | grep -Eq '^(CHANGE_ME|REPLACE_WITH|TODO)'; then
         ok "trusted identity-ingest token is configured"
       else
