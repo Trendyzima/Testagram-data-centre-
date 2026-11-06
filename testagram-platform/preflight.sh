@@ -81,10 +81,103 @@ else
     appwrite)
       appwrite_endpoint="$(awk 'index($0, "APPWRITE_ENDPOINT=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
       appwrite_project="$(awk 'index($0, "APPWRITE_PROJECT_ID=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
-      if printf '%s' "$appwrite_endpoint" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/v1)?$' && [ -n "$appwrite_project" ] && ! printf '%s' "$appwrite_project" | grep -Eq '^(REPLACE_WITH_|CHANGE_ME|TODO)'; then
+      if printf '%s' "$appwrite_endpoint" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/v1)?      ;;
+    supabase)
+      require_appwrite="$(awk 'index($0, "TESTAGRAM_REQUIRE_APPWRITE=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+      if [ "$require_appwrite" = "1" ]; then
+        fail "TESTAGRAM_REQUIRE_APPWRITE=1 but TESTAGRAM_AUTH_PROVIDER is still supabase"
+      else
+        warn "legacy Supabase authentication remains selected; Appwrite production cutover is not complete"
+      fi
+      ;;
+    *)
+      fail "TESTAGRAM_AUTH_PROVIDER must be exactly appwrite or supabase"
+      ;;
+  esac
+
+  media_endpoint="$(awk 'index($0, "MEDIA_S3_ENDPOINT=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+  if printf '%s' "$media_endpoint" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$'; then
+    ok "S3-compatible media endpoint uses HTTPS without embedded credentials or paths"
+  else
+    fail "MEDIA_S3_ENDPOINT must be an HTTPS host (no credentials, query, fragment or path) for production"
+  fi
+
+  media_public_url="$(awk 'index($0, "MEDIA_PUBLIC_BASE_URL=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+  if printf '%s' "$media_public_url" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^?#]*)?$'; then
+    ok "public media base URL uses HTTPS"
+  else
+    fail "MEDIA_PUBLIC_BASE_URL must be an HTTPS URL without credentials, query or fragment"
+  fi
+
+  private_bucket="$(awk 'index($0, "MEDIA_PRIVATE_BUCKET=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+  public_bucket="$(awk 'index($0, "MEDIA_PUBLIC_BUCKET=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+  for bucket in "$private_bucket" "$public_bucket"; do
+    if printf '%s' "$bucket" | grep -Eq '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'; then
+      ok "S3 bucket name has a valid DNS-compatible shape"
+    else
+      fail "S3 bucket names must be 3-63 lowercase DNS-compatible characters"
+    fi
+  done
+  if [ "$private_bucket" = "$public_bucket" ]; then
+    fail "MEDIA_PRIVATE_BUCKET and MEDIA_PUBLIC_BUCKET must be different buckets"
+  fi
+
+  algorithm_token="$(awk 'index($0, "ALGORITHM_INTERNAL_TOKEN=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+  if [ "${#algorithm_token}" -ge 32 ]; then
+    ok "Algorithm internal token meets the minimum length"
+  else
+    fail "ALGORITHM_INTERNAL_TOKEN must contain at least 32 characters"
+  fi
+fi
+
+if docker info >/dev/null 2>&1; then ok "Docker daemon reachable"; else fail "Docker daemon is not reachable"; fi
+
+if [ -f /proc/meminfo ]; then
+  mem_kb="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
+  min_mem_kb=$((MIN_RAM_GB * 1024 * 1024))
+  if [ "${mem_kb:-0}" -ge "$min_mem_kb" ]; then
+    ok "RAM meets configured baseline (${MIN_RAM_GB} GiB)"
+  elif [ "$STRICT" = "1" ]; then
+    fail "RAM below configured baseline (${MIN_RAM_GB} GiB); raise resources or lower the baseline explicitly"
+  else
+    warn "RAM below recommended baseline (${MIN_RAM_GB} GiB); use lower concurrency/resource limits on small hosts"
+  fi
+fi
+
+probe_path="$STORAGE_ROOT"
+while [ ! -d "$probe_path" ] && [ "$probe_path" != "/" ]; do probe_path="$(dirname "$probe_path")"; done
+free_kb="$(df -Pk "$probe_path" | awk 'NR==2 {print $4}')"
+min_free_kb=$((MIN_FREE_GB * 1024 * 1024))
+if [ "${free_kb:-0}" -ge "$min_free_kb" ]; then
+  ok "free disk space meets configured baseline (${MIN_FREE_GB} GiB)"
+elif [ "$STRICT" = "1" ]; then
+  fail "free disk space below configured baseline (${MIN_FREE_GB} GiB)"
+else
+  warn "free disk space below recommended baseline (${MIN_FREE_GB} GiB); size media retention and backup capacity carefully"
+fi
+
+if [ -f "$REPO_ROOT/vps/docker-compose.yml" ] && [ -f "$ENV_FILE" ]; then
+  if docker compose --env-file "$ENV_FILE" -f "$REPO_ROOT/vps/docker-compose.yml" config --quiet; then
+    ok "VPS Compose configuration renders"
+  else
+    fail "VPS Compose configuration did not render; inspect missing variables or YAML errors"
+  fi
+else
+  warn "skipping Compose render because the compose file or environment file is missing"
+fi
+
+printf '\nPreflight summary: %s error(s), %s warning(s). No deployment was performed.\n' "$errors" "$warnings"
+if [ "$errors" -gt 0 ]; then exit 1; fi
+ && [ -n "$appwrite_project" ] && ! printf '%s' "$appwrite_project" | grep -Eq '^(REPLACE_WITH_|CHANGE_ME|TODO)'; then
         ok "Appwrite endpoint and project ID are configured"
       else
         fail "Appwrite is selected but APPWRITE_ENDPOINT or APPWRITE_PROJECT_ID is invalid"
+      fi
+      appwrite_ingest_token="$(awk 'index($0, "APPWRITE_IDENTITY_INGEST_TOKEN=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+      if [ "${#appwrite_ingest_token}" -ge 32 ] && ! printf '%s' "$appwrite_ingest_token" | grep -Eq '^(CHANGE_ME|REPLACE_WITH|TODO)'; then
+        ok "trusted identity-ingest token is configured"
+      else
+        fail "APPWRITE_IDENTITY_INGEST_TOKEN must be a real random secret of at least 32 characters"
       fi
       ;;
     supabase)
