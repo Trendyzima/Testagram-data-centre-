@@ -87,3 +87,6 @@ The public Testagram Backend API and VPS control plane must use **TESTAGRAM_DATA
 ### Fresh Appwrite identity rollout
 
 The VPS API receives only the public Appwrite endpoint and project ID; no Appwrite server API key is required for validating a browser JWT against the authenticated Account endpoint. Keep `TESTAGRAM_AUTH_PROVIDER=supabase` until the XClone session provider and all authentication-dependent flows have been migrated and staging-tested. The Backend's new-user provisioning endpoint is separately blocked by the PostgreSQL legacy-inventory completion flag, which defaults to false. Do not mark that inventory complete until the full legacy email/UUID export has been reconciled with canonical accounts and dependent data. Existing users must link by proving both sessions; matching email is not sufficient.
+
+
+The Appwrite cutover also requires a server-only `APPWRITE_IDENTITY_INGEST_TOKEN`. The current KYC/identity-verification engine must call the Backend's internal approval-ingestion endpoint after it independently approves a registration. The Backend refuses new canonical account provisioning unless a trusted approval record exists. The token must be generated independently for staging and production, stored only in the secret manager, and never placed in a browser build.
