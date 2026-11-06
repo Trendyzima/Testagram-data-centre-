@@ -135,4 +135,3 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	if err := json.Unmarshal(raw, out); err != nil { return fmt.Errorf("decode Testagram platform response: %w", err) }
 	return nil
 }
-

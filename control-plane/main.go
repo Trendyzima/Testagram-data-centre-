@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Trendyzima/Testagram-data-centre-/internal/crypto"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/Trendyzima/Testagram-data-centre-/internal/crypto"
 )
 
 type Server struct {
@@ -45,19 +45,19 @@ type Heartbeat struct {
 }
 
 type Workload struct {
-	Image       string            `json:"image"`
-	ImageDigest string            `json:"imageDigest"`
-	Command     []string          `json:"command"`
-	Env         map[string]string `json:"env"`
-	CPUMillis   int               `json:"cpuMillis"`
-	MemoryBytes int64             `json:"memoryBytes"`
-	StorageBytes int64            `json:"storageBytes"`
-	Volume      string            `json:"volume"`
-	Arch        string            `json:"arch"`
+	Image        string            `json:"image"`
+	ImageDigest  string            `json:"imageDigest"`
+	Command      []string          `json:"command"`
+	Env          map[string]string `json:"env"`
+	CPUMillis    int               `json:"cpuMillis"`
+	MemoryBytes  int64             `json:"memoryBytes"`
+	StorageBytes int64             `json:"storageBytes"`
+	Volume       string            `json:"volume"`
+	Arch         string            `json:"arch"`
 }
 
 type WorkloadResult struct {
-	Success bool   `json:"success"`
+	Success bool `json:"success"`
 }
 
 func bearer(r *http.Request) string {
@@ -197,9 +197,15 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "image and immutable sha256 imageDigest are required"})
 		return
 	}
-	if in.CPUMillis <= 0 { in.CPUMillis = 250 }
-	if in.MemoryBytes <= 0 { in.MemoryBytes = 268435456 }
-	if in.StorageBytes <= 0 { in.StorageBytes = 268435456 }
+	if in.CPUMillis <= 0 {
+		in.CPUMillis = 250
+	}
+	if in.MemoryBytes <= 0 {
+		in.MemoryBytes = 268435456
+	}
+	if in.StorageBytes <= 0 {
+		in.StorageBytes = 268435456
+	}
 	if in.CPUMillis < 50 || in.CPUMillis > 64000 || in.MemoryBytes < 67108864 || in.MemoryBytes > 68719476736 || in.StorageBytes < 67108864 || in.StorageBytes > 1099511627776 {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "resource request outside supported bounds"})
 		return
@@ -220,6 +226,7 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 		"coalesce(sum(memory_bytes),0)::bigint memory_reserved,coalesce(sum(storage_bytes),0)::bigint storage_reserved " +
 		"from public.vps_workloads where node_id=n.id and status in ('assigned','running')) r on true " +
 		"where n.status='online' and n.last_seen_at>now()-interval '45 seconds' " +
+		"and n.capabilities @> '{\"workloadExecution\":true}'::jsonb " +
 		"and n.cpu_cores*1000-r.cpu_reserved >= $1 and n.memory_bytes-r.memory_reserved >= $2 " +
 		"and n.free_bytes-r.storage_reserved >= $3 and ($4='' or n.arch=$4) " +
 		"order by (n.free_bytes-r.storage_reserved) desc limit 1 for update of n skip locked"
@@ -233,9 +240,15 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	commandJSON, err := json.Marshal(in.Command)
-	if err != nil { reply(w, http.StatusBadRequest, map[string]string{"error": "invalid command"}); return }
+	if err != nil {
+		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid command"})
+		return
+	}
 	envJSON, err := json.Marshal(in.Env)
-	if err != nil { reply(w, http.StatusBadRequest, map[string]string{"error": "invalid environment"}); return }
+	if err != nil {
+		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid environment"})
+		return
+	}
 	var workloadID string
 	const workloadQ = "insert into public.vps_workloads " +
 		"(node_id,image,image_digest,command,env,cpu_millis,memory_bytes,storage_bytes,volume,status) " +
@@ -296,7 +309,9 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, map[string]any{"id": workloadID, "workload": work})
 }
 
-func (s *Server) health(w http.ResponseWriter, r *http.Request) { reply(w, http.StatusOK, map[string]string{"status": "ok"}) }
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	reply(w, http.StatusOK, map[string]string{"status": "ok"})
+}
 
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
 	if err := s.db.Ping(r.Context()); err != nil {
@@ -351,7 +366,17 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, map[string]any{"ok": true, "status": status})
 }
 
-func validImageDigest(v string) bool { if len(v) != 71 || !strings.HasPrefix(v, "sha256:") { return false }; for _, c := range v[7:] { if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) { return false } }; return true }
+func validImageDigest(v string) bool {
+	if len(v) != 71 || !strings.HasPrefix(v, "sha256:") {
+		return false
+	}
+	for _, c := range v[7:] {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
 
 func main() {
 	dsn := os.Getenv("DATABASE_URL")
