@@ -11,8 +11,8 @@ import (
 func TestHostingRoutesRequireInternalBearer(t *testing.T) {
 	s := &Server{internal: "unit-test-token"}
 	tests := []struct {
-		name string
-		path string
+		name    string
+		path    string
 		handler http.HandlerFunc
 	}{
 		{"domains", "/v1/hosting/domains", s.hostingDomains},
@@ -107,8 +107,16 @@ func TestDomainReservationNeedsConfiguredBaseDomainAndAllowlistedTarget(t *testi
 	oldDomain, hadDomain := os.LookupEnv("TESTAGRAM_BASE_DOMAIN")
 	oldTargets, hadTargets := os.LookupEnv("TESTAGRAM_DOMAIN_TARGETS")
 	t.Cleanup(func() {
-		if hadDomain { _ = os.Setenv("TESTAGRAM_BASE_DOMAIN", oldDomain) } else { _ = os.Unsetenv("TESTAGRAM_BASE_DOMAIN") }
-		if hadTargets { _ = os.Setenv("TESTAGRAM_DOMAIN_TARGETS", oldTargets) } else { _ = os.Unsetenv("TESTAGRAM_DOMAIN_TARGETS") }
+		if hadDomain {
+			_ = os.Setenv("TESTAGRAM_BASE_DOMAIN", oldDomain)
+		} else {
+			_ = os.Unsetenv("TESTAGRAM_BASE_DOMAIN")
+		}
+		if hadTargets {
+			_ = os.Setenv("TESTAGRAM_DOMAIN_TARGETS", oldTargets)
+		} else {
+			_ = os.Unsetenv("TESTAGRAM_DOMAIN_TARGETS")
+		}
 	})
 	_ = os.Unsetenv("TESTAGRAM_BASE_DOMAIN")
 	_ = os.Setenv("TESTAGRAM_DOMAIN_TARGETS", "web=http://web:3000")
