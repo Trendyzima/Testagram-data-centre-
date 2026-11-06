@@ -4,7 +4,7 @@ services:
     build: {context: .., dockerfile: control-plane/Dockerfile}
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+      DATABASE_URL: ${TESTAGRAM_DATABASE_URL:?Set TESTAGRAM_DATABASE_URL to the canonical PostgreSQL URL with TLS}
       VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN}
       VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN}
       TESTAGRAM_BASE_DOMAIN: ${TESTAGRAM_BASE_DOMAIN:-}
@@ -40,7 +40,7 @@ services:
     environment:
       LISTEN_ADDR: :8080
       DB_MAX_CONNS: ${DB_MAX_CONNS:-10}
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres?sslmode=disable
+      DATABASE_URL: ${TESTAGRAM_DATABASE_URL:?Set TESTAGRAM_DATABASE_URL to the canonical PostgreSQL URL with TLS}
       TESTAGRAM_AUTH_PROVIDER: ${TESTAGRAM_AUTH_PROVIDER:?Set TESTAGRAM_AUTH_PROVIDER explicitly}
       APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-}
       APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:-}
@@ -80,12 +80,6 @@ services:
       SERVICE_ACTOR_NAME: ${FEDERATION_SERVICE_ACTOR_NAME:-Testagram}
     expose: ["8081"]
     networks: [internal]
-    # This endpoint deliberately remains unready until signature verification and durable inbox/outbox exist.
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8081/readyz"]
-      interval: 10s
-      timeout: 3s
-      retries: 3
     profiles: ["federation-preview"]
   platform:
     extends: {file: ../backend/docker-compose.yml, service: platform}
