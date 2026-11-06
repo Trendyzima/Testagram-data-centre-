@@ -20,6 +20,67 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
+  algorithm:
+    image: ${TESTAGRAM_ALGORITHM_IMAGE:-ghcr.io/trendyzima/testagram-feed:latest}
+    restart: unless-stopped
+    environment:
+      HTTP_ADDR: :8092
+      INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:?Set ALGORITHM_INTERNAL_TOKEN to a random value of at least 32 characters}
+    expose: ["8092"]
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8092/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+  api:
+    image: ${TESTAGRAM_BACKEND_IMAGE:-ghcr.io/trendyzima/testagram-backend:latest}
+    restart: unless-stopped
+    environment:
+      LISTEN_ADDR: :8080
+      DB_MAX_CONNS: ${DB_MAX_CONNS:-10}
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres?sslmode=disable
+      TESTAGRAM_AUTH_PROVIDER: ${TESTAGRAM_AUTH_PROVIDER:-supabase}
+      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-}
+      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:-}
+      SUPABASE_URL: ${SUPABASE_PUBLIC_URL}
+      SUPABASE_PUBLISHABLE_KEY: ${ANON_KEY}
+      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://testagram.site,https://www.testagram.site}
+      ALGORITHM_URL: http://algorithm:8092
+      ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN}
+      TESTAGRAM_LOCAL_PRODUCT_WRITES_ENABLED: ${TESTAGRAM_LOCAL_PRODUCT_WRITES_ENABLED:-false}
+      MEDIA_S3_ENDPOINT: ${MEDIA_S3_ENDPOINT:-}
+      MEDIA_S3_SIGNING_HOST: ${MEDIA_S3_SIGNING_HOST:-}
+      MEDIA_S3_ACCESS_KEY: ${MEDIA_S3_ACCESS_KEY:-}
+      MEDIA_S3_SECRET_KEY: ${MEDIA_S3_SECRET_KEY:-}
+      MEDIA_S3_REGION: ${MEDIA_S3_REGION:-us-east-1}
+      MEDIA_PRIVATE_BUCKET: ${MEDIA_PRIVATE_BUCKET:-testagram-private-media}
+      MEDIA_PUBLIC_BUCKET: ${MEDIA_PUBLIC_BUCKET:-testagram-public-media}
+      MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://media.testagram.site/v1}
+      VIRTUAL_STORAGE_ENABLED: "false"
+    expose: ["8080"]
+    networks: [internal, supabase]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+  # Keep federation private until signature verification and durable inbox/outbox ship.
+  federation:
+    image: ${TESTAGRAM_FEDERATION_IMAGE:-ghcr.io/trendyzima/testagram-federation:latest}
+    restart: unless-stopped
+    environment:
+      HTTP_ADDR: :8081
+      PUBLIC_BASE_URL: ${FEDERATION_PUBLIC_BASE_URL:-https://federation.testagram.site}
+      INSTANCE_DOMAIN: ${FEDERATION_INSTANCE_DOMAIN:-testagram.site}
+      SERVICE_ACTOR_USERNAME: ${FEDERATION_SERVICE_ACTOR_USERNAME:-testagram}
+      SERVICE_ACTOR_NAME: ${FEDERATION_SERVICE_ACTOR_NAME:-Testagram}
+    expose: ["8081"]
+    networks: [internal]
+    profiles: ["federation-preview"]
   platform:
     extends: {file: ../backend/docker-compose.yml, service: platform}
     networks: [internal, supabase]
@@ -41,6 +102,14 @@ services:
   edge:
     extends: {file: ../backend/docker-compose.yml, service: edge}
     extra_hosts: ["host.docker.internal:host-gateway"]
+    environment:
+      TESTAGRAM_DOMAIN: ${TESTAGRAM_DOMAIN:-api.example.com}
+      TESTAGRAM_ORIGIN: ${TESTAGRAM_ORIGIN:-https://testagram.site}
+      TESTAGRAM_API_DOMAIN: ${TESTAGRAM_API_DOMAIN:-api.testagram.site}
+      TLS_ADMIN_EMAIL: ${TLS_ADMIN_EMAIL:?Set TLS_ADMIN_EMAIL}
+    depends_on:
+      api:
+        condition: service_healthy
     ports: ["80:80", "443:443"]
     networks: [edge, internal, supabase]
 networks:
