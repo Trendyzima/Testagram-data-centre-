@@ -41,7 +41,7 @@ else
 
   # Parse as plain KEY=VALUE data; never source/evaluate a secrets file.
   required_keys=(
-    POSTGRES_PASSWORD DATABASE_URL VPS_INTERNAL_TOKEN VPS_NODE_BOOTSTRAP_TOKEN
+    POSTGRES_PASSWORD DATABASE_URL TESTAGRAM_DATABASE_URL VPS_INTERNAL_TOKEN VPS_NODE_BOOTSTRAP_TOKEN
     PLATFORM_INTERNAL_TOKEN VIDEO_JWT_SECRET VIDEO_SIGNING_SECRET
     NOTIFICATION_JWT_SECRET NOTIFICATION_INTERNAL_TOKEN ALGORITHM_INTERNAL_TOKEN
     TESTAGRAM_BACKEND_IMAGE TESTAGRAM_ALGORITHM_IMAGE TESTAGRAM_AUTH_PROVIDER
@@ -59,6 +59,13 @@ else
       ok "required environment key present: $key"
     fi
   done
+
+  canonical_database_url="$(awk 'index($0, "TESTAGRAM_DATABASE_URL=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+  if printf '%s' "$canonical_database_url" | grep -Eq '^postgres(ql)?://[^[:space:]]+@[^/?#]+/[^?]+\?[^#]*sslmode=(require|verify-full)([&]|$)' && ! printf '%s' "$canonical_database_url" | grep -Eiq 'REPLACE_WITH|CHANGE_ME|CHANGEME|TODO|example'; then
+    ok "canonical Testagram PostgreSQL URL is configured with TLS verification"
+  else
+    fail "TESTAGRAM_DATABASE_URL must be a real PostgreSQL URL with sslmode=require or sslmode=verify-full"
+  fi
 
   for image_key in TESTAGRAM_BACKEND_IMAGE TESTAGRAM_ALGORITHM_IMAGE; do
     image_value="$(awk -v key="$image_key" 'index($0, key "=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
