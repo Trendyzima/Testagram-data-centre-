@@ -41,6 +41,8 @@ jobs:
           bash -n supabase/status.sh
           bash -n supabase/healthcheck.sh
           bash -n supabase/storage.sh
+          bash -n vps/backup.sh
+          bash -n vps/restore-drill.sh
           bash scripts/validate-testagram-platform-contracts.sh
           python -m pip install --disable-pip-version-check PyYAML
           python scripts/validate-platform-openapi.py
