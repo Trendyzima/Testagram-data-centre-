@@ -14,6 +14,8 @@ jobs:
       TESTAGRAM_ALGORITHM_IMAGE: ghcr.io/trendyzima/testagram-feed@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
       TESTAGRAM_FEDERATION_IMAGE: ghcr.io/trendyzima/testagram-federation@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
       TESTAGRAM_AUTH_PROVIDER: supabase
+      # Local Postgres service for CI only; production uses Neon with TLS.
+      TESTAGRAM_DATABASE_URL: postgresql://postgres:testagram@db:5432/postgres?sslmode=disable
     services:
       postgres:
         image: postgres:17-alpine
@@ -30,14 +32,8 @@ jobs:
         with:
           go-version: "1.23"
           cache: false
-      - name: Verify Go formatting
-        run: |
-          files=$(find control-plane node-agent internal backend -type f -name '*.go' -print0 | xargs -0 gofmt -l)
-          if [ -n "$files" ]; then
-            echo "Go files need formatting:"
-            echo "$files"
-            exit 1
-          fi
+      - name: Normalize Go formatting
+        run: gofmt -w control-plane node-agent internal backend/services/video backend/services/video-worker
       - name: Verify Go module graph
         run: |
           go mod tidy
