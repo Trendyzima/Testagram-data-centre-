@@ -30,8 +30,14 @@ jobs:
         with:
           go-version: "1.23"
           cache: false
-      - name: Normalize Go formatting
-        run: gofmt -w control-plane node-agent internal backend/services/video backend/services/video-worker
+      - name: Verify Go formatting
+        run: |
+          files=$(find control-plane node-agent internal backend -type f -name '*.go' -print0 | xargs -0 gofmt -l)
+          if [ -n "$files" ]; then
+            echo "Go files need formatting:"
+            echo "$files"
+            exit 1
+          fi
       - name: Verify Go module graph
         run: |
           go mod tidy
