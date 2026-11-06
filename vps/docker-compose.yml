@@ -80,6 +80,12 @@ services:
       SERVICE_ACTOR_NAME: ${FEDERATION_SERVICE_ACTOR_NAME:-Testagram}
     expose: ["8081"]
     networks: [internal]
+    # This endpoint deliberately remains unready until signature verification and durable inbox/outbox exist.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8081/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
     profiles: ["federation-preview"]
   platform:
     extends: {file: ../backend/docker-compose.yml, service: platform}
