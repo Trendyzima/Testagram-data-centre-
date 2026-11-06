@@ -71,3 +71,10 @@ Example image references must use the registry's actual manifest digest, not a g
 Keep the federation service on its disabled preview profile. Do not set TESTAGRAM_FEDERATION_IMAGE or enable federation-preview until the service has verified inbound signatures, durable inbox/outbox, SSRF-safe delivery and retry/dead-letter behavior. The disabled placeholder image is not a release artifact.
 
 The S3 endpoint and credentials passing preflight prove configuration presence only. They do not prove bucket policy, object authorization, upload completion, private download denial, CDN cache separation, deletion, or restore. Keep VIRTUAL_STORAGE_ENABLED=false until those live staging tests pass.
+
+
+### Appwrite cutover is deliberately blocked until the client migration is complete
+
+The current XClone application still has Supabase-backed session listeners and legacy product features that call Supabase directly. Its Appwrite SDK and Go API token adapter do not yet constitute a complete global Appwrite session migration. Therefore the example VPS environment retains the explicit transitional provider value **TESTAGRAM_AUTH_PROVIDER=supabase** while setting **TESTAGRAM_REQUIRE_APPWRITE=1**. This intentionally makes the production preflight fail rather than deploying an Appwrite-only backend against a Supabase-session frontend.
+
+Do not set **TESTAGRAM_REQUIRE_APPWRITE=0** for a production release. That override is only for an explicitly approved transitional staging environment. The Appwrite production gate may be cleared only after XClone's global auth provider, session restoration/listeners, account signup/link/provisioning, password recovery, and all remaining Supabase-backed capability adapters have passed end-to-end staging with the same canonical PostgreSQL user IDs.
