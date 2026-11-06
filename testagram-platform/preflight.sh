@@ -74,7 +74,7 @@ else
     appwrite)
       appwrite_endpoint="$(awk 'index($0, "APPWRITE_ENDPOINT=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
       appwrite_project="$(awk 'index($0, "APPWRITE_PROJECT_ID=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
-      if printf '%s' "$appwrite_endpoint" | grep -Eq '^https://[^/]+(/v1)?$' && [ -n "$appwrite_project" ] && ! printf '%s' "$appwrite_project" | grep -Eq '^(REPLACE_WITH_|CHANGE_ME|TODO)'; then
+      if printf '%s' "$appwrite_endpoint" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/v1)?$' && [ -n "$appwrite_project" ] && ! printf '%s' "$appwrite_project" | grep -Eq '^(REPLACE_WITH_|CHANGE_ME|TODO)'; then
         ok "Appwrite endpoint and project ID are configured"
       else
         fail "Appwrite is selected but APPWRITE_ENDPOINT or APPWRITE_PROJECT_ID is invalid"
@@ -94,10 +94,37 @@ else
   esac
 
   media_endpoint="$(awk 'index($0, "MEDIA_S3_ENDPOINT=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
-  if printf '%s' "$media_endpoint" | grep -Eq '^https://[^/]+$'; then
-    ok "S3-compatible media endpoint uses HTTPS"
+  if printf '%s' "$media_endpoint" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$'; then
+    ok "S3-compatible media endpoint uses HTTPS without embedded credentials or paths"
   else
-    fail "MEDIA_S3_ENDPOINT must be an HTTPS endpoint for production"
+    fail "MEDIA_S3_ENDPOINT must be an HTTPS host (no credentials, query, fragment or path) for production"
+  fi
+
+  media_public_url="$(awk 'index($0, "MEDIA_PUBLIC_BASE_URL=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+  if printf '%s' "$media_public_url" | grep -Eq '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^?#]*)?$'; then
+    ok "public media base URL uses HTTPS"
+  else
+    fail "MEDIA_PUBLIC_BASE_URL must be an HTTPS URL without credentials, query or fragment"
+  fi
+
+  private_bucket="$(awk 'index($0, "MEDIA_PRIVATE_BUCKET=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+  public_bucket="$(awk 'index($0, "MEDIA_PUBLIC_BUCKET=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+  for bucket in "$private_bucket" "$public_bucket"; do
+    if printf '%s' "$bucket" | grep -Eq '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'; then
+      ok "S3 bucket name has a valid DNS-compatible shape"
+    else
+      fail "S3 bucket names must be 3-63 lowercase DNS-compatible characters"
+    fi
+  done
+  if [ "$private_bucket" = "$public_bucket" ]; then
+    fail "MEDIA_PRIVATE_BUCKET and MEDIA_PUBLIC_BUCKET must be different buckets"
+  fi
+
+  algorithm_token="$(awk 'index($0, "ALGORITHM_INTERNAL_TOKEN=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+  if [ "${#algorithm_token}" -ge 32 ]; then
+    ok "Algorithm internal token meets the minimum length"
+  else
+    fail "ALGORITHM_INTERNAL_TOKEN must contain at least 32 characters"
   fi
 fi
 
