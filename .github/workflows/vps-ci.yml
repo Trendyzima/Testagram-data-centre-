@@ -1,9 +1,9 @@
 name: testagram-vps-ci
 on:
   push:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
   pull_request:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
   workflow_dispatch:
 jobs:
   go:
@@ -41,6 +41,14 @@ jobs:
           bash -n supabase/status.sh
           bash -n supabase/healthcheck.sh
           bash -n supabase/storage.sh
+          bash scripts/validate-testagram-platform-contracts.sh
+          python -m pip install --disable-pip-version-check PyYAML
+          python scripts/validate-platform-openapi.py
+          bash -n testagram-platform/bootstrap.sh
+          bash -n testagram-platform/prepare.sh
+          bash -n testagram-platform/status.sh
+          bash -n testagram-platform/healthcheck.sh
+          bash -n testagram-platform/storage.sh
           tmp_storage="$(mktemp -d)"
           TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash supabase/storage.sh
           test -d "$tmp_storage/supabase"
@@ -61,7 +69,7 @@ jobs:
             -e PGPASSWORD=testagram \
             -v "$PWD:/workspace:ro" \
             postgres:17-alpine \
-            sh -c "psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/001_vps.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/002_video_platform.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/003_production_hardening.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/004_storage_buckets.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/005_platform.sql"
+            sh -c "psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/001_vps.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/002_video_platform.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/003_production_hardening.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/004_storage_buckets.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/005_platform.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/006_hosting_control_plane.sql"
       - name: Validate Compose syntax
         run: |
           docker compose -f backend/docker-compose.yml config
@@ -69,14 +77,38 @@ jobs:
         run: |
           set -euo pipefail
           docker network create testagram-supabase 2>/dev/null || true
-          docker run -d --name vps-ci-db --network testagram-supabase -e POSTGRES_PASSWORD=testagram postgres:17-alpine
+          docker run -d --name vps-ci-db --network testagram-supabase --network-alias db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
           trap 'docker rm -f vps-ci-db >/dev/null 2>&1 || true; docker compose -f vps/docker-compose.yml down -v >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 30); do docker exec vps-ci-db pg_isready -U postgres -d postgres >/dev/null 2>&1 && break; sleep 2; done
           docker exec vps-ci-db pg_isready -U postgres -d postgres
+          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'for f in /migrations/*.sql; do psql -h vps-ci-db -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
           POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase docker compose -f vps/docker-compose.yml build control-plane
-          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase docker compose -f vps/docker-compose.yml up -d control-plane
+          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase TESTAGRAM_BASE_DOMAIN=example.testagram.invalid TESTAGRAM_DOMAIN_TARGETS=web=http://web:3000 TESTAGRAM_PUBLIC_DNS_TARGET=edge.testagram.invalid docker compose -f vps/docker-compose.yml up -d control-plane
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/readyz >/dev/null 2>&1 && break; sleep 2; done
           curl -fsS http://127.0.0.1:8787/healthz
+          auth_header="Authorization: Bearer ci-internal"
+          curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/health | grep -q '"status":"ok"'
+          domain_code="$(curl -sS -o /tmp/testagram-domain.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d '{"slug":"demo-app","targetService":"web"}' http://127.0.0.1:8787/v1/hosting/domains)"
+          test "$domain_code" = "201"
+          grep -q 'demo-app.example.testagram.invalid' /tmp/testagram-domain.json
+          curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/dns/records | grep -q 'demo-app.example.testagram.invalid'
+          curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/nodes >/dev/null
+          curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/usage >/dev/null
+          register_code="$(curl -sS -o /tmp/testagram-node.json -w '%{http_code}' -H 'Authorization: Bearer ci-bootstrap' -H 'Content-Type: application/json' -d '{"name":"ci-node","platform":"linux","arch":"amd64","cpuCores":2,"memoryBytes":2147483648,"storageBytes":10737418240,"freeBytes":8589934592,"endpoint":"ci-node","capabilities":{}}' http://127.0.0.1:8787/v1/nodes/register)"
+          test "$register_code" = "201"
+          deploy_code="$(curl -sS -o /tmp/testagram-deployment.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d '{"appName":"ci-demo","image":"registry.example/testagram-demo","imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","arch":"amd64","cpuMillis":100,"memoryBytes":134217728,"storageBytes":134217728,"publicEnv":{"APP_MODE":"ci"},"command":["/bin/true"],"volume":"ci-volume"}' http://127.0.0.1:8787/v1/hosting/deployments)"
+          test "$deploy_code" = "201"
+          grep -q '"status":"assigned"' /tmp/testagram-deployment.json
+          overcommit_code="$(curl -sS -o /tmp/testagram-overcommit.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d '{"appName":"ci-heavy","image":"registry.example/testagram-heavy","imageDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","arch":"amd64","cpuMillis":1950,"memoryBytes":134217728,"storageBytes":134217728,"command":["/bin/true"]}' http://127.0.0.1:8787/v1/hosting/deployments)"
+          test "$overcommit_code" = "503"
+          grep -q 'no healthy node has sufficient unreserved CPU' /tmp/testagram-overcommit.json
+          backup_hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          curl -fsS -H "$auth_header" -H 'Content-Type: application/json' -d "{\"kind\":\"full\",\"storageUri\":\"s3://ci-backups/test/full.tar\",\"sha256\":\"$backup_hash\",\"sizeBytes\":123,\"sourceHost\":\"ci\"}" http://127.0.0.1:8787/v1/hosting/backups > /tmp/testagram-backup.json
+          backup_id="$(python -c 'import json; print(json.load(open("/tmp/testagram-backup.json"))["id"])')"
+          curl -fsS -H "$auth_header" -H 'Content-Type: application/json' -d "{\"observedSha256\":\"$backup_hash\",\"observedBytes\":123}" "http://127.0.0.1:8787/v1/hosting/backups/$backup_id/verify" | grep -q '"status":"verified"'
+          drill_code="$(curl -sS -o /tmp/testagram-drill.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d "{\"backupId\":\"$backup_id\",\"targetId\":\"ci-isolated-target\",\"restoredSha256\":\"$backup_hash\",\"success\":false,\"notes\":\"Contract test: deliberately reported failure; no restore was attempted.\",\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"completedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" http://127.0.0.1:8787/v1/hosting/recovery/drills)"
+          test "$drill_code" = "422"
+          grep -q '"success":false' /tmp/testagram-drill.json
 
       - name: Validate Caddy syntax
         run: |
@@ -100,7 +132,7 @@ jobs:
             sleep 2
           done
           docker exec testagram-postgres pg_isready -U postgres -d postgres
-          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c "psql -h testagram-postgres -U postgres -d postgres -f /migrations/001_vps.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/002_video_platform.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/003_production_hardening.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/004_storage_buckets.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/005_platform.sql"
+          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c "psql -h testagram-postgres -U postgres -d postgres -f /migrations/001_vps.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/002_video_platform.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/003_production_hardening.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/004_storage_buckets.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/005_platform.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/006_hosting_control_plane.sql"
           export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/postgres
           export VIDEO_JWT_SECRET=ci-test-jwt-secret
           export VIDEO_SIGNING_SECRET=ci-test-signing-secret-at-least-32-bytes
