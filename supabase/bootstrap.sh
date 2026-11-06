@@ -3,52 +3,37 @@ set -euo pipefail
 
 ROOT="${SUPABASE_DATA_ROOT:-/var/lib/testagram/supabase}"
 SRC="$ROOT/upstream"
+LOCK_FILE="$(dirname "$0")/upstream.lock"
 mkdir -p "$SRC"
 
-command -v git >/dev/null 2>&1 || { echo "git is required"; exit 1; }
+command -v git >/dev/null 2>&1 || { echo "git is required" >&2; exit 1; }
+test -f "$LOCK_FILE" || { echo "Supabase upstream lock file is missing: $LOCK_FILE" >&2; exit 1; }
 
-declare -A REPOS=(
-  [postgres]="https://github.com/supabase/postgres.git"
-  [auth]="https://github.com/supabase/auth.git"
-  [rest]="https://github.com/PostgREST/postgrest.git"
-  [realtime]="https://github.com/supabase/realtime.git"
-  [storage]="https://github.com/supabase/storage.git"
-  [edge-runtime]="https://github.com/supabase/edge-runtime.git"
-  [postgres-meta]="https://github.com/supabase/postgres-meta.git"
-  [supavisor]="https://github.com/supabase/supavisor.git"
-)
-
-declare -A REFS=(
-  [postgres]="develop"
-  [auth]="master"
-  [rest]="main"
-  [realtime]="main"
-  [storage]="master"
-  [edge-runtime]="main"
-  [postgres-meta]="master"
-  [supavisor]="main"
-)
-
-for name in "${!REPOS[@]}"; do
+# Every checkout is detached at an immutable, reviewed SHA. The branch column
+# in upstream.lock is provenance only; it is never fetched as a build input.
+while IFS=$'\t' read -r name url source_ref sha; do
+  [[ -z "${name:-}" || "$name" == \#* ]] && continue
+  if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "Invalid pinned SHA for $name: $sha" >&2
+    exit 1
+  fi
   dir="$SRC/$name"
-  url="${REPOS[$name]}"
-  ref="${REFS[$name]}"
 
-  if [ -d "$dir/.git" ]; then
-    git -C "$dir" remote set-url origin "$url"
-    git -C "$dir" fetch --depth=1 origin "$ref"
-    git -C "$dir" checkout -B "$ref" "origin/$ref"
-    git -C "$dir" reset --hard "origin/$ref"
+  if [ ! -d "$dir/.git" ]; then
+    mkdir -p "$dir"
+    git -C "$dir" init -q
+    git -C "$dir" remote add origin "$url"
   else
-    git clone --depth=1 --branch "$ref" "$url" "$dir"
+    git -C "$dir" remote set-url origin "$url"
   fi
 
+  git -C "$dir" fetch --depth=1 origin "$sha"
+  git -C "$dir" checkout --detach --force FETCH_HEAD
   actual_url="$(git -C "$dir" remote get-url origin)"
-  actual_ref="$(git -C "$dir" branch --show-current)"
   actual_sha="$(git -C "$dir" rev-parse HEAD)"
   test "$actual_url" = "$url"
-  test "$actual_ref" = "$ref"
-  printf '%-16s %s %s\n' "$name" "$actual_ref" "$actual_sha"
-done
+  test "$actual_sha" = "$sha"
+  printf '%-16s source-ref=%-8s sha=%s\n' "$name" "$source_ref" "$actual_sha"
+done < "$LOCK_FILE"
 
-printf '\nSupabase upstream inventory is ready under %s\n' "$SRC"
+printf '\nPinned Supabase upstream inventory is ready under %s\n' "$SRC"

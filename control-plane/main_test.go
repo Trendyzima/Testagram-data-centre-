@@ -16,8 +16,17 @@ func TestHealth(t *testing.T) {
 	}
 }
 
-func TestValidImageDigest(t *testing.T) { if !validImageDigest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") { t.Fatal("expected valid digest") }; if validImageDigest("sha256:bad") { t.Fatal("expected invalid digest") }; if validImageDigest("sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") { t.Fatal("expected lowercase-only digest") } }
-
+func TestValidImageDigest(t *testing.T) {
+	if !validImageDigest("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") {
+		t.Fatal("expected valid digest")
+	}
+	if validImageDigest("sha256:bad") {
+		t.Fatal("expected invalid digest")
+	}
+	if validImageDigest("sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
+		t.Fatal("expected lowercase-only digest")
+	}
+}
 
 func TestNormalizeWorkloadDefaultsNilJSONCollections(t *testing.T) {
 	work := Workload{}
