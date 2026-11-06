@@ -8,6 +8,14 @@ on:
 jobs:
   go:
     runs-on: ubuntu-latest
+    env:
+      # Test-only immutable-looking references allow Compose model rendering; CI never pulls these API/ranker placeholders.
+      TESTAGRAM_BACKEND_IMAGE: ghcr.io/trendyzima/testagram-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      TESTAGRAM_ALGORITHM_IMAGE: ghcr.io/trendyzima/testagram-feed@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      TESTAGRAM_FEDERATION_IMAGE: ghcr.io/trendyzima/testagram-federation@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+      TESTAGRAM_AUTH_PROVIDER: supabase
+      # Local Postgres service for CI only; production uses Neon with TLS.
+      TESTAGRAM_DATABASE_URL: postgresql://postgres:testagram@db:5432/postgres?sslmode=disable
     services:
       postgres:
         image: postgres:17-alpine

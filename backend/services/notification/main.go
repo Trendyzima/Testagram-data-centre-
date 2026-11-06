@@ -16,9 +16,9 @@ import (
 )
 
 type service struct {
-	db         *pgxpool.Pool
-	jwtKey     []byte
-	internal   string
+	db       *pgxpool.Pool
+	jwtKey   []byte
+	internal string
 }
 
 type notification struct {
@@ -48,7 +48,9 @@ func main() {
 	jwtSecret := mustEnv("NOTIFICATION_JWT_SECRET")
 	internal := mustEnv("NOTIFICATION_INTERNAL_TOKEN")
 	db, err := pgxpool.New(ctx, dsn)
-	if err != nil { log.Fatal(err) }
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer db.Close()
 	s := &service{db: db, jwtKey: []byte(jwtSecret), internal: internal}
 
@@ -83,18 +85,26 @@ func (s *service) ready(w http.ResponseWriter, r *http.Request) {
 
 func (s *service) devices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed); return
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
 	user, ok := s.user(r)
-	if !ok { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var in deviceInput
 	if err := decodeJSON(w, r, &in); err != nil || strings.TrimSpace(in.ID) == "" || strings.TrimSpace(in.Address) == "" {
-		http.Error(w, "invalid device", http.StatusBadRequest); return
+		http.Error(w, "invalid device", http.StatusBadRequest)
+		return
 	}
 	channel := strings.TrimSpace(in.Channel)
-	if channel == "" { channel = "sse" }
+	if channel == "" {
+		channel = "sse"
+	}
 	if len(in.ID) > 200 || len(in.Address) > 2000 || len(channel) > 40 {
-		http.Error(w, "device fields too long", http.StatusBadRequest); return
+		http.Error(w, "device fields too long", http.StatusBadRequest)
+		return
 	}
 	_, err := s.db.Exec(r.Context(), `insert into public.testagram_notification_devices
 		(id,user_id,channel,address,enabled,last_seen_at,updated_at)
@@ -102,38 +112,56 @@ func (s *service) devices(w http.ResponseWriter, r *http.Request) {
 		on conflict(id) do update set user_id=excluded.user_id,channel=excluded.channel,
 		address=excluded.address,enabled=true,last_seen_at=now(),updated_at=now()`,
 		in.ID, user, channel, in.Address)
-	if err != nil { http.Error(w, "device registration failed", http.StatusInternalServerError); return }
+	if err != nil {
+		http.Error(w, "device registration failed", http.StatusInternalServerError)
+		return
+	}
 	jsonOut(w, http.StatusCreated, map[string]bool{"registered": true})
 }
 
 func (s *service) notifications(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed); return
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
 	if bearer(r) != s.internal || s.internal == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized); return
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
 	}
 	var in notificationInput
 	if err := decodeJSON(w, r, &in); err != nil || in.UserID == "" || strings.TrimSpace(in.Title) == "" || strings.TrimSpace(in.Body) == "" {
-		http.Error(w, "invalid notification", http.StatusBadRequest); return
+		http.Error(w, "invalid notification", http.StatusBadRequest)
+		return
 	}
 	if len(in.Title) > 200 || len(in.Body) > 4000 {
-		http.Error(w, "notification too large", http.StatusBadRequest); return
+		http.Error(w, "notification too large", http.StatusBadRequest)
+		return
 	}
-	if in.Payload == nil { in.Payload = map[string]any{} }
+	if in.Payload == nil {
+		in.Payload = map[string]any{}
+	}
 	var id string
 	err := s.db.QueryRow(r.Context(), `insert into public.testagram_notifications
 		(user_id,title,body,payload) values($1,$2,$3,$4) returning id`,
 		in.UserID, strings.TrimSpace(in.Title), strings.TrimSpace(in.Body), in.Payload).Scan(&id)
-	if err != nil { http.Error(w, "notification queue failed", http.StatusInternalServerError); return }
+	if err != nil {
+		http.Error(w, "notification queue failed", http.StatusInternalServerError)
+		return
+	}
 	jsonOut(w, http.StatusAccepted, map[string]string{"id": id, "status": "queued"})
 }
 
 func (s *service) stream(w http.ResponseWriter, r *http.Request) {
 	user, ok := s.user(r)
-	if !ok { http.Error(w, "unauthorized", http.StatusUnauthorized); return }
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	flusher, ok := w.(http.Flusher)
-	if !ok { http.Error(w, "streaming unsupported", http.StatusInternalServerError); return }
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.Header().Set("Connection", "keep-alive")
@@ -144,11 +172,14 @@ func (s *service) stream(w http.ResponseWriter, r *http.Request) {
 	defer ticker.Stop()
 	for {
 		if err := s.deliverOne(r.Context(), user, w, flusher); err != nil {
-			if !errors.Is(err, context.Canceled) { log.Printf("notification stream: %v", err) }
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("notification stream: %v", err)
+			}
 			return
 		}
 		select {
-		case <-r.Context().Done(): return
+		case <-r.Context().Done():
+			return
 		case <-ticker.C:
 		}
 	}
@@ -156,31 +187,47 @@ func (s *service) stream(w http.ResponseWriter, r *http.Request) {
 
 func (s *service) deliverOne(ctx context.Context, user string, w http.ResponseWriter, flusher http.Flusher) error {
 	tx, err := s.db.Begin(ctx)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer tx.Rollback(ctx)
 	var n notification
 	err = tx.QueryRow(ctx, `select id,user_id,title,body,payload from public.testagram_notifications
 		where user_id=$1 and status='queued' and available_at<=now()
 		order by created_at for update skip locked limit 1`, user).
 		Scan(&n.ID, &n.UserID, &n.Title, &n.Body, &n.Payload)
-	if errors.Is(err, pgx.ErrNoRows) { return nil }
-	if err != nil { return err }
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	data, _ := json.Marshal(n)
-	if _, err = w.Write([]byte("event: notification\nid: " + n.ID + "\ndata: " + string(data) + "\n\n")); err != nil { return err }
+	if _, err = w.Write([]byte("event: notification\nid: " + n.ID + "\ndata: " + string(data) + "\n\n")); err != nil {
+		return err
+	}
 	flusher.Flush()
 	if _, err = tx.Exec(ctx, `update public.testagram_notifications
-		set status='delivered',delivered_at=now(),updated_at=now(),attempts=attempts+1 where id=$1`, n.ID); err != nil { return err }
+		set status='delivered',delivered_at=now(),updated_at=now(),attempts=attempts+1 where id=$1`, n.ID); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
 func (s *service) user(r *http.Request) (string, bool) {
 	raw := bearer(r)
-	if raw == "" { return "", false }
+	if raw == "" {
+		return "", false
+	}
 	token, err := jwt.Parse(raw, func(t *jwt.Token) (any, error) {
-		if t.Method.Alg() != "HS256" { return nil, errors.New("algorithm rejected") }
+		if t.Method.Alg() != "HS256" {
+			return nil, errors.New("algorithm rejected")
+		}
 		return s.jwtKey, nil
 	})
-	if err != nil || !token.Valid { return "", false }
+	if err != nil || !token.Valid {
+		return "", false
+	}
 	sub, err := token.Claims.GetSubject()
 	return sub, err == nil && sub != ""
 }
@@ -200,5 +247,16 @@ func jsonOut(w http.ResponseWriter, code int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func env(k, d string) string { if v := os.Getenv(k); v != "" { return v }; return d }
-func mustEnv(k string) string { v := os.Getenv(k); if v == "" { log.Fatalf("%s is required", k) }; return v }
+func env(k, d string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return d
+}
+func mustEnv(k string) string {
+	v := os.Getenv(k)
+	if v == "" {
+		log.Fatalf("%s is required", k)
+	}
+	return v
+}

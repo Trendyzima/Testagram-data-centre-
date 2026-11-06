@@ -4,7 +4,7 @@ services:
     build: {context: .., dockerfile: control-plane/Dockerfile}
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres
+      DATABASE_URL: ${TESTAGRAM_DATABASE_URL:?Set TESTAGRAM_DATABASE_URL to the canonical PostgreSQL URL with TLS}
       VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN}
       VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN}
       TESTAGRAM_BASE_DOMAIN: ${TESTAGRAM_BASE_DOMAIN:-}
@@ -21,7 +21,7 @@ services:
       timeout: 5s
       retries: 6
   algorithm:
-    image: ${TESTAGRAM_ALGORITHM_IMAGE:-ghcr.io/trendyzima/testagram-feed:latest}
+    image: ${TESTAGRAM_ALGORITHM_IMAGE:?Set TESTAGRAM_ALGORITHM_IMAGE to an immutable GHCR digest}
     restart: unless-stopped
     environment:
       HTTP_ADDR: :8092
@@ -35,13 +35,13 @@ services:
       retries: 6
       start_period: 5s
   api:
-    image: ${TESTAGRAM_BACKEND_IMAGE:-ghcr.io/trendyzima/testagram-backend:latest}
+    image: ${TESTAGRAM_BACKEND_IMAGE:?Set TESTAGRAM_BACKEND_IMAGE to an immutable GHCR digest}
     restart: unless-stopped
     environment:
       LISTEN_ADDR: :8080
       DB_MAX_CONNS: ${DB_MAX_CONNS:-10}
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/postgres?sslmode=disable
-      TESTAGRAM_AUTH_PROVIDER: ${TESTAGRAM_AUTH_PROVIDER:-supabase}
+      DATABASE_URL: ${TESTAGRAM_DATABASE_URL:?Set TESTAGRAM_DATABASE_URL to the canonical PostgreSQL URL with TLS}
+      TESTAGRAM_AUTH_PROVIDER: ${TESTAGRAM_AUTH_PROVIDER:?Set TESTAGRAM_AUTH_PROVIDER explicitly}
       APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-}
       APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:-}
       SUPABASE_URL: ${SUPABASE_PUBLIC_URL}
@@ -70,7 +70,7 @@ services:
       start_period: 10s
   # Keep federation private until signature verification and durable inbox/outbox ship.
   federation:
-    image: ${TESTAGRAM_FEDERATION_IMAGE:-ghcr.io/trendyzima/testagram-federation:latest}
+    image: ${TESTAGRAM_FEDERATION_IMAGE:-ghcr.io/trendyzima/testagram-federation:disabled-preview}
     restart: unless-stopped
     environment:
       HTTP_ADDR: :8081

@@ -57,3 +57,29 @@ Health checks exercise the auth, REST, storage, realtime, and gateway endpoints.
 - Back up the database and object directory before changing releases or schema.
 - Test a restore on a separate instance before any production cutover.
 - Do not switch DNS or production traffic as part of this rebrand alone.
+
+
+## Production release candidate gates
+
+The VPS preflight is intentionally stricter than local development. Before it permits deployment, the operator must supply immutable SHA-256 image references for the Backend and Algorithm, explicitly select one authentication provider, configure the legacy Supabase compatibility credentials still used by unmigrated media/domain operations, and provide HTTPS S3-compatible media endpoint and credentials. If Appwrite is selected, its HTTPS endpoint and project ID must also be present. Set **TESTAGRAM_REQUIRE_APPWRITE=1** to prevent a production release candidate from silently falling back to legacy Supabase authentication.
+
+Example image references must use the registry's actual manifest digest, not a guessed digest or a mutable tag:
+
+- **TESTAGRAM_BACKEND_IMAGE=ghcr.io/trendyzima/testagram-backend@sha256:<64-hex-digest>**
+- **TESTAGRAM_ALGORITHM_IMAGE=ghcr.io/trendyzima/testagram-feed@sha256:<64-hex-digest>**
+
+Keep the federation service on its disabled preview profile. Do not set TESTAGRAM_FEDERATION_IMAGE or enable federation-preview until the service has verified inbound signatures, durable inbox/outbox, SSRF-safe delivery and retry/dead-letter behavior. The disabled placeholder image is not a release artifact.
+
+The S3 endpoint and credentials passing preflight prove configuration presence only. They do not prove bucket policy, object authorization, upload completion, private download denial, CDN cache separation, deletion, or restore. Keep VIRTUAL_STORAGE_ENABLED=false until those live staging tests pass.
+
+
+### Appwrite cutover is deliberately blocked until the client migration is complete
+
+The current XClone application still has Supabase-backed session listeners and legacy product features that call Supabase directly. Its Appwrite SDK and Go API token adapter do not yet constitute a complete global Appwrite session migration. Therefore the example VPS environment retains the explicit transitional provider value **TESTAGRAM_AUTH_PROVIDER=supabase** while setting **TESTAGRAM_REQUIRE_APPWRITE=1**. This intentionally makes the production preflight fail rather than deploying an Appwrite-only backend against a Supabase-session frontend.
+
+Do not set **TESTAGRAM_REQUIRE_APPWRITE=0** for a production release. That override is only for an explicitly approved transitional staging environment. The Appwrite production gate may be cleared only after XClone's global auth provider, session restoration/listeners, account signup/link/provisioning, password recovery, and all remaining Supabase-backed capability adapters have passed end-to-end staging with the same canonical PostgreSQL user IDs.
+
+
+### Canonical PostgreSQL versus legacy Supabase database
+
+The public Testagram Backend API and VPS control plane must use **TESTAGRAM_DATABASE_URL**, pointed at the canonical Neon PostgreSQL database with **sslmode=require** (or **verify-full** where certificate verification is configured). The older **DATABASE_URL** remains for the transitional self-hosted Supabase/platform services and must not be mistaken for the canonical social database. The VPS Compose API and control-plane services now consume TESTAGRAM_DATABASE_URL explicitly; preflight rejects a missing URL, non-TLS connection string, or placeholder Neon credentials. CI uses its isolated local Postgres service only for tests.
