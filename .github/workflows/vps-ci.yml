@@ -1,9 +1,9 @@
 name: testagram-vps-ci
 on:
   push:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**","vps/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
   pull_request:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**","vps/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
   workflow_dispatch:
 jobs:
   go:
@@ -69,7 +69,7 @@ jobs:
             -e PGPASSWORD=testagram \
             -v "$PWD:/workspace:ro" \
             postgres:17-alpine \
-            sh -c "psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/001_vps.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/002_video_platform.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/003_production_hardening.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/004_storage_buckets.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/005_platform.sql && psql -h 127.0.0.1 -U postgres -d postgres -f /workspace/migrations/006_hosting_control_plane.sql"
+            sh -c 'for f in /workspace/migrations/*.sql; do psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
       - name: Validate Compose syntax
         run: |
           docker compose -f backend/docker-compose.yml config
@@ -81,7 +81,7 @@ jobs:
           trap 'docker rm -f vps-ci-db >/dev/null 2>&1 || true; docker compose -f vps/docker-compose.yml down -v >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 30); do docker exec vps-ci-db pg_isready -U postgres -d postgres >/dev/null 2>&1 && break; sleep 2; done
           docker exec vps-ci-db pg_isready -U postgres -d postgres
-          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'for f in /migrations/*.sql; do psql -h vps-ci-db -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
+          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'for f in /migrations/*.sql; do psql -h db -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
           POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase docker compose -f vps/docker-compose.yml build control-plane
           POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase TESTAGRAM_BASE_DOMAIN=example.testagram.invalid TESTAGRAM_DOMAIN_TARGETS=web=http://web:3000 TESTAGRAM_PUBLIC_DNS_TARGET=edge.testagram.invalid docker compose -f vps/docker-compose.yml up -d control-plane
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/readyz >/dev/null 2>&1 && break; sleep 2; done
@@ -132,7 +132,7 @@ jobs:
             sleep 2
           done
           docker exec testagram-postgres pg_isready -U postgres -d postgres
-          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c "psql -h testagram-postgres -U postgres -d postgres -f /migrations/001_vps.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/002_video_platform.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/003_production_hardening.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/004_storage_buckets.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/005_platform.sql && psql -h testagram-postgres -U postgres -d postgres -f /migrations/006_hosting_control_plane.sql"
+          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'for f in /migrations/*.sql; do psql -h testagram-postgres -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
           export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/postgres
           export VIDEO_JWT_SECRET=ci-test-jwt-secret
           export VIDEO_SIGNING_SECRET=ci-test-signing-secret-at-least-32-bytes
@@ -151,6 +151,7 @@ jobs:
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"key":"ci:rate","limit":1,"window_seconds":60}' http://127.0.0.1:8095/v1/rate-limit/check
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"key":"ci:rate","limit":1,"window_seconds":60}' http://127.0.0.1:8095/v1/rate-limit/check | grep -q '"allowed":false'
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"queue":"ci","payload":{"type":"smoke","value":"ok"}}' http://127.0.0.1:8095/v1/queue/enqueue
+          docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"key":"ci.flag","enabled":true,"public":true,"value":{"mode":"green"}}' http://127.0.0.1:8095/v1/config/set
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"key":"ci.flag","enabled":true,"public":true,"value":{"mode":"green"}}' http://127.0.0.1:8095/v1/config/set || { echo "feature-flag write failed; platform logs follow"; docker compose -f backend/docker-compose.yml logs --no-color platform; exit 1; }
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - http://127.0.0.1:8095/v1/config/ci.flag | grep -Eq '"mode"[[:space:]]*:[[:space:]]*"green"'
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"event_name":"ci.smoke","properties":{"status":"green"}}' http://127.0.0.1:8095/v1/events

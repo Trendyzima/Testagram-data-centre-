@@ -14,26 +14,30 @@ import (
   "net/http"
   "os"
   "path/filepath"
+  "strconv"
   "strings"
+  "syscall"
   "time"
 
   "github.com/golang-jwt/jwt/v5"
   "github.com/jackc/pgx/v5/pgxpool"
 )
 
-type server struct { db *pgxpool.Pool; mediaDir string; jwtKey []byte; signKey []byte }
+type server struct { db *pgxpool.Pool; mediaDir string; jwtKey []byte; signKey []byte; uploadSlots chan struct{}; accountQuotaBytes int64; minFreeBytes int64 }
 type claims struct { jwt.RegisteredClaims }
 type channelInput struct { Handle string `json:"handle"`; Name string `json:"name"`; Description string `json:"description"` }
 
 func main() {
   db,err:=pgxpool.New(context.Background(),mustEnv("DATABASE_URL"));if err!=nil{log.Fatal(err)};defer db.Close()
   mediaDir:=env("VIDEO_MEDIA_ROOT","/media")
-  s:=&server{db:db,mediaDir:mediaDir,jwtKey:[]byte(mustEnv("VIDEO_JWT_SECRET")),signKey:[]byte(mustEnv("VIDEO_SIGNING_SECRET"))}
+  accountQuotaBytes,err:=positiveLimitEnv("VIDEO_ACCOUNT_QUOTA_BYTES",20<<30);if err!=nil{log.Fatal(err)}
+  minFreeBytes,err:=nonnegativeLimitEnv("VIDEO_MIN_FREE_BYTES",2<<30);if err!=nil{log.Fatal(err)}
+  s:=&server{db:db,mediaDir:mediaDir,jwtKey:[]byte(mustEnv("VIDEO_JWT_SECRET")),signKey:[]byte(mustEnv("VIDEO_SIGNING_SECRET")),uploadSlots:make(chan struct{},2),accountQuotaBytes:accountQuotaBytes,minFreeBytes:minFreeBytes}
   if len(s.signKey)<32{log.Fatal("VIDEO_SIGNING_SECRET must be at least 32 bytes")}
   if err:=os.MkdirAll(mediaDir,0750);err!=nil{log.Fatal(err)}
   mux:=http.NewServeMux()
   mux.HandleFunc("/healthz",s.health);mux.HandleFunc("/readyz",s.ready);mux.HandleFunc("/v1/channels",s.channels);mux.HandleFunc("/v1/channels/",s.channelRoute);mux.HandleFunc("/v1/feed",s.feed);mux.HandleFunc("/v1/videos",s.videos);mux.HandleFunc("/v1/videos/",s.videoRoute)
-  srv:=&http.Server{Addr:env("VIDEO_ADDR",":8790"),Handler:securityHeaders(mux),ReadHeaderTimeout:10*time.Second,ReadTimeout:60*time.Second,WriteTimeout:60*time.Second,IdleTimeout:120*time.Second}
+  srv:=&http.Server{Addr:env("VIDEO_ADDR",":8790"),Handler:securityHeaders(mux),ReadHeaderTimeout:10*time.Second,ReadTimeout:2*time.Hour,WriteTimeout:2*time.Hour,IdleTimeout:120*time.Second}
   log.Fatal(srv.ListenAndServe())
 }
 
@@ -71,19 +75,107 @@ func (s *server) comments(w http.ResponseWriter,r *http.Request,id string){
   if _,err:=s.db.Exec(r.Context(),`update testagram_video.videos set comment_count=(select count(*) from testagram_video.comments where video_id=$1) where id=$1`,id);err!=nil{http.Error(w,"comment failed",500);return};jsonOut(w,201,map[string]bool{"created":true})
 }
 func (s *server) videos(w http.ResponseWriter,r *http.Request){
-  if r.Method!=http.MethodPost{http.Error(w,"method not allowed",405);return};user,ok:=s.user(r);if !ok{http.Error(w,"unauthorized",401);return}
-  r.Body=http.MaxBytesReader(w,r.Body,20<<30);if err:=r.ParseMultipartForm(64<<20);err!=nil{http.Error(w,"multipart form required",400);return}
+  if r.Method!=http.MethodPost{http.Error(w,"method not allowed",405);return}
+  user,ok:=s.user(r);if !ok{http.Error(w,"unauthorized",401);return}
+  select {case s.uploadSlots<-struct{}{}: defer func(){<-s.uploadSlots}();default: http.Error(w,"upload capacity reached",http.StatusTooManyRequests);return}
+  if err:=ensureFreeDisk(s.mediaDir,s.minFreeBytes);err!=nil{http.Error(w,"storage temporarily unavailable",http.StatusInsufficientStorage);return}
+  // Reserve against the authenticated account before ParseMultipartForm can spill
+  // attacker-controlled body bytes to temporary disk. Chunked uploads are rejected
+  // because their worst-case reservation cannot be established safely in advance.
+  if r.ContentLength<=0{http.Error(w,"Content-Length is required for video uploads",http.StatusLengthRequired);return}
+  if r.ContentLength>20<<30{http.Error(w,"upload exceeds 20 GiB request limit",http.StatusRequestEntityTooLarge);return}
+  r.Body=http.MaxBytesReader(w,r.Body,20<<30)
+  reservationID,err:=s.reserveUploadIntent(r.Context(),user,r.ContentLength)
+  if err!=nil{
+    if errors.Is(err,errVideoQuotaExceeded){http.Error(w,"video storage quota exceeded",http.StatusInsufficientStorage);return}
+    log.Printf("reserve video upload intent: %v",err);http.Error(w,"upload reservation failed",500);return
+  }
+  videoID:=""
+  reservationFinalized:=false
+  defer func(){
+    if !reservationFinalized{
+      cleanupCtx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
+      defer cancel()
+      s.failVideoUpload(cleanupCtx,reservationID,videoID,"upload interrupted or rejected")
+    }
+  }()
+  if err:=r.ParseMultipartForm(64<<20);err!=nil{http.Error(w,"multipart form required or upload too large",400);return}
+  if r.MultipartForm!=nil { defer r.MultipartForm.RemoveAll() }
   channelID,title,description,visibility:=r.FormValue("channel_id"),strings.TrimSpace(r.FormValue("title")),r.FormValue("description"),r.FormValue("visibility");if visibility==""{visibility="private"}
   if title==""||len(title)>200||(visibility!="private"&&visibility!="unlisted"&&visibility!="public"){http.Error(w,"invalid video metadata",400);return}
   var owner string;if err:=s.db.QueryRow(r.Context(),"select owner_id from testagram_video.channels where id=$1",channelID).Scan(&owner);err!=nil||owner!=user{http.Error(w,"channel not found",404);return}
   file,hdr,err:=r.FormFile("video");if err!=nil{http.Error(w,"video file required",400);return};defer file.Close()
-  var id string;if err:=s.db.QueryRow(r.Context(),"insert into testagram_video.videos(channel_id,owner_id,title,description,visibility,status) values($1,$2,$3,$4,$5,'uploading') returning id",channelID,user,title,description,visibility).Scan(&id);err!=nil{http.Error(w,"video creation failed",500);return}
-  ext:=safeExt(hdr);dir:=filepath.Join(s.mediaDir,"videos","originals",id);if err:=os.MkdirAll(dir,0750);err!=nil{http.Error(w,"storage unavailable",500);return};path:=filepath.Join(dir,"source"+ext)
-  dst,err:=os.OpenFile(path,os.O_CREATE|os.O_WRONLY|os.O_EXCL,0640);if err!=nil{http.Error(w,"storage unavailable",500);return};_,copyErr:=io.Copy(dst,io.LimitReader(file,20<<30));closeErr:=dst.Close()
-  if copyErr!=nil||closeErr!=nil{_ = os.Remove(path);_,_=s.db.Exec(r.Context(),"update testagram_video.videos set status='failed',processing_error=$2 where id=$1",id,"upload failed");http.Error(w,"upload failed",500);return}
-  rel:=strings.TrimPrefix(path,s.mediaDir+"/");if _,err=s.db.Exec(r.Context(),"update testagram_video.videos set original_object_key=$2,status='queued',updated_at=now() where id=$1",id,rel);err!=nil{_,_=s.db.Exec(r.Context(),"update testagram_video.videos set status='failed',processing_error=$2 where id=$1",id,"queue metadata update failed");http.Error(w,"queue failed",500);return}
-  if _,err=s.db.Exec(r.Context(),"insert into testagram_video.video_jobs(video_id,kind) values($1,'transcode'),($1,'poster')",id);err!=nil{_,_=s.db.Exec(r.Context(),"update testagram_video.videos set status='failed',processing_error=$2 where id=$1",id,"job creation failed");http.Error(w,"queue failed",500);return};jsonOut(w,202,map[string]string{"id":id,"status":"queued"})
+  if hdr.Size<=0||hdr.Size>20<<30{http.Error(w,"video file must be between 1 byte and 20 GiB",http.StatusRequestEntityTooLarge);return}
+  videoID,err=s.bindVideoUpload(r.Context(),reservationID,channelID,user,title,description,visibility,hdr.Size)
+  if err!=nil{log.Printf("bind video upload reservation: %v",err);http.Error(w,"upload reservation failed",500);return}
+  ext:=safeExt(hdr);dir:=filepath.Join(s.mediaDir,"videos","originals",videoID);if err:=os.MkdirAll(dir,0750);err!=nil{s.failVideoUpload(r.Context(),reservationID,videoID,"storage unavailable");reservationFinalized=true;http.Error(w,"storage unavailable",500);return};path:=filepath.Join(dir,"source"+ext)
+  dst,err:=os.OpenFile(path,os.O_CREATE|os.O_WRONLY|os.O_EXCL,0640);if err!=nil{s.failVideoUpload(r.Context(),reservationID,videoID,"storage unavailable");reservationFinalized=true;http.Error(w,"storage unavailable",500);return}
+  copied,copyErr:=io.Copy(dst,io.LimitReader(file,(20<<30)+1));closeErr:=dst.Close()
+  if copyErr!=nil||closeErr!=nil||copied!=hdr.Size{_ = os.Remove(path);s.failVideoUpload(r.Context(),reservationID,videoID,"upload failed or size mismatch");reservationFinalized=true;http.Error(w,"upload failed or size mismatch",500);return}
+  rel:=strings.TrimPrefix(path,s.mediaDir+"/");if err=s.completeVideoUpload(r.Context(),reservationID,videoID,rel,copied);err!=nil{_ = os.Remove(path);s.failVideoUpload(r.Context(),reservationID,videoID,"upload metadata update failed");reservationFinalized=true;http.Error(w,"upload metadata update failed",500);return}
+  if _,err=s.db.Exec(r.Context(),"insert into testagram_video.video_jobs(video_id,kind) values($1,'transcode'),($1,'poster')",videoID);err!=nil{_ = os.Remove(path);s.failVideoUpload(r.Context(),reservationID,videoID,"job creation failed");reservationFinalized=true;http.Error(w,"queue failed",500);return}
+  reservationFinalized=true
+  jsonOut(w,202,map[string]string{"id":videoID,"status":"queued"})
 }
+
+var errVideoQuotaExceeded = errors.New("video account quota exceeded")
+
+func positiveLimitEnv(name string, fallback int64) (int64, error) {
+  raw:=strings.TrimSpace(os.Getenv(name));if raw==""{return fallback,nil}
+  value,err:=strconv.ParseInt(raw,10,64);if err!=nil||value<=0{return 0,fmt.Errorf("%s must be a positive integer",name)}
+  return value,nil
+}
+func nonnegativeLimitEnv(name string, fallback int64) (int64, error) {
+  raw:=strings.TrimSpace(os.Getenv(name));if raw==""{return fallback,nil}
+  value,err:=strconv.ParseInt(raw,10,64);if err!=nil||value<0{return 0,fmt.Errorf("%s must be a non-negative integer",name)}
+  return value,nil
+}
+func quotaAllows(used,reserved,requested,limit int64) bool {
+  if used<0||reserved<0||requested<=0||limit<=0||requested>limit{return false}
+  remaining:=limit-requested
+  return used<=remaining && reserved<=remaining-used
+}
+func ensureFreeDisk(root string, minimum int64) error {
+  var stat syscall.Statfs_t
+  if err:=syscall.Statfs(root,&stat);err!=nil{return err}
+  free:=int64(stat.Bavail)*int64(stat.Bsize)
+  if free<minimum{return fmt.Errorf("free disk %d bytes is below required reserve %d bytes",free,minimum)}
+  return nil
+}
+func (s *server) reserveUploadIntent(ctx context.Context,ownerID string,requestBytes int64)(string,error){
+  tx,err:=s.db.Begin(ctx);if err!=nil{return "",err};defer tx.Rollback(ctx)
+  if _,err=tx.Exec(ctx,"select pg_advisory_xact_lock(hashtextextended($1,0))",ownerID);err!=nil{return "",err}
+  var used,reserved int64
+  if err=tx.QueryRow(ctx,"select coalesce(sum(original_size_bytes),0) from testagram_video.videos where owner_id=$1 and status <> 'failed'",ownerID).Scan(&used);err!=nil{return "",err}
+  if err=tx.QueryRow(ctx,"select coalesce(sum(reserved_bytes),0) from testagram_video.video_upload_reservations where owner_id=$1 and status='reserved' and expires_at>now()",ownerID).Scan(&reserved);err!=nil{return "",err}
+  if !quotaAllows(used,reserved,requestBytes,s.accountQuotaBytes){return "",errVideoQuotaExceeded}
+  var reservationID string
+  if err=tx.QueryRow(ctx,"insert into testagram_video.video_upload_reservations(owner_id,reserved_bytes,expires_at) values($1,$2,now()+interval '24 hours') returning reservation_id",ownerID,requestBytes).Scan(&reservationID);err!=nil{return "",err}
+  if err=tx.Commit(ctx);err!=nil{return "",err}
+  return reservationID,nil
+}
+func (s *server) bindVideoUpload(ctx context.Context,reservationID,channelID,ownerID,title,description,visibility string,size int64)(string,error){
+  tx,err:=s.db.Begin(ctx);if err!=nil{return "",err};defer tx.Rollback(ctx)
+  var reservedOwner string;var reservedBytes int64
+  if err=tx.QueryRow(ctx,"select owner_id,reserved_bytes from testagram_video.video_upload_reservations where reservation_id=$1 and status='reserved' and expires_at>now() for update",reservationID).Scan(&reservedOwner,&reservedBytes);err!=nil{return "",err}
+  if reservedOwner!=ownerID||size<=0||size>reservedBytes{return "",errors.New("upload reservation owner or size mismatch")}
+  var id string
+  if err=tx.QueryRow(ctx,"insert into testagram_video.videos(channel_id,owner_id,title,description,visibility,status) values($1,$2,$3,$4,$5,'uploading') returning id",channelID,ownerID,title,description,visibility).Scan(&id);err!=nil{return "",err}
+  if _,err=tx.Exec(ctx,"update testagram_video.video_upload_reservations set video_id=$2,reserved_bytes=$3,updated_at=now() where reservation_id=$1",reservationID,id,size);err!=nil{return "",err}
+  if err=tx.Commit(ctx);err!=nil{return "",err}
+  return id,nil
+}
+func (s *server) completeVideoUpload(ctx context.Context,reservationID,id,key string,size int64)error{
+  tx,err:=s.db.Begin(ctx);if err!=nil{return err};defer tx.Rollback(ctx)
+  if _,err=tx.Exec(ctx,"update testagram_video.videos set original_object_key=$2,original_size_bytes=$3,status='queued',updated_at=now() where id=$1",id,key,size);err!=nil{return err}
+  tag,err:=tx.Exec(ctx,"update testagram_video.video_upload_reservations set status='completed',updated_at=now() where reservation_id=$1 and video_id=$2 and status='reserved'",reservationID,id);if err!=nil{return err};if tag.RowsAffected()!=1{return errors.New("active upload reservation was not found")}
+  return tx.Commit(ctx)
+}
+func (s *server) failVideoUpload(ctx context.Context,reservationID,id,reason string){
+  if id!=""{_,_=s.db.Exec(ctx,"update testagram_video.videos set status='failed',processing_error=$2,updated_at=now() where id=$1",id,reason)}
+  _,_=s.db.Exec(ctx,"update testagram_video.video_upload_reservations set status='released',updated_at=now() where reservation_id=$1 and status='reserved'",reservationID)
+}
+
 func (s *server) videoRoute(w http.ResponseWriter,r *http.Request){
   p:=strings.TrimPrefix(r.URL.Path,"/v1/videos/");parts:=strings.Split(strings.Trim(p,"/"),"/");if len(parts)<2{http.Error(w,"not found",404);return};id:=parts[0]
   switch parts[1]{case "publish":s.publish(w,r,id);case "view":s.view(w,r,id);case "like":s.like(w,r,id);case "comments":s.comments(w,r,id);case "manifest":s.manifest(w,r,id);case "hls":if len(parts)==3{s.hls(w,r,id,parts[2])}else{http.Error(w,"not found",404)};default:http.Error(w,"not found",404)}
