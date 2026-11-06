@@ -92,6 +92,12 @@ else
       else
         fail "APPWRITE_IDENTITY_INGEST_TOKEN must be a real random secret of at least 32 characters"
       fi
+      appwrite_kyc_binding="$(awk 'index($0, "APPWRITE_KYC_BINDING_ENABLED=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
+      if [ "$appwrite_kyc_binding" = "true" ]; then
+        ok "trusted KYC-to-Appwrite binding is explicitly enabled"
+      else
+        fail "APPWRITE_KYC_BINDING_ENABLED must be true before selecting Appwrite for production"
+      fi
       ;;
     supabase)
       require_appwrite="$(awk 'index($0, "TESTAGRAM_REQUIRE_APPWRITE=") == 1 { sub(/^[^=]*=/, ""); value=$0 } END { print value }' "$ENV_FILE")"
