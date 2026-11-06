@@ -14,6 +14,7 @@ class NodeService : Service() {
     }
 
     @Volatile private var stopping = false
+    @Volatile private var nodeWorker: Thread? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -48,7 +49,7 @@ class NodeService : Service() {
         }
 
         startForegroundService(Intent(this, LocalMediaService::class.java))
-        Thread {
+        nodeWorker = Thread {
             val prefs = getSharedPreferences("node-config", 0)
             val url = prefs.getString("control_plane_url", "") ?: ""
             val bootstrap = prefs.getString("bootstrap_token", "") ?: ""
@@ -69,7 +70,7 @@ class NodeService : Service() {
                 }
             )
             publish("Stopped")
-        }.start()
+        }.apply { name = "testagram-node-control"; isDaemon = true; start() }
     }
 
     private fun publish(state: String) {
@@ -92,6 +93,8 @@ class NodeService : Service() {
 
     override fun onDestroy() {
         stopping = true
+        nodeWorker?.interrupt()
+        nodeWorker = null
         stopService(Intent(this, LocalMediaService::class.java))
         getSharedPreferences(PREFS, 0).edit()
             .putBoolean(KEY_RUNNING, false)
