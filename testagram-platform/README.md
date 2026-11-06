@@ -83,3 +83,7 @@ Do not set **TESTAGRAM_REQUIRE_APPWRITE=0** for a production release. That overr
 ### Canonical PostgreSQL versus legacy Supabase database
 
 The public Testagram Backend API and VPS control plane must use **TESTAGRAM_DATABASE_URL**, pointed at the canonical Neon PostgreSQL database with **sslmode=require** (or **verify-full** where certificate verification is configured). The older **DATABASE_URL** remains for the transitional self-hosted Supabase/platform services and must not be mistaken for the canonical social database. The VPS Compose API and control-plane services now consume TESTAGRAM_DATABASE_URL explicitly; preflight rejects a missing URL, non-TLS connection string, or placeholder Neon credentials. CI uses its isolated local Postgres service only for tests.
+
+### Fresh Appwrite identity rollout
+
+The VPS API receives only the public Appwrite endpoint and project ID; no Appwrite server API key is required for validating a browser JWT against the authenticated Account endpoint. Keep `TESTAGRAM_AUTH_PROVIDER=supabase` until the XClone session provider and all authentication-dependent flows have been migrated and staging-tested. The Backend's new-user provisioning endpoint is separately blocked by the PostgreSQL legacy-inventory completion flag, which defaults to false. Do not mark that inventory complete until the full legacy email/UUID export has been reconciled with canonical accounts and dependent data. Existing users must link by proving both sessions; matching email is not sufficient.
