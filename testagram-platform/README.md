@@ -90,3 +90,5 @@ The VPS API receives only the public Appwrite endpoint and project ID; no Appwri
 
 
 The Appwrite cutover also requires a server-only `APPWRITE_IDENTITY_INGEST_TOKEN`. The current KYC/identity-verification engine must call the Backend's internal approval-ingestion endpoint after it independently approves a registration. The Backend refuses new canonical account provisioning unless a trusted approval record exists. The token must be generated independently for staging and production, stored only in the secret manager, and never placed in a browser build.
+
+Set `APPWRITE_KYC_BINDING_ENABLED=true` only after the identity-signup Edge Function is deployed with the matching Backend URL, Appwrite project settings and ingest token, and its approval callback has been tested end to end. The Backend registration-status endpoint and provisioning handler both enforce this flag as well as the PostgreSQL legacy inventory gate.
