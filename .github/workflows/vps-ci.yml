@@ -93,7 +93,7 @@ jobs:
             http://127.0.0.1:8787/v1/nodes/register
           curl -fsS -o /tmp/linux-node-registration.json \
             -H "Authorization: Bearer ci-bootstrap" -H "Content-Type: application/json" \
-            -d '{"name":"linux-compute","platform":"linux","arch":"amd64","cpuCores":4,"memoryBytes":8589934592,"storageBytes":10000000000,"freeBytes":5000000000,"endpoint":"linux-compute","capabilities":{"workloadExecution":true}}' \
+            -d '{"name":"linux-compute","platform":"linux","arch":"amd64","cpuCores":2,"memoryBytes":8589934592,"storageBytes":10000000000,"freeBytes":5000000000,"endpoint":"linux-compute","capabilities":{"workloadExecution":true}}' \
             http://127.0.0.1:8787/v1/nodes/register
           curl -fsS -o /tmp/scheduled-workload.json \
             -H "Authorization: Bearer ci-internal" -H "Content-Type: application/json" \
