@@ -22,34 +22,35 @@ import (
 
 type Agent struct {
 	control, bootstrap, nodeToken, nodeID, name, endpoint, volumeRoot, stateFile string
-	workloadTimeout time.Duration
-	mu sync.RWMutex
+	workloadTimeout                                                              time.Duration
+	mu                                                                           sync.RWMutex
 }
 
 type Registration struct {
-	Name string `json:"name"`
-	Platform string `json:"platform"`
-	Arch string `json:"arch"`
-	CPUCores int `json:"cpuCores"`
-	MemoryBytes int64 `json:"memoryBytes"`
-	StorageBytes int64 `json:"storageBytes"`
-	FreeBytes int64 `json:"freeBytes"`
-	Endpoint string `json:"endpoint"`
+	Name         string         `json:"name"`
+	Platform     string         `json:"platform"`
+	Arch         string         `json:"arch"`
+	CPUCores     int            `json:"cpuCores"`
+	MemoryBytes  int64          `json:"memoryBytes"`
+	StorageBytes int64          `json:"storageBytes"`
+	FreeBytes    int64          `json:"freeBytes"`
+	Endpoint     string         `json:"endpoint"`
 	Capabilities map[string]any `json:"capabilities"`
 }
 
 type Workload struct {
-	Image string `json:"image"`
-	ImageDigest string `json:"imageDigest"`
-	Command []string `json:"command"`
-	Env map[string]string `json:"env"`
-	CPUMillis int `json:"cpuMillis"`
-	MemoryBytes int64 `json:"memoryBytes"`
-	Volume string `json:"volume"`
+	Image        string            `json:"image"`
+	ImageDigest  string            `json:"imageDigest"`
+	Command      []string          `json:"command"`
+	Env          map[string]string `json:"env"`
+	CPUMillis    int               `json:"cpuMillis"`
+	MemoryBytes  int64             `json:"memoryBytes"`
+	StorageBytes int64             `json:"storageBytes"`
+	Volume       string            `json:"volume"`
 }
 
 type pollResponse struct {
-	ID string `json:"id"`
+	ID       string   `json:"id"`
 	Workload Workload `json:"workload"`
 }
 
@@ -137,20 +138,40 @@ func (a *Agent) memory() int64 {
 
 func (a *Agent) loadState() error {
 	data, err := os.ReadFile(a.stateFile)
-	if err != nil { return nil }
-	var state struct { ID string `json:"id"`; Token string `json:"token"` }
-	if err := json.Unmarshal(data, &state); err != nil { return err }
-	if state.ID == "" || state.Token == "" { return errors.New("invalid node state") }
-	a.mu.Lock(); a.nodeID, a.nodeToken = state.ID, state.Token; a.mu.Unlock()
+	if err != nil {
+		return nil
+	}
+	var state struct {
+		ID    string `json:"id"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return err
+	}
+	if state.ID == "" || state.Token == "" {
+		return errors.New("invalid node state")
+	}
+	a.mu.Lock()
+	a.nodeID, a.nodeToken = state.ID, state.Token
+	a.mu.Unlock()
 	return nil
 }
 
 func (a *Agent) saveState(id, token string) error {
-	if err := os.MkdirAll(filepath.Dir(a.stateFile), 0700); err != nil { return err }
-	data, err := json.Marshal(struct { ID string `json:"id"`; Token string `json:"token"` }{id, token})
-	if err != nil { return err }
+	if err := os.MkdirAll(filepath.Dir(a.stateFile), 0700); err != nil {
+		return err
+	}
+	data, err := json.Marshal(struct {
+		ID    string `json:"id"`
+		Token string `json:"token"`
+	}{id, token})
+	if err != nil {
+		return err
+	}
 	tmp := a.stateFile + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil { return err }
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
 	return os.Rename(tmp, a.stateFile)
 }
 
@@ -161,13 +182,13 @@ func (a *Agent) register() error {
 		CPUCores: runtime.NumCPU(), MemoryBytes: a.memory(), StorageBytes: total, FreeBytes: free,
 		Endpoint: a.endpoint,
 		Capabilities: map[string]any{
-			"containers": runtimeBin() != "",
-			"localVolumes": true,
+			"containers":        runtimeBin() != "",
+			"localVolumes":      true,
 			"workloadExecution": strings.TrimSpace(os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) != "",
 		},
 	}
 	var out struct {
-		ID string `json:"id"`
+		ID    string `json:"id"`
 		Token string `json:"token"`
 	}
 	_, err := a.post("/v1/nodes/register", body, &out)
@@ -177,7 +198,9 @@ func (a *Agent) register() error {
 	if out.ID == "" || out.Token == "" {
 		return errors.New("control plane returned incomplete node credentials")
 	}
-	if err := a.saveState(out.ID, out.Token); err != nil { return err }
+	if err := a.saveState(out.ID, out.Token); err != nil {
+		return err
+	}
 	a.mu.Lock()
 	a.nodeID, a.nodeToken = out.ID, out.Token
 	a.mu.Unlock()
@@ -189,7 +212,7 @@ func (a *Agent) heartbeat() error {
 	body := Registration{
 		CPUCores: runtime.NumCPU(), MemoryBytes: a.memory(), StorageBytes: total, FreeBytes: free,
 		Capabilities: map[string]any{
-			"containers": runtimeBin() != "",
+			"containers":        runtimeBin() != "",
 			"workloadExecution": strings.TrimSpace(os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) != "",
 		},
 	}
@@ -218,23 +241,44 @@ func (a *Agent) report(id string, success bool) error {
 }
 
 func (a *Agent) execute(w Workload) error {
+	if w.StorageBytes > 0 {
+		_, free := a.disk()
+		if free < w.StorageBytes {
+			return errors.New("insufficient free disk space for workload storage reservation")
+		}
+	}
 	rt := runtimeBin()
 	if rt == "" {
 		return errors.New("docker or podman is required on this execution node")
 	}
-	if w.Image == "" || !validImageDigest(w.ImageDigest) { return errors.New("immutable sha256 image digest required") }
+	if w.Image == "" || !validImageDigest(w.ImageDigest) {
+		return errors.New("immutable sha256 image digest required")
+	}
 	image := w.Image + "@" + w.ImageDigest
 	if !allowedWorkloadImage(image, os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) {
 		return errors.New("workload image is not in VPS_ALLOWED_WORKLOAD_IMAGES")
 	}
-	if len(w.Command) == 0 || strings.TrimSpace(w.Command[0]) == "" { return errors.New("workload command is required") }
-	if w.CPUMillis <= 0 || w.CPUMillis > 2000 { return errors.New("workload CPU request must be between 1 and 2000 millicores") }
-	if w.MemoryBytes <= 0 || w.MemoryBytes > 4*1024*1024*1024 { return errors.New("workload memory request must be between 1 byte and 4 GiB") }
+	if len(w.Command) == 0 || strings.TrimSpace(w.Command[0]) == "" {
+		return errors.New("workload command is required")
+	}
+	if w.CPUMillis <= 0 || w.CPUMillis > 2000 {
+		return errors.New("workload CPU request must be between 1 and 2000 millicores")
+	}
+	if w.MemoryBytes <= 0 || w.MemoryBytes > 4*1024*1024*1024 {
+		return errors.New("workload memory request must be between 1 byte and 4 GiB")
+	}
 	cidFile, err := os.CreateTemp("", "testagram-workload-*.cid")
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	cidPath := cidFile.Name()
-	if err := cidFile.Close(); err != nil { _ = os.Remove(cidPath); return err }
-	if err := os.Remove(cidPath); err != nil { return err }
+	if err := cidFile.Close(); err != nil {
+		_ = os.Remove(cidPath)
+		return err
+	}
+	if err := os.Remove(cidPath); err != nil {
+		return err
+	}
 	defer os.Remove(cidPath)
 	args := []string{"run", "--cidfile", cidPath, "--rm", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--pids-limit=256", "--network=none"}
 	if w.CPUMillis > 0 {
@@ -252,7 +296,9 @@ func (a *Agent) execute(w Workload) error {
 	}
 	if w.Volume != "" {
 		path, err := resolveVolumePath(a.volumeRoot, w.Volume)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		args = append(args, "--volume", path+":/data:rw")
 	}
 	args = append(args, image)
@@ -281,9 +327,13 @@ func (a *Agent) execute(w Workload) error {
 }
 
 func allowedWorkloadImage(image, configured string) bool {
-	if strings.TrimSpace(configured) == "" { return false }
+	if strings.TrimSpace(configured) == "" {
+		return false
+	}
 	for _, candidate := range strings.Split(configured, ",") {
-		if strings.TrimSpace(candidate) == image { return true }
+		if strings.TrimSpace(candidate) == image {
+			return true
+		}
 	}
 	return false
 }
@@ -297,17 +347,29 @@ func resolveVolumePath(root, volume string) (string, error) {
 		strings.ContainsRune(volume, 0) {
 		return "", errors.New("volume must be a single safe name")
 	}
-	if err := os.MkdirAll(root, 0700); err != nil { return "", err }
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return "", err
+	}
 	canonicalRoot, err := filepath.EvalSymlinks(root)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	canonicalRoot, err = filepath.Abs(canonicalRoot)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	target := filepath.Join(canonicalRoot, volume)
-	if err := os.MkdirAll(target, 0700); err != nil { return "", err }
+	if err := os.MkdirAll(target, 0700); err != nil {
+		return "", err
+	}
 	canonicalTarget, err := filepath.EvalSymlinks(target)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	canonicalTarget, err = filepath.Abs(canonicalTarget)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	if canonicalTarget == canonicalRoot || !strings.HasPrefix(canonicalTarget, canonicalRoot+string(os.PathSeparator)) {
 		return "", errors.New("volume resolves outside storage root")
 	}
@@ -315,22 +377,42 @@ func resolveVolumePath(root, volume string) (string, error) {
 }
 
 func parseWorkloadTimeout(value string) (time.Duration, error) {
-	if strings.TrimSpace(value) == "" { return 30 * time.Minute, nil }
+	if strings.TrimSpace(value) == "" {
+		return 30 * time.Minute, nil
+	}
 	d, err := time.ParseDuration(strings.TrimSpace(value))
-	if err != nil { return 0, err }
-	if d < time.Second || d > 24*time.Hour { return 0, errors.New("must be between 1s and 24h") }
+	if err != nil {
+		return 0, err
+	}
+	if d < time.Second || d > 24*time.Hour {
+		return 0, errors.New("must be between 1s and 24h")
+	}
 	return d, nil
 }
 
 func validContainerID(id string) bool {
-	if len(id) < 12 || len(id) > 64 { return false }
+	if len(id) < 12 || len(id) > 64 {
+		return false
+	}
 	for _, c := range id {
-		if !((c >= 48 && c <= 57) || (c >= 97 && c <= 102)) { return false }
+		if !((c >= 48 && c <= 57) || (c >= 97 && c <= 102)) {
+			return false
+		}
 	}
 	return true
 }
 
-func validImageDigest(v string) bool { if len(v) != 71 || !strings.HasPrefix(v, "sha256:") { return false }; for _, c := range v[7:] { if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) { return false } }; return true }
+func validImageDigest(v string) bool {
+	if len(v) != 71 || !strings.HasPrefix(v, "sha256:") {
+		return false
+	}
+	for _, c := range v[7:] {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
 
 func main() {
 	control := os.Getenv("VPS_CONTROL_PLANE_URL")
@@ -341,10 +423,10 @@ func main() {
 
 	a := &Agent{
 		control: control, bootstrap: bootstrap,
-		name: os.Getenv("VPS_NODE_NAME"),
-		endpoint: os.Getenv("VPS_NODE_ENDPOINT"),
+		name:       os.Getenv("VPS_NODE_NAME"),
+		endpoint:   os.Getenv("VPS_NODE_ENDPOINT"),
 		volumeRoot: os.Getenv("VPS_VOLUME_ROOT"),
-		stateFile: os.Getenv("VPS_NODE_STATE_FILE"),
+		stateFile:  os.Getenv("VPS_NODE_STATE_FILE"),
 	}
 	if strings.TrimSpace(os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) == "" {
 		log.Printf("workload execution is disabled until VPS_ALLOWED_WORKLOAD_IMAGES contains approved image@sha256 references")
@@ -355,12 +437,23 @@ func main() {
 	if a.endpoint == "" {
 		a.endpoint = "outbound-only"
 	}
-	if a.volumeRoot == "" { a.volumeRoot = "/var/lib/testagram/storage/nodes" }
+	if a.volumeRoot == "" {
+		a.volumeRoot = "/var/lib/testagram/storage/nodes"
+	}
 	timeout, err := parseWorkloadTimeout(os.Getenv("VPS_WORKLOAD_TIMEOUT"))
-	if err != nil { log.Fatalf("invalid VPS_WORKLOAD_TIMEOUT: %v", err) }
+	if err != nil {
+		log.Fatalf("invalid VPS_WORKLOAD_TIMEOUT: %v", err)
+	}
 	a.workloadTimeout = timeout
-	if a.stateFile == "" { a.stateFile = "/var/lib/testagram/storage/nodes/node-state.json" }
-	if err := a.loadState(); err != nil { log.Printf("load node state: %v", err); a.mu.Lock(); a.nodeToken = ""; a.mu.Unlock() }
+	if a.stateFile == "" {
+		a.stateFile = "/var/lib/testagram/storage/nodes/node-state.json"
+	}
+	if err := a.loadState(); err != nil {
+		log.Printf("load node state: %v", err)
+		a.mu.Lock()
+		a.nodeToken = ""
+		a.mu.Unlock()
+	}
 	if err := os.MkdirAll(a.volumeRoot, 0700); err != nil {
 		log.Fatal(err)
 	}
