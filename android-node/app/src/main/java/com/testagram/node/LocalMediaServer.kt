@@ -8,17 +8,25 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 class LocalMediaServer(private val context: Context, private val port: Int = 8788) {
     @Volatile private var running=false
     private var server:ServerSocket?=null
     private val storage=StorageVolumeManager(context)
+    // Keep phone-side concurrency bounded: never spawn an unbounded thread per request.
+    private val workers = ThreadPoolExecutor(2, 2, 30, TimeUnit.SECONDS, ArrayBlockingQueue(4),
+        ThreadFactory { task -> Thread(task, "testagram-media-io").apply { isDaemon = true } },
+        ThreadPoolExecutor.AbortPolicy())
     fun start():Boolean {
         if(running || !storage.hasPersistentAccess() || storage.ensureLayout().isFailure) return false
-        return try { server=ServerSocket(port); running=true; Thread({loop()}).start(); true } catch(_:Exception){false}
+        return try { server=ServerSocket(port, 16); running=true; Thread({loop()}, "testagram-media-accept").apply { isDaemon = true }.start(); true } catch(_:Exception){false}
     }
-    fun stop(){running=false;try{server?.close()}catch(_:Exception){};server=null}
-    private fun loop(){while(running)try{val s=server?.accept();if(s!=null)Thread{handle(s)}.start()}catch(_:Exception){}}
+    fun stop(){running=false;try{server?.close()}catch(_:Exception){};server=null;workers.shutdownNow()}
+    private fun loop(){while(running)try{val s=server?.accept();if(s!=null)try{workers.execute{ s.soTimeout=30_000; handle(s) }}catch(_:java.util.concurrent.RejectedExecutionException){try{s.close()}catch(_:Exception){}}}catch(_:Exception){if(running)try{Thread.sleep(250)}catch(_:InterruptedException){Thread.currentThread().interrupt();return}}}
     private fun handle(s:Socket){s.use{socket->val i=BufferedInputStream(socket.getInputStream());val o=BufferedOutputStream(socket.getOutputStream());try{
         val first=line(i)?:return;val p=first.split(' ');if(p.size!=3){reply(o,400,"bad request");return}
         val method=p[0].uppercase();val uri=URI("http://127.0.0.1"+p[1]);val h=mutableMapOf<String,String>()
