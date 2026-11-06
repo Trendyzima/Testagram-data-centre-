@@ -113,7 +113,7 @@ class NodeClient(private val context: Context, private val config: NodeConfig) {
                 if (error.message?.contains("control plane HTTP 401") == true) clearCredentials()
                 onState("OFFLINE • retry: " + (error.message ?: "unknown"))
             }
-            repeat(15) { if (!shouldStop()) Thread.sleep(1000) }
+            if (!shouldStop()) Thread.sleep(60_000)
         }
     }
 }
