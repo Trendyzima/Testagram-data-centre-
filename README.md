@@ -51,11 +51,12 @@ bash install-apk.sh TestagramNode-release.apk
 After installation:
 
 1. Open **Testagram Node**.
-2. Select/remember the phone storage directory.
-3. Configure the Testagram control-plane URL and bootstrap token.
-4. Turn the node **ON**.
-5. Confirm the node heartbeat and storage status.
-6. Use the local media workflow for upload → FFmpeg HLS generation → playback.
+2. Select a mounted **removable SD card** in the Android folder picker. Internal phone storage and cloud-provider folders are rejected.
+3. Confirm the card's detected capacity and complete the write/read/delete verification test.
+4. Configure the Testagram control-plane URL, bootstrap token, node name and media signing secret.
+5. Turn Node B **ON**.
+6. Confirm heartbeats report the selected SD card's total/free bytes and removable-card identity.
+7. Node B runs in storage-only mode. On-device video transcoding is disabled; video processing must run on a separate server/worker.
 
 Android is the local media/storage node. The Linux Docker host runs Supabase and the backend/control-plane services.
 

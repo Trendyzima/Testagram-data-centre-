@@ -60,6 +60,15 @@ type WorkloadResult struct {
 	Success bool `json:"success"`
 }
 
+func normalizeWorkload(in *Workload) {
+	if in.Command == nil {
+		in.Command = []string{}
+	}
+	if in.Env == nil {
+		in.Env = map[string]string{}
+	}
+}
+
 func bearer(r *http.Request) string {
 	v := strings.TrimSpace(r.Header.Get("Authorization"))
 	if strings.HasPrefix(v, "Bearer ") {
@@ -193,6 +202,8 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
+	// JSONB columns are NOT NULL; omitted optional collections are empty.
+	normalizeWorkload(&in)
 	if in.Image == "" || strings.ContainsAny(in.Image, " \t\r\n") || !validImageDigest(in.ImageDigest) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "image and immutable sha256 imageDigest are required"})
 		return
@@ -227,6 +238,7 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 		"from public.vps_workloads where node_id=n.id and status in ('assigned','running')) r on true " +
 		"where n.status='online' and n.last_seen_at>now()-interval '45 seconds' " +
 		"and n.capabilities @> '{\"workloadExecution\":true}'::jsonb " +
+		"and coalesce(n.capabilities->>'storageOnly','false') <> 'true' " +
 		"and n.cpu_cores*1000-r.cpu_reserved >= $1 and n.memory_bytes-r.memory_reserved >= $2 " +
 		"and n.free_bytes-r.storage_reserved >= $3 and ($4='' or n.arch=$4) " +
 		"order by (n.free_bytes-r.storage_reserved) desc limit 1 for update of n skip locked"

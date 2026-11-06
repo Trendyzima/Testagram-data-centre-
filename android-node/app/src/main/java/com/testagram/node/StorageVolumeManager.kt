@@ -3,23 +3,47 @@ package com.testagram.node
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.StatFs
+import android.os.storage.StorageManager
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
+import java.io.File
+import java.io.IOException
+import java.util.UUID
+
+data class SdCardInfo(
+    val uuid: String,
+    val name: String,
+    val totalBytes: Long,
+    val availableBytes: Long,
+    val usedBytes: Long
+)
 
 class StorageVolumeManager(private val context: Context) {
     companion object {
         private const val PREFS = "node-storage"
         private const val TREE_KEY = "tree"
         val REQUIRED_DIRECTORIES = listOf(
-            "media", "media/posts", "media/posts/images", "media/posts/videos", "media/uploads",
-            "media/videos", "media/videos/originals", "media/videos/hls", "media/videos/posters",
-            "media/avatars", "media/stories", "media/messages", "media/attachments", "media/tmp",
-            "supabase", "nodes"
+            "TestagramNode", "TestagramNode/media", "TestagramNode/media/posts",
+            "TestagramNode/media/posts/images", "TestagramNode/media/posts/videos",
+            "TestagramNode/media/uploads", "TestagramNode/media/videos",
+            "TestagramNode/media/videos/originals", "TestagramNode/media/videos/hls",
+            "TestagramNode/media/videos/posters", "TestagramNode/media/avatars",
+            "TestagramNode/media/stories", "TestagramNode/media/messages",
+            "TestagramNode/media/attachments", "TestagramNode/media/tmp",
+            "TestagramNode/checksums", "TestagramNode/quarantine"
         )
     }
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val storageManager = context.getSystemService(StorageManager::class.java)
 
     fun rememberTree(uri: Uri) {
+        require(isRemovableCardTree(uri)) {
+            "Select a mounted removable SD card. Phone internal storage and cloud providers are not allowed."
+        }
         context.contentResolver.takePersistableUriPermission(
             uri,
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -28,39 +52,90 @@ class StorageVolumeManager(private val context: Context) {
     }
 
     fun tree(): Uri? = prefs.getString(TREE_KEY, null)?.let(Uri::parse)
-    fun root(): DocumentFile? = tree()?.let { DocumentFile.fromTreeUri(context, it) }
+    fun selectedTreeRoot(): DocumentFile? = tree()?.let { DocumentFile.fromTreeUri(context, it) }
 
-    fun hasPersistentAccess(): Boolean =
-        root()?.let { it.isDirectory && it.canRead() && it.canWrite() } == true
+    fun root(): DocumentFile? = selectedTreeRoot()?.findFile("TestagramNode")?.takeIf { it.isDirectory }
+
+    fun hasPersistentAccess(): Boolean {
+        val uri = tree() ?: return false
+        val root = DocumentFile.fromTreeUri(context, uri) ?: return false
+        return isRemovableCardTree(uri) && root.isDirectory && root.canRead() && root.canWrite()
+    }
+
+    fun mountedRemovableCards(): List<String> = storageManager.storageVolumes
+        .filter { it.isRemovable && it.state == Environment.MEDIA_MOUNTED && !it.uuid.isNullOrBlank() }
+        .map { volume ->
+            val size = volumeDirectory(volume)?.let {
+                runCatching { StatFs(it.absolutePath).totalBytes }.getOrNull()
+            }
+            val capacity = size?.let { String.format("%.1f GiB", it / (1024.0 * 1024.0 * 1024.0)) } ?: "capacity unavailable"
+            "${volume.getDescription(context)} • ${volume.uuid} • $capacity"
+        }
+
+    fun selectedCardInfo(): SdCardInfo? {
+        val uri = tree() ?: return null
+        val volume = removableVolumeForTree(uri) ?: return null
+        if (volume.state != Environment.MEDIA_MOUNTED) return null
+        val directory = volumeDirectory(volume) ?: return null
+        return runCatching {
+            val stat = StatFs(directory.absolutePath)
+            val total = stat.totalBytes
+            val available = stat.availableBytes
+            SdCardInfo(
+                uuid = volume.uuid ?: return null,
+                name = volume.getDescription(context),
+                totalBytes = total,
+                availableBytes = available,
+                usedBytes = (total - available).coerceAtLeast(0L)
+            )
+        }.getOrNull()
+    }
 
     fun ensureLayout(): Result<List<String>> = runCatching {
-        val root = root() ?: error("local storage is not selected")
-        if (!root.isDirectory || !root.canWrite()) error("selected storage is not writable")
+        val root = selectedTreeRoot() ?: error("removable SD card is not selected")
+        if (!hasPersistentAccess()) error("selected SD card is unavailable or read-only")
         REQUIRED_DIRECTORIES.forEach { ensureDirectory(root, it) }
         REQUIRED_DIRECTORIES
     }
 
-    fun ensureDirectory(relativePath: String): DocumentFile {
-        val root = root() ?: error("local storage is not selected")
-        return ensureDirectory(root, relativePath)
+    fun verifyWritable(): Result<Unit> = runCatching {
+        val root = selectedTreeRoot() ?: error("removable SD card is not selected")
+        if (!hasPersistentAccess()) error("selected SD card is unavailable or read-only")
+        val name = ".testagram-write-${UUID.randomUUID()}.tmp"
+        val probe = root.createFile("application/octet-stream", name)
+            ?: error("cannot create verification file on SD card")
+        try {
+            val expected = "testagram-sd-card-write-check".toByteArray(Charsets.UTF_8)
+            val output = context.contentResolver.openOutputStream(probe.uri, "w")
+                ?: error("cannot write to selected SD card")
+            output.use { it.write(expected); it.flush() }
+            val input = context.contentResolver.openInputStream(probe.uri)
+                ?: error("cannot read verification file from selected SD card")
+            val actual = input.use { it.readBytes() }
+            if (!expected.contentEquals(actual)) throw IOException("SD card read-back verification failed")
+        } finally {
+            probe.delete()
+        }
     }
 
     fun createFile(relativePath: String, mimeType: String): DocumentFile {
-        require(relativePath.isNotBlank() && !relativePath.startsWith("/") && !relativePath.contains("..")) {
-            "invalid media path"
-        }
+        validateRelativePath(relativePath)
         val slash = relativePath.lastIndexOf('/')
         val parent = if (slash < 0) "." else relativePath.substring(0, slash)
         val name = if (slash < 0) relativePath else relativePath.substring(slash + 1)
         require(name.isNotBlank()) { "invalid media filename" }
         return ensureDirectory(parent).createFile(mimeType, name)
-            ?: error("failed to create media file")
+            ?: error("failed to create media file on selected SD card")
+    }
+
+    fun ensureDirectory(relativePath: String): DocumentFile {
+        val root = root() ?: error("removable SD card is not selected")
+        check(hasPersistentAccess()) { "selected SD card is unavailable" }
+        return ensureDirectory(root, relativePath)
     }
 
     fun findFile(relativePath: String): DocumentFile? {
-        require(relativePath.isNotBlank() && !relativePath.startsWith("/") && !relativePath.contains("..")) {
-            "invalid media path"
-        }
+        validateRelativePath(relativePath)
         val parts = relativePath.split('/').filter { it.isNotBlank() && it != "." }
         if (parts.isEmpty()) return null
         var current = root() ?: return null
@@ -70,13 +145,42 @@ class StorageVolumeManager(private val context: Context) {
         return current.findFile(parts.last())
     }
 
+    private fun validateRelativePath(path: String) {
+        require(path.isNotBlank() && !path.startsWith("/") && !path.contains("..") && !path.contains('\\')) {
+            "invalid media path"
+        }
+    }
+
+    private fun volumeDirectory(volume: android.os.storage.StorageVolume): File? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) return volume.directory
+        val uuid = volume.uuid ?: return null
+        return context.getExternalFilesDirs(null)
+            .filterNotNull()
+            .firstOrNull { file -> file.absolutePath.split(File.separator).any { it.equals(uuid, ignoreCase = true) } }
+    }
+
+    private fun isRemovableCardTree(uri: Uri): Boolean = removableVolumeForTree(uri) != null
+
+    private fun removableVolumeForTree(uri: Uri) =
+        runCatching {
+            if (uri.authority != "com.android.externalstorage.documents") return@runCatching null
+            val documentId = DocumentsContract.getTreeDocumentId(uri)
+            val volumeId = documentId.substringBefore(':')
+            if (volumeId.equals("primary", ignoreCase = true) || volumeId.isBlank()) return@runCatching null
+            storageManager.storageVolumes.firstOrNull { volume ->
+                volume.isRemovable &&
+                    volume.uuid?.equals(volumeId, ignoreCase = true) == true &&
+                    volume.state == Environment.MEDIA_MOUNTED
+            }
+        }.getOrNull()
+
     private fun ensureDirectory(root: DocumentFile, relativePath: String): DocumentFile {
         var current = root
         relativePath.split('/').filter { it.isNotBlank() && it != "." }.forEach { segment ->
             require(segment != "..") { "invalid storage path" }
             current = current.findFile(segment)?.takeIf { it.isDirectory }
                 ?: current.createDirectory(segment)
-                ?: error("failed to create directory: $segment")
+                ?: error("failed to create SD-card directory: $segment")
         }
         return current
     }

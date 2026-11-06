@@ -88,6 +88,20 @@ jobs:
           POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase TESTAGRAM_BASE_DOMAIN=example.testagram.invalid TESTAGRAM_DOMAIN_TARGETS=web=http://web:3000 TESTAGRAM_PUBLIC_DNS_TARGET=edge.testagram.invalid docker compose -f vps/docker-compose.yml up -d control-plane
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/readyz >/dev/null 2>&1 && break; sleep 2; done
           curl -fsS http://127.0.0.1:8787/healthz
+          # Storage-only Android nodes must never receive compute workloads.
+          curl -fsS -o /tmp/android-node-registration.json \
+            -H "Authorization: Bearer ci-bootstrap" -H "Content-Type: application/json" \
+            -d '{"name":"android-storage-only","platform":"android","arch":"arm64","cpuCores":8,"memoryBytes":8589934592,"storageBytes":1000000000000,"freeBytes":1000000000000,"endpoint":"android-storage-only","capabilities":{"storageOnly":true,"microSD":true}}' \
+            http://127.0.0.1:8787/v1/nodes/register
+          curl -fsS -o /tmp/linux-node-registration.json \
+            -H "Authorization: Bearer ci-bootstrap" -H "Content-Type: application/json" \
+            -d '{"name":"linux-compute","platform":"linux","arch":"amd64","cpuCores":2,"memoryBytes":8589934592,"storageBytes":10000000000,"freeBytes":5000000000,"endpoint":"linux-compute","capabilities":{"workloadExecution":true}}' \
+            http://127.0.0.1:8787/v1/nodes/register
+          curl -fsS -o /tmp/scheduled-workload.json \
+            -H "Authorization: Bearer ci-internal" -H "Content-Type: application/json" \
+            -d '{"image":"ghcr.io/example/test","imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","command":["true"],"cpuMillis":100,"memoryBytes":67108864}' \
+            http://127.0.0.1:8787/v1/workloads
+          grep -q '"endpoint":"linux-compute"' /tmp/scheduled-workload.json
           auth_header="Authorization: Bearer ci-internal"
           curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/health | grep -q '"status":"ok"'
           domain_code="$(curl -sS -o /tmp/testagram-domain.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d '{"slug":"demo-app","targetService":"web"}' http://127.0.0.1:8787/v1/hosting/domains)"
