@@ -51,6 +51,7 @@ type Workload struct {
 	Env         map[string]string `json:"env"`
 	CPUMillis   int               `json:"cpuMillis"`
 	MemoryBytes int64             `json:"memoryBytes"`
+	StorageBytes int64            `json:"storageBytes"`
 	Volume      string            `json:"volume"`
 	Arch        string            `json:"arch"`
 }
@@ -187,57 +188,71 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 	if !s.internalOnly(w, r) {
 		return
 	}
-
 	var in Workload
 	if err := decodeJSON(w, r, &in); err != nil {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 		return
 	}
-	if in.Image == "" || !validImageDigest(in.ImageDigest) {
+	if in.Image == "" || strings.ContainsAny(in.Image, " \t\r\n") || !validImageDigest(in.ImageDigest) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "image and immutable sha256 imageDigest are required"})
 		return
 	}
-	if in.CPUMillis <= 0 {
-		in.CPUMillis = 250
-	}
-	if in.MemoryBytes <= 0 {
-		in.MemoryBytes = 268435456
+	if in.CPUMillis <= 0 { in.CPUMillis = 250 }
+	if in.MemoryBytes <= 0 { in.MemoryBytes = 268435456 }
+	if in.StorageBytes <= 0 { in.StorageBytes = 268435456 }
+	if in.CPUMillis < 50 || in.CPUMillis > 64000 || in.MemoryBytes < 67108864 || in.MemoryBytes > 68719476736 || in.StorageBytes < 67108864 || in.StorageBytes > 1099511627776 {
+		reply(w, http.StatusBadRequest, map[string]string{"error": "resource request outside supported bounds"})
+		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "scheduler transaction unavailable"})
+		return
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
 
 	var nodeID, endpoint string
-	const nodeQ = `select id,endpoint from public.vps_nodes
-		where status='online' and last_seen_at>now()-interval '45 seconds'
-		  and cpu_cores*1000 >= $1 and memory_bytes >= $2 and free_bytes >= $2
-		  and ($3='' or arch=$3)
-		order by free_bytes desc limit 1`
-	err := s.db.QueryRow(ctx, nodeQ, in.CPUMillis, in.MemoryBytes, in.Arch).Scan(&nodeID, &endpoint)
+	const nodeQ = "select n.id::text,n.endpoint from public.vps_nodes n " +
+		"left join lateral (select coalesce(sum(cpu_millis),0)::bigint cpu_reserved," +
+		"coalesce(sum(memory_bytes),0)::bigint memory_reserved,coalesce(sum(storage_bytes),0)::bigint storage_reserved " +
+		"from public.vps_workloads where node_id=n.id and status in ('assigned','running')) r on true " +
+		"where n.status='online' and n.last_seen_at>now()-interval '45 seconds' " +
+		"and n.cpu_cores*1000-r.cpu_reserved >= $1 and n.memory_bytes-r.memory_reserved >= $2 " +
+		"and n.free_bytes-r.storage_reserved >= $3 and ($4='' or n.arch=$4) " +
+		"order by (n.free_bytes-r.storage_reserved) desc limit 1 for update of n skip locked"
+	err = tx.QueryRow(ctx, nodeQ, in.CPUMillis, in.MemoryBytes, in.StorageBytes, in.Arch).Scan(&nodeID, &endpoint)
 	if err == pgx.ErrNoRows {
-		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "no suitable node"})
+		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "no healthy node has sufficient unreserved CPU, RAM and storage"})
 		return
 	}
 	if err != nil {
-		reply(w, http.StatusInternalServerError, map[string]string{"error": "scheduler failed"})
+		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "scheduler failed"})
 		return
 	}
-
+	commandJSON, err := json.Marshal(in.Command)
+	if err != nil { reply(w, http.StatusBadRequest, map[string]string{"error": "invalid command"}); return }
+	envJSON, err := json.Marshal(in.Env)
+	if err != nil { reply(w, http.StatusBadRequest, map[string]string{"error": "invalid environment"}); return }
 	var workloadID string
-	const workloadQ = `insert into public.vps_workloads
-		(node_id,image,image_digest,command,env,cpu_millis,memory_bytes,volume,status)
-		values($1,$2,$3,$4,$5,$6,$7,$8,'assigned') returning id`
-	err = s.db.QueryRow(ctx, workloadQ, nodeID, in.Image, in.ImageDigest, in.Command,
-		in.Env, in.CPUMillis, in.MemoryBytes, in.Volume).Scan(&workloadID)
+	const workloadQ = "insert into public.vps_workloads " +
+		"(node_id,image,image_digest,command,env,cpu_millis,memory_bytes,storage_bytes,volume,status) " +
+		"values($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8,$9,'assigned') returning id::text"
+	err = tx.QueryRow(ctx, workloadQ, nodeID, in.Image, in.ImageDigest, commandJSON, envJSON,
+		in.CPUMillis, in.MemoryBytes, in.StorageBytes, nullIfEmpty(in.Volume)).Scan(&workloadID)
 	if err != nil {
 		reply(w, http.StatusInternalServerError, map[string]string{"error": "workload persist failed"})
 		return
 	}
-
+	if err = tx.Commit(ctx); err != nil {
+		reply(w, http.StatusInternalServerError, map[string]string{"error": "scheduler transaction commit failed"})
+		return
+	}
 	reply(w, http.StatusCreated, map[string]any{
-		"workloadId": workloadID,
-		"nodeId":     nodeID,
-		"endpoint":   endpoint,
+		"workloadId": workloadID, "nodeId": nodeID, "endpoint": endpoint,
+		"cpuMillis": in.CPUMillis, "memoryBytes": in.MemoryBytes, "storageBytes": in.StorageBytes,
 	})
 }
 
@@ -264,10 +279,10 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 			for update skip locked
 			limit 1
 		)
-		returning w.id,w.image,w.image_digest,w.command,w.env,w.cpu_millis,w.memory_bytes,w.volume`
+		returning w.id,w.image,w.image_digest,w.command,w.env,w.cpu_millis,w.memory_bytes,w.storage_bytes,w.volume`
 	err := s.db.QueryRow(ctx, q, crypto.HashToken(nodeToken)).Scan(
 		&workloadID, &work.Image, &work.ImageDigest, &work.Command, &work.Env,
-		&work.CPUMillis, &work.MemoryBytes, &work.Volume)
+		&work.CPUMillis, &work.MemoryBytes, &work.StorageBytes, &work.Volume)
 	if err == pgx.ErrNoRows {
 		reply(w, http.StatusNoContent, nil)
 		return
@@ -277,6 +292,7 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, _ = s.db.Exec(ctx, "update testagram_hosting.deployments set status='running',updated_at=now() where workload_id=$1::uuid", workloadID)
 	reply(w, http.StatusOK, map[string]any{"id": workloadID, "workload": work})
 }
 
@@ -331,6 +347,7 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusNotFound, map[string]string{"error": "workload not found"})
 		return
 	}
+	_, _ = s.db.Exec(ctx, "update testagram_hosting.deployments set status=$2,updated_at=now() where workload_id=$1::uuid", id, status)
 	reply(w, http.StatusOK, map[string]any{"ok": true, "status": status})
 }
 
@@ -359,6 +376,7 @@ func main() {
 	mux.HandleFunc("/v1/nodes/poll", s.poll)
 	mux.HandleFunc("/v1/workloads", s.schedule)
 	mux.HandleFunc("/v1/workloads/", s.result)
+	s.registerHostingRoutes(mux)
 
 	addr := os.Getenv("VPS_CONTROL_PLANE_ADDR")
 	if addr == "" {
@@ -366,7 +384,7 @@ func main() {
 	}
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           s.withManagedDomainRouting(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

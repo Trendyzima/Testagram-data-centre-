@@ -82,3 +82,18 @@ The required physical path remains:
 **real Android storage → real MP4 upload → Android local media server → real FFmpeg HLS → reachable Testagram frontend → actual playback**
 
 That gate is not marked green until a physical device supplies evidence for every hop.
+
+
+## Testagram platform architecture
+
+- [Service catalogue, APIs, health checks, and migration gates](docs/platform/service-catalog.md)
+- [Self-sustaining domains, deployment, compute, performance, and recovery plan](docs/platform/self-sustaining-operations.md)
+- [Internal platform OpenAPI contract](docs/platform/openapi/internal-platform.yaml)
+- [Testagram-branded self-hosted runtime and safe preparation](testagram-platform/README.md)
+- [Read-only deployment preflight](testagram-platform/preflight.sh)
+- [Authenticated hosting control plane API](docs/platform/openapi/hosting-control-plane.yaml)
+- [Hosting control plane implementation boundaries](docs/platform/service-catalog.md#hosting-control-plane-implementation-boundary)
+- [Bounded deployment command with health gates](testagram-platform/deploy.sh)
+- [Provider-independent internal platform client](internal/platformclient/client.go)
+
+The platform rebrand preserves compatibility with the existing runtime paths and Compose identity. It does not itself migrate production authentication, database policies, media, or traffic.
