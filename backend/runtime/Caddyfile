@@ -9,6 +9,21 @@
   redir https://{host}{uri} permanent
 }
 
+{$TESTAGRAM_API_DOMAIN:api.testagram.site} {
+  encode zstd gzip
+  header {
+    X-Content-Type-Options nosniff
+    X-Frame-Options DENY
+    Referrer-Policy no-referrer
+  }
+  handle {
+    request_body {
+      max_size 20MB
+    }
+    reverse_proxy api:8080
+  }
+}
+
 {$TESTAGRAM_DOMAIN} {
   encode zstd gzip
   header {
