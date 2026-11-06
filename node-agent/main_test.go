@@ -10,9 +10,9 @@ import (
 
 func TestParseWorkloadTimeout(t *testing.T) {
 	tests := []struct {
-		name string
-		value string
-		want time.Duration
+		name    string
+		value   string
+		want    time.Duration
 		wantErr bool
 	}{
 		{name: "default", want: 30 * time.Minute},
@@ -55,7 +55,7 @@ func TestValidImageDigest(t *testing.T) {
 	if !validImageDigest("sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef") {
 		t.Fatal("valid sha256 digest was rejected")
 	}
-	for _, digest := range []string{"", "sha256:ABCDEF", "sha256:"+string(make([]byte, 64)), "sha256:0123456789"} {
+	for _, digest := range []string{"", "sha256:ABCDEF", "sha256:" + string(make([]byte, 64)), "sha256:0123456789"} {
 		if validImageDigest(digest) {
 			t.Errorf("validImageDigest(%q) = true, want false", digest)
 		}
@@ -79,9 +79,13 @@ func TestAllowedWorkloadImage(t *testing.T) {
 func TestResolveVolumePath(t *testing.T) {
 	root := t.TempDir()
 	got, err := resolveVolumePath(root, "account-123")
-	if err != nil { t.Fatalf("resolveVolumePath: %v", err) }
+	if err != nil {
+		t.Fatalf("resolveVolumePath: %v", err)
+	}
 	canonicalRoot, err := filepath.EvalSymlinks(root)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.HasPrefix(got, canonicalRoot+string(os.PathSeparator)) {
 		t.Fatalf("resolved volume %q is outside root %q", got, canonicalRoot)
 	}
@@ -92,7 +96,9 @@ func TestResolveVolumePath(t *testing.T) {
 	}
 	outside := t.TempDir()
 	link := filepath.Join(root, "escape")
-	if err := os.Symlink(outside, link); err != nil { t.Fatal(err) }
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := resolveVolumePath(root, "escape"); err == nil {
 		t.Fatal("resolveVolumePath accepted symlink escaping the storage root")
 	}
