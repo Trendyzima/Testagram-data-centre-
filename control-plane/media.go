@@ -419,10 +419,11 @@ func (s *Server) processMediaReplicationBatch(ctx context.Context) {
 	batchCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	rows, err := s.db.Query(batchCtx, `WITH picked AS (
-		SELECT id FROM testagram_storage.media_replication_jobs
-		WHERE status IN ('queued','processing') AND available_at <= NOW()
+		SELECT j.id FROM testagram_storage.media_replication_jobs AS j
+		JOIN testagram_storage.media_objects AS o ON o.owner_id=j.owner_id AND o.namespace=j.namespace AND o.object_key=j.object_key
+		WHERE o.status='replication_pending' AND j.status IN ('queued','processing') AND j.available_at <= NOW()
 		  AND (lease_until IS NULL OR lease_until < NOW())
-		ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 5
+		ORDER BY j.created_at,j.id FOR UPDATE OF j SKIP LOCKED LIMIT 5
 	)
 	UPDATE testagram_storage.media_replication_jobs AS j
 	SET status='processing',attempts=j.attempts+1,lease_until=NOW()+interval '60 minutes',
