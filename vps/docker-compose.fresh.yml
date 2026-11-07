@@ -58,11 +58,12 @@ services:
         condition: service_healthy
 
   federation-db:
+    profiles: ["local"]
     image: ${FEDERATION_POSTGRES_IMAGE:?Set FEDERATION_POSTGRES_IMAGE to a reviewed immutable PostgreSQL digest}
     restart: unless-stopped
     environment:
       POSTGRES_USER: testagram_federation
-      POSTGRES_PASSWORD: ${FEDERATION_DB_PASSWORD:?Set a random Federation database password}
+      POSTGRES_PASSWORD: ${FEDERATION_DB_PASSWORD:-local-development-only}
       POSTGRES_DB: testagram_federation
     volumes:
       - federation_data:/var/lib/postgresql/data
@@ -86,16 +87,12 @@ services:
       SERVICE_ACTOR_USERNAME: testagram
       SERVICE_ACTOR_NAME: Testagram
       SERVICE_ACTOR_SUMMARY: Testagram federated social network
-      # Set FEDERATION_DATABASE_URL to a dedicated Neon pooled PostgreSQL URL in production.
-      # The local federation-db URL remains the default for isolated development.
-      FEDERATION_DATABASE_URL: ${FEDERATION_DATABASE_URL:-postgres://testagram_federation:${FEDERATION_DB_PASSWORD:?Set FEDERATION_DB_PASSWORD}@federation-db:5432/testagram_federation?sslmode=disable}
+      FEDERATION_DATABASE_URL: ${FEDERATION_DATABASE_URL:?Set a dedicated Neon pooled TLS URL or a local-profile PostgreSQL URL}
       BACKEND_INTERNAL_URL: http://api:8081
       BACKEND_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:?Set the same private token in Backend and Federation}
     expose: ["8081"]
     networks: [services, federation]
     depends_on:
-      federation-db:
-        condition: service_healthy
       # Federation has its own authenticated Backend readiness probe. Do not
       # gate it on the public API's full readiness, which also requires Algorithm.
       api:
