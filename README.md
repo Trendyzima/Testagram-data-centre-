@@ -134,8 +134,8 @@ The platform rebrand preserves compatibility with the existing runtime paths and
 The clean runtime is defined separately in `vps/docker-compose.fresh.yml` and
 `vps/FRESH-DEPLOYMENT.md`. It runs the dedicated fresh Backend API, private
 Algorithm ranker, private Federation service, Data Centre infrastructure
-control plane and Caddy edge without attaching the legacy Supabase network or
-starting the legacy Backend API.
+control plane and Caddy edge without attaching legacy services or starting the
+legacy Backend API. Supabase is retired and is not part of this architecture.
 
 The five-repository ownership boundary is:
 
@@ -152,8 +152,10 @@ polling, outbound delivery workers, follower fan-out and end-to-end interoperabi
 tests remain unfinished. Keep it private and do not enable public ActivityPub
 routing until those gates pass.
 
-Keep `FRESH_MEDIA_ENABLED=false` until B2/R2 and the Appwrite media collections
-are staged and independently verified. Retention remains disabled and dry-run.
+Keep `FRESH_MEDIA_ENABLED=false` until Backblaze B2 (durable primary),
+Cloudflare R2 (verified delivery/replica), Appwrite metadata collections and
+independent restore tests are staged and verified. See
+[Media storage architecture](docs/platform/media-storage-architecture.md). Retention remains disabled and dry-run.
 The fresh Compose file is a deployment foundation, not a production-readiness
 claim; media placement, replica recovery, federation workers and full
 cross-repository end-to-end tests remain release gates.
