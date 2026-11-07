@@ -38,6 +38,9 @@ network, start the legacy cmd/api, or configure Supabase credentials.
    before starting the API.
 6. Create a least-privilege Appwrite server key. Keep it only in the runtime
    secret store. Never put it in XClone build variables.
+7. Configure IDENTITY_PREAUTH_SECRET in the Backend and trusted identity issuer
+   secret stores. Use a random value of at least 32 characters; never expose it
+   in frontend/mobile configuration.
 7. Configure exact frontend HTTPS origins, Appwrite endpoint/project/database,
    independent Algorithm token and a separate TLS PostgreSQL database for the
    Data Centre control plane.
