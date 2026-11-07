@@ -44,3 +44,9 @@ Start with B2 as the single durable origin. Add R2 dual-copy replication only af
 - Physical Android tests: internal storage rejected, removable card selected, capacity matches, card removal mid-write safe, same-card reinsert, replacement-card identity changes.
 - Database and all required object bytes restored from backups.
 - Cloudflare cache bypass for private media; immutable versioned public cache keys.
+
+## Private media delivery and node transfer boundary
+
+- The private-media Cloudflare Worker is the intended CDN hostname in front of the private R2 bucket. It validates short-lived HMAC URLs, enforces an exact frontend-origin allowlist, supports byte ranges, and sends `private, no-store` headers. It is not deployed until the bucket binding, route, origins and shared signing secret are configured.
+- The Android LocalMediaServer is loopback-only, rejects query-string bearer tokens, limits signed-token lifetime, validates object paths and MIME types, checks free SD-card space, and verifies SHA-256 before retaining an uploaded file. It is a device-local endpoint, not a remote storage transport endpoint.
+- Computer nodes currently report dedicated-volume capacity and compute capability; they do not yet accept media object transfers. Reported node bytes must not be included in verified logical capacity until an authenticated transfer protocol, object read-back, SHA-256 verification, replica ledger and recovery path are implemented.
