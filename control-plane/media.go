@@ -288,12 +288,12 @@ func (s *Server) mediaStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	var status, contentType, sha256Hex string
+	var status, contentType, sha256Hex, replicaState string
 	var size int64
 	var primaryVerified, replicaVerified *time.Time
-	err := s.db.QueryRow(ctx, `SELECT status,content_type,size_bytes,coalesce(sha256,''),primary_verified_at,replica_verified_at
+	err := s.db.QueryRow(ctx, `SELECT status,content_type,size_bytes,coalesce(sha256,''),replica_state,primary_verified_at,replica_verified_at
 		FROM testagram_storage.media_objects WHERE owner_id=$1 AND namespace=$2 AND object_key=$3`,
-		ownerID, namespace, key).Scan(&status, &contentType, &size, &sha256Hex, &primaryVerified, &replicaVerified)
+		ownerID, namespace, key).Scan(&status, &contentType, &size, &sha256Hex, &replicaState, &primaryVerified, &replicaVerified)
 	if err == pgx.ErrNoRows {
 		reply(w, http.StatusNotFound, map[string]string{"error": "media object not found"})
 		return
@@ -303,7 +303,7 @@ func (s *Server) mediaStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, http.StatusOK, map[string]any{
-		"status": status, "content_type": contentType, "size_bytes": size, "sha256": sha256Hex,
+		"status": status, "replica_state": replicaState, "content_type": contentType, "size_bytes": size, "sha256": sha256Hex,
 		"primary_verified_at": primaryVerified, "replica_verified_at": replicaVerified,
 	})
 }
