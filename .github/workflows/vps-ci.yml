@@ -21,6 +21,7 @@ jobs:
       APPWRITE_PROJECT_ID: ci-project
       APPWRITE_DATABASE_ID: ci-database
       APPWRITE_SERVER_API_KEY: ci-appwrite-server-key
+      IDENTITY_PREAUTH_SECRET: ci-identity-preauth-secret-long-enough
       FRESH_API_ALLOWED_ORIGINS: https://testagram.site,https://www.testagram.site
       FRESH_MEDIA_ENABLED: "false"
       # Non-production credentials used only to render/validate the fresh Compose model in CI.
@@ -28,8 +29,8 @@ jobs:
       FRESH_FEDERATION_INTERNAL_TOKEN: ci-federation-internal-token-long-enough
       FEDERATION_POSTGRES_IMAGE: postgres:17-alpine
       FEDERATION_DB_PASSWORD: ci-federation-db-password-only
-      VPS_INTERNAL_TOKEN: ci-internal
-      VPS_NODE_BOOTSTRAP_TOKEN: ci-bootstrap
+      VPS_INTERNAL_TOKEN: ci-internal-token-long-enough-32chars
+      VPS_NODE_BOOTSTRAP_TOKEN: ci-node-bootstrap-token-long-enough
       ALGORITHM_INTERNAL_TOKEN: ci-algorithm-internal-token-long-enough
       TLS_ADMIN_EMAIL: ci@example.invalid
       TESTAGRAM_AUTH_PROVIDER: supabase
@@ -120,8 +121,8 @@ jobs:
           for i in $(seq 1 30); do docker exec vps-ci-db pg_isready -U postgres -d postgres >/dev/null 2>&1 && break; sleep 2; done
           docker exec vps-ci-db pg_isready -U postgres -d postgres
           docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'for f in /migrations/*.sql; do psql -h db -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
-          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough TLS_ADMIN_EMAIL=ci@example.invalid docker compose -f vps/docker-compose.yml build control-plane
-          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase TESTAGRAM_BASE_DOMAIN=example.testagram.invalid TESTAGRAM_DOMAIN_TARGETS=web=http://web:3000 TESTAGRAM_PUBLIC_DNS_TARGET=edge.testagram.invalid ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough TLS_ADMIN_EMAIL=ci@example.invalid docker compose -f vps/docker-compose.yml up -d control-plane
+          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal-token-long-enough-32chars VPS_NODE_BOOTSTRAP_TOKEN=ci-node-bootstrap-token-long-enough VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough TLS_ADMIN_EMAIL=ci@example.invalid docker compose -f vps/docker-compose.yml build control-plane
+          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal-token-long-enough-32chars VPS_NODE_BOOTSTRAP_TOKEN=ci-node-bootstrap-token-long-enough VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase TESTAGRAM_BASE_DOMAIN=example.testagram.invalid TESTAGRAM_DOMAIN_TARGETS=web=http://web:3000 TESTAGRAM_PUBLIC_DNS_TARGET=edge.testagram.invalid ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough TLS_ADMIN_EMAIL=ci@example.invalid docker compose -f vps/docker-compose.yml up -d control-plane
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/readyz >/dev/null 2>&1 && break; sleep 2; done
           curl -fsS http://127.0.0.1:8787/healthz
           # Storage-only Android nodes must never receive compute workloads.
