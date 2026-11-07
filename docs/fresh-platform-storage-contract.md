@@ -66,3 +66,17 @@ Backend is the canonical retention authority. Data Centre supplies replica inven
 - Retention kill switch must stop new deletion commands while allowing safe reads and reconciliation. No node may purge content based on its own local clock.
 
 No node cleanup or archive migration is enabled by this contract.
+
+
+## Backend retention purge integration (2026-11-07)
+
+The Backend now has a fail-closed retention purge worker. Data Centre node replicas are part of the canonical per-object replica inventory and must never be silently omitted:
+
+- When the Backend changes a media object's lifecycle state to `purging`, node agents must reject new replica reservations, restores, or writes for that object. Backend remains the sole authority for retention eligibility and deletion timing.
+- A `provider=node` replica currently blocks Backend quota reclamation. The Backend will not assume an offline node is deleted, and will not release quota until the node's replica is explicitly confirmed absent.
+- The future node-delete command must be authenticated, scoped and idempotent. It must bind object ID, node ID, removable-volume identity/generation, object key, expected byte count, SHA-256, command ID and expiry/lease. Recheck the same mounted-volume generation immediately before deletion so a replacement SD card is never affected.
+- After deletion, the node agent must verify the exact object is absent from the mounted storage volume and return a durable acknowledgement containing the command ID, volume generation, object ID and result. Backend updates the replica ledger to deleted only after validating that acknowledgement.
+- Offline nodes, missing SD cards, mismatched generations, provider timeouts and unverifiable acknowledgements remain charged/unverified and block quota reclamation. Never fall back to Android internal storage.
+- Android Node B remains removable-SD-only. Computer nodes may be storage-only, compute-only or both, but retention deletion is never decided by a node.
+
+Do not enable Backend destructive retention until the node-delete acknowledgement path is implemented and exercised in staging, or until all affected objects are proven to have no node replicas. This contract does not authorize any current node deletion.
