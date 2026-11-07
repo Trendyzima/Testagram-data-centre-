@@ -60,8 +60,10 @@ services:
     expose: ["8081"]
     networks: [services, ranker]
     depends_on:
+      # Authentication and profile reads must start even if the optional
+      # ranking service is degraded. Feed requests fail closed until ranker is ready.
       algorithm:
-        condition: service_healthy
+        condition: service_started
 
   federation-db:
     profiles: ["local"]
@@ -160,9 +162,9 @@ services:
       - fresh_edge_data:/data
       - fresh_edge_config:/config
     depends_on:
+      # Federation is opt-in and is not on the login/API critical path.
+      # Its health must never prevent the public API edge from starting.
       api:
-        condition: service_healthy
-      federation-api:
         condition: service_healthy
     networks: [edge, services]
 
