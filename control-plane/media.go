@@ -2,11 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
+	"io"
 	"regexp"
 	"strings"
 	"time"
@@ -67,13 +66,13 @@ func decodeStrictJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 		return err
 	}
 	var extra any
-	if err := decoder.Decode(&extra); err != nil && !errors.Is(err, context.Canceled) {
-		if err.Error() == "EOF" {
-			return nil
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("request must contain exactly one JSON object")
 		}
 		return err
 	}
-	return errors.New("request must contain exactly one JSON object")
+	return nil
 }
 
 func validMediaRequest(ownerID, namespace, key string) bool {
@@ -204,7 +203,7 @@ func (s *Server) mediaVerify(w http.ResponseWriter, r *http.Request) {
 		SET content_type=EXCLUDED.content_type,size_bytes=EXCLUDED.size_bytes,sha256=EXCLUDED.sha256,
 		    status='queued',attempts=0,available_at=NOW(),lease_until=NULL,lease_token=NULL,
 		    last_error_code=NULL,updated_at=NOW()
-		WHERE testagram_storage.media_replication_jobs.status <> 'completed'`,
+		WHERE testagram_storage.media_replication_jobs.status IN ('queued','dead')`,
 		in.OwnerID, in.Namespace, in.Key, in.ContentType, in.SizeBytes, digest)
 	if err != nil {
 		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "media replication job could not be queued"})
@@ -277,12 +276,16 @@ func (s *Server) mediaDownloadURL(w http.ResponseWriter, r *http.Request) {
 	var size int64
 	err := s.db.QueryRow(ctx, `SELECT status,sha256,size_bytes FROM testagram_storage.media_objects
 		WHERE owner_id=$1 AND namespace=$2 AND object_key=$3`, in.OwnerID, in.Namespace, in.Key).Scan(&status, &digest, &size)
-	if err == pgx.ErrNoRows || status != "protected" {
+	if err == pgx.ErrNoRows {
 		reply(w, http.StatusNotFound, map[string]string{"error": "verified media object not found"})
 		return
 	}
 	if err != nil {
 		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "media ledger unavailable"})
+		return
+	}
+	if status != "protected" {
+		reply(w, http.StatusNotFound, map[string]string{"error": "verified media object not found"})
 		return
 	}
 	grant, err := s.media.DownloadURL(ctx, in.RequesterID, in.OwnerID, in.Namespace, in.Key, strings.TrimSpace(digest), size)
@@ -438,6 +441,3 @@ func (s *Server) processMediaReplicationJob(ctx context.Context, job mediaReplic
 	}
 	_ = tx.Commit(ctx)
 }
-
-var _ = hex.EncodeToString
-var _ = fmt.Sprintf
