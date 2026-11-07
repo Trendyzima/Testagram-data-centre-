@@ -1,7 +1,7 @@
-# Fresh Appwrite deployment (separate from the legacy VPS stack)
+# Fresh Appwrite deployment (default VPS stack)
 
-This stack is the clean Appwrite runtime. It does not attach the legacy Supabase
-network, start the legacy cmd/api, or configure Supabase credentials.
+This stack is the clean Appwrite runtime. It does not attach retired provider networks,
+start the legacy cmd/api, or configure retired database credentials.
 
 ## Services and trust boundaries
 
@@ -13,7 +13,7 @@ network, start the legacy cmd/api, or configure Supabase credentials.
 - migrate: applies only `001_vps.sql` and `006_hosting_control_plane.sql` to
   the dedicated Data Centre PostgreSQL database before control-plane starts.
   It deliberately does not apply product/video, notification, platform-event,
-  or Supabase Storage migrations to this infrastructure database.
+  or retired object-storage migrations to this infrastructure database.
 - control-plane: Data Centre infrastructure state only. Its PostgreSQL URL
   must point to a dedicated TLS database, not the legacy Supabase project.
 - edge: Caddy terminates TLS and forwards only api.testagram.site to Backend.
