@@ -28,6 +28,7 @@ services:
       ALGORITHM_ENDPOINT: http://algorithm:8092
       ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:?Set ALGORITHM_INTERNAL_TOKEN}
       FEED_RANKING_REQUIRED: "true"
+      FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}
       ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
       ONSPACE_AI_API_KEY: ${ONSPACE_AI_API_KEY:-}
       FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}
@@ -55,6 +56,52 @@ services:
     depends_on:
       algorithm:
         condition: service_healthy
+
+  federation-db:
+    image: ${FEDERATION_POSTGRES_IMAGE:?Set FEDERATION_POSTGRES_IMAGE to a reviewed immutable PostgreSQL digest}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: testagram_federation
+      POSTGRES_PASSWORD: ${FEDERATION_DB_PASSWORD:?Set a random Federation database password}
+      POSTGRES_DB: testagram_federation
+    volumes:
+      - federation_data:/var/lib/postgresql/data
+    expose: ["5432"]
+    networks: [federation]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testagram_federation -d testagram_federation"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  federation-api:
+    image: ${TESTAGRAM_FEDERATION_IMAGE:?Set TESTAGRAM_FEDERATION_IMAGE to a reviewed immutable GHCR digest}
+    restart: unless-stopped
+    environment:
+      HTTP_ADDR: :8081
+      APP_ENV: production
+      PUBLIC_BASE_URL: https://testagram.site
+      INSTANCE_DOMAIN: testagram.site
+      SERVICE_ACTOR_USERNAME: testagram
+      SERVICE_ACTOR_NAME: Testagram
+      SERVICE_ACTOR_SUMMARY: Testagram federated social network
+      FEDERATION_DATABASE_URL: postgres://testagram_federation:${FEDERATION_DB_PASSWORD:?Set FEDERATION_DB_PASSWORD}@federation-db:5432/testagram_federation?sslmode=disable
+      BACKEND_INTERNAL_URL: http://api:8081
+      BACKEND_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:?Set the same private token in Backend and Federation}
+    expose: ["8081"]
+    networks: [services, federation]
+    depends_on:
+      federation-db:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/federation-api", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   migrate:
     image: ${POSTGRES_CLIENT_IMAGE:?Set POSTGRES_CLIENT_IMAGE to a reviewed immutable PostgreSQL client image digest}
@@ -108,6 +155,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      federation-api:
+        condition: service_healthy
     networks: [edge, services]
 
 networks:
@@ -115,7 +164,10 @@ networks:
   services: {}
   ranker:
     internal: true
+  federation:
+    internal: true
 
 volumes:
   fresh_edge_data: {}
   fresh_edge_config: {}
+  federation_data: {}
