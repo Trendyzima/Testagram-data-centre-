@@ -8,3 +8,10 @@ api.testagram.site {
 	reverse_proxy api:8081
 }
 
+
+# Dedicated HTTPS endpoint for Android removable-storage nodes and Linux
+# computer nodes. The Go control plane authenticates bootstrap/node tokens.
+nodes.testagram.site {
+	encode zstd gzip
+	reverse_proxy control-plane:8787
+}
