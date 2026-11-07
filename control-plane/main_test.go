@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+func TestValidControlPlaneSecret(t *testing.T) {
+	if !validControlPlaneSecret(strings.Repeat("x", 32)) {
+		t.Fatal("expected 32-character secret to be accepted")
+	}
+	for _, value := range []string{"", strings.Repeat("x", 31), strings.Repeat("x", 32) + "\n", " " + strings.Repeat("x", 32)} {
+		if validControlPlaneSecret(value) {
+			t.Fatalf("invalid control-plane secret accepted: %q", value)
+		}
+	}
+}
+
 func TestHealth(t *testing.T) {
 	s := &Server{}
 	r := httptest.NewRequest("GET", "/healthz", nil)
