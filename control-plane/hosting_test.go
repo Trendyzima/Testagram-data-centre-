@@ -170,3 +170,16 @@ func TestDecodeNodeCapabilitiesDefaultsMissingAndMalformedFields(t *testing.T) {
 		t.Fatalf("unexpected safe defaults: %#v", got)
 	}
 }
+
+func TestNodeCapacitySummarySeparatesComputeAndStorage(t *testing.T) {
+	var summary NodeCapacitySummary
+	addNodeCapacity(&summary, 8, NodeCapabilities{ComputeNode: true, WorkloadExecution: true, StorageNode: true, MediaStorageBytes: 20_000_000_000, MediaStorageFreeBytes: 12_000_000_000})
+	addNodeCapacity(&summary, 4, NodeCapabilities{StorageNode: true, StorageOnly: true, MediaStorageBytes: 8_000_000_000, MediaStorageFreeBytes: 7_000_000_000})
+	addNodeCapacity(&summary, 16, NodeCapabilities{ComputeNode: true, WorkloadExecution: false, StorageNode: false})
+	if summary.ComputeNodes != 1 || summary.ComputeCores != 8 {
+		t.Fatalf("compute summary incorrectly counted storage-only or disabled nodes: %#v", summary)
+	}
+	if summary.StorageNodes != 2 || summary.ReportedMediaStorageTotalBytes != 28_000_000_000 || summary.ReportedMediaStorageFreeBytes != 19_000_000_000 {
+		t.Fatalf("unexpected media storage summary: %#v", summary)
+	}
+}
