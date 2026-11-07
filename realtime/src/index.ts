@@ -71,6 +71,31 @@ async function verifyTicket(secret: string, token: string, conversationID: strin
   }
 }
 
+async function readBoundedBody(request: Request, maximum: number): Promise<Uint8Array> {
+  const reader = request.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      total += part.value.byteLength;
+      if (total > maximum) {
+        await reader.cancel();
+        throw new Error("request body too large");
+      }
+      chunks.push(part.value);
+    }
+  } finally {
+    try { reader.releaseLock(); } catch { /* reader already released */ }
+  }
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
+  return result;
+}
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 }
@@ -80,8 +105,10 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/internal/v1/realtime/publish" && request.method === "POST") {
-      const raw = new Uint8Array(await request.arrayBuffer());
-      if (raw.byteLength === 0 || raw.byteLength > MAX_EVENT_BYTES) return json({ error: "invalid event size" }, 413);
+      let raw: Uint8Array;
+      try { raw = await readBoundedBody(request, MAX_EVENT_BYTES); }
+      catch { return json({ error: "event body too large" }, 413); }
+      if (raw.byteLength === 0) return json({ error: "empty event body" }, 400);
       const signature = request.headers.get("x-testagram-signature") ?? "";
       if (!(await verifyHmac(env.REALTIME_PUBLISH_SECRET, raw, signature))) return json({ error: "unauthorized" }, 401);
       let event: RealtimeEvent;
@@ -138,6 +165,12 @@ export class ConversationRoom {
       const conversationID = request.headers.get("x-testagram-conversation-id") ?? "";
       const subject = request.headers.get("x-testagram-subject") ?? "";
       if (!conversationID || !subject) return json({ error: "missing verified identity" }, 401);
+      let userConnections = 0;
+      for (const socket of this.state.getWebSockets(conversationID)) {
+        const attachment = socket.deserializeAttachment() as { subject?: string } | null;
+        if (attachment?.subject === subject) userConnections++;
+      }
+      if (userConnections >= 5) return json({ error: "connection limit reached" }, 429);
       const pair = new WebSocketPair();
       const client = pair[0];
       const server = pair[1];
