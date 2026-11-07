@@ -33,7 +33,8 @@ network, start the legacy cmd/api, or configure Supabase credentials.
 2. Publish Algorithm and pin its digest in TESTAGRAM_ALGORITHM_IMAGE.
 3. Publish the private Federation preview image and pin its digest in TESTAGRAM_FEDERATION_IMAGE.
 4. Pin Caddy to a reviewed immutable image digest.
-5. Provision a dedicated Neon PostgreSQL database and least-privilege Federation role. Set FEDERATION_DATABASE_URL to its pooled TLS URL (sslmode=require or stronger). Import and reconcile existing Federation actors, keys, inbox/outbox activities, remote followers and delivery jobs before production cutover. The local federation-db service is only available with the Compose local profile.\n6. Provision a new Appwrite project and database. Create all documented
+5. Provision a dedicated Neon PostgreSQL database and least-privilege Federation role. Set FEDERATION_DATABASE_URL to its pooled TLS URL (sslmode=require or stronger). Import and reconcile existing Federation actors, keys, inbox/outbox activities, remote followers and delivery jobs before production cutover. The local federation-db service is only available with the Compose local profile.
+6. Provision a new Appwrite project and database. Create all documented
    collections, attributes and indexes; wait for asynchronous provisioning
    before starting the API.
 7. Create a least-privilege Appwrite server key. Keep it only in the runtime
