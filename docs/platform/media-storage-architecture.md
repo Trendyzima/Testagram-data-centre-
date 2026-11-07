@@ -118,3 +118,17 @@ integration. Keep media disabled until all of these pass in staging:
 
 Until those gates pass, `FRESH_MEDIA_ENABLED=false` and retention remains
 disabled with dry-run enabled. Do not claim production media readiness.
+
+
+## Data Centre media control plane
+
+The implementation branch adds a private control-plane API and durable PostgreSQL
+ledger. Upload URLs target the B2 primary; completion queues an asynchronous job
+that reads back and hashes the B2 object, copies it to R2, then verifies the R2
+checksum before marking the object protected. Backend polls the status endpoint
+and exposes media only after the protected state is reached. Failed transfers use
+leased retries and a dead-letter state; deletion is retried until both replicas
+are removed.
+
+The service is disabled unless `MEDIA_STORAGE_ENABLED=true` and all four
+private/public B2/R2 buckets plus independent credentials are configured.
