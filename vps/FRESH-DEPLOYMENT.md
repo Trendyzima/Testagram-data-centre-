@@ -17,8 +17,10 @@ network, start the legacy cmd/api, or configure Supabase credentials.
 - control-plane: Data Centre infrastructure state only. Its PostgreSQL URL
   must point to a dedicated TLS database, not the legacy Supabase project.
 - edge: Caddy terminates TLS and forwards api.testagram.site to Backend.
-- Federation is intentionally not started or exposed. Its private Backend
-  integration, signature verification and durable inbox/outbox are not ready.
+- Federation is intentionally not started or exposed. Keep
+  `FRESH_FEDERATION_INTERNAL_TOKEN` blank until a trusted consumer exists; the
+  private Backend outbox route is otherwise not mounted. Signature verification
+  and durable Federation inbox/outbox delivery are not ready.
 
 ## Before deployment
 
