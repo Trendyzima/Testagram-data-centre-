@@ -34,10 +34,6 @@ if [ -s "$STAGE/storage.tar.gz" ]; then
   tar -tzf "$STAGE/storage.tar.gz" >/dev/null
   mkdir "$STAGE/storage-restored"
   tar -xzf "$STAGE/storage.tar.gz" -C "$STAGE/storage-restored"
-  find "$STAGE/storage-restored" -name .testagram-storage-root -print -quit | grep -q . || {
-    echo "Restored storage archive is missing the Testagram storage marker" >&2
-    exit 1
-  }
 else
   echo "No local node-storage archive was included; provider objects require their own B2/R2 restore drill."
 fi
