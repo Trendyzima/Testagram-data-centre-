@@ -1,6 +1,6 @@
 # Fresh Testagram platform — storage contract
 
-This repository owns deployment, storage placement and node operations. The new product uses Appwrite Auth and Appwrite Database as the identity and canonical application-data layer. It does not own user profiles, posts or messages.
+This repository owns deployment, storage placement and node operations. Appwrite Auth owns identity and account sessions. Testagram Backend owns authorization and the canonical social/application data plane in Neon PostgreSQL (profiles, posts, follows, blocks, messages, notifications and lifecycle state). Federation owns ActivityPub protocol state; Algorithm owns ranking only. Data Centre does not own user identity or canonical social records.
 
 ## 150 GB target and accounting
 
