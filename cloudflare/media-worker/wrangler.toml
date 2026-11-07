@@ -1,0 +1,12 @@
+name = "testagram-private-media"
+main = "src/index.ts"
+compatibility_date = "2026-11-07"
+workers_dev = true
+
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "REPLACE_WITH_CLOUDFLARE_R2_BUCKET"
+preview_bucket_name = "REPLACE_WITH_CLOUDFLARE_R2_PREVIEW_BUCKET"
+
+[vars]
+FRONTEND_ORIGINS = "https://REPLACE_WITH_TESTAGRAM_FRONTEND_DOMAIN"
