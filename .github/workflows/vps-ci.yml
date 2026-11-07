@@ -99,6 +99,7 @@ jobs:
           docker compose -f backend/docker-compose.yml config
           docker compose -f vps/docker-compose.fresh.yml config
           ! grep -qi 'supabase' vps/docker-compose.fresh.yml
+          ! grep -Eq '/migrations/(002_video_platform|003_production_hardening|004_storage_buckets|005_platform|006_video_upload_safety|007_video_upload_safety)\.sql' vps/docker-compose.fresh.yml
           docker run --rm -e TLS_ADMIN_EMAIL=ci@example.invalid -v "$PWD/vps/fresh/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
       - name: Validate VPS control plane Compose runtime
         run: |
