@@ -1,7 +1,6 @@
 package objectstorage
 
 import (
-	"os"
 	"testing"
 )
 
@@ -82,7 +81,6 @@ func TestLifecycleMaxBytesAndNamespaceRouting(t *testing.T) {
 }
 
 func TestNewLifecycleRejectsSharedPrivateAndPublicBuckets(t *testing.T) {
-	_ = os.Unsetenv("UNUSED_TESTAGRAM_ENV")
 	_, err := NewLifecycle(LifecycleConfig{
 		B2Endpoint: "http://127.0.0.1:9000", B2AccessKey: "a", B2SecretKey: "b",
 		B2PrivateBucket: "same-bucket", B2PublicBucket: "same-bucket",
