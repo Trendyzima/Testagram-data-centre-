@@ -86,7 +86,9 @@ services:
       SERVICE_ACTOR_USERNAME: testagram
       SERVICE_ACTOR_NAME: Testagram
       SERVICE_ACTOR_SUMMARY: Testagram federated social network
-      FEDERATION_DATABASE_URL: postgres://testagram_federation:${FEDERATION_DB_PASSWORD:?Set FEDERATION_DB_PASSWORD}@federation-db:5432/testagram_federation?sslmode=disable
+      # Set FEDERATION_DATABASE_URL to a dedicated Neon pooled PostgreSQL URL in production.
+      # The local federation-db URL remains the default for isolated development.
+      FEDERATION_DATABASE_URL: ${FEDERATION_DATABASE_URL:-postgres://testagram_federation:${FEDERATION_DB_PASSWORD:?Set FEDERATION_DB_PASSWORD}@federation-db:5432/testagram_federation?sslmode=disable}
       BACKEND_INTERNAL_URL: http://api:8081
       BACKEND_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:?Set the same private token in Backend and Federation}
     expose: ["8081"]
