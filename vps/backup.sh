@@ -18,7 +18,7 @@ BACKUP_ROOT="${TESTAGRAM_BACKUP_ROOT:-/var/backups/testagram}"
 BACKUP_REMOTE="${TESTAGRAM_BACKUP_REMOTE:-$(read_env_value TESTAGRAM_BACKUP_REMOTE)}"
 AGE_RECIPIENT="${TESTAGRAM_BACKUP_AGE_RECIPIENT:-$(read_env_value TESTAGRAM_BACKUP_AGE_RECIPIENT)}"
 
-for bin in pg_dump age rsync sha256sum tar flock sed; do
+for bin in pg_dump age rsync sha256sum tar flock sed head realpath; do
   command -v "$bin" >/dev/null 2>&1 || { echo "$bin is required" >&2; exit 1; }
 done
 test -f "$ENV_FILE" || { echo "Fresh runtime env file not found: $ENV_FILE" >&2; exit 1; }
