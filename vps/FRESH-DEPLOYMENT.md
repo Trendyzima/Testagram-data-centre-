@@ -15,7 +15,7 @@ start the legacy cmd/api, or configure retired database credentials.
   It deliberately does not apply product/video, notification, platform-event,
   or retired object-storage migrations to this infrastructure database.
 - control-plane: Data Centre infrastructure state only. Its PostgreSQL URL
-  must point to a dedicated TLS database, not the legacy Supabase project.
+  must point to a dedicated TLS infrastructure database, isolated from the social and federation databases.
 - edge: Caddy terminates TLS and forwards only api.testagram.site to Backend.
   The Federation hostname is deliberately absent from the public Caddy config.
 - federation-api: a private ActivityPub preview service on the internal
