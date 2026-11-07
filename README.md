@@ -62,7 +62,7 @@ Android is the local media/storage node. The Linux Docker host runs the Testagra
 
 ## Docker VPS quick install
 
-On a Linux host with Docker Engine, Docker Compose v2, Git and OpenSSL:
+On a Linux host with Docker Engine, Docker Compose v2 and Git:
 
 ```bash
 bash scripts/install-local-docker.sh
@@ -78,14 +78,14 @@ docker compose --env-file /opt/testagram/vps/fresh.env -f /opt/testagram/vps/doc
 
 ## Encrypted off-host backups and restore drills
 
-The VPS now includes operator-run scripts for an encrypted database + storage backup and a non-production restore drill.
+The Data Centre includes operator-run scripts for an encrypted Data Centre infrastructure database backup, optional mounted node-storage backup, and an isolated non-production restore drill. This is not a backup of the Neon social database, Federation database or B2/R2 media objects.
 
 Before using them:
 - Install Docker Compose v2, `age`, `rsync`, `tar`, `flock`, and `sha256sum`.
 - Configure SSH key authentication and verify the backup host key in `known_hosts`; the script intentionally does not disable SSH host-key checking.
 - Set `TESTAGRAM_BACKUP_REMOTE=user@backup-host:/absolute/path` and `TESTAGRAM_BACKUP_AGE_RECIPIENT=age1...` in the operator's environment.
-- Ensure `TESTAGRAM_ENV_FILE` points to the deployment environment file and `TESTAGRAM_STORAGE_ROOT` points to the actual persistent storage root.
-- Schedule a maintenance window. The backup script stops application writers while capturing the database and files, then starts services before transferring the encrypted archive. Users may experience downtime during capture.
+- Set `TESTAGRAM_FRESH_ENV_FILE` to `vps/fresh.env` (the default) and optionally set `TESTAGRAM_STORAGE_ROOT` to a mounted local node-storage root.
+- The script takes a consistent PostgreSQL dump of the Data Centre infrastructure database. Coordinate a quiet period or filesystem snapshot if including a node-storage directory; the script does not stop node writers.
 - Store the age private identity separately from the VPS and backup host.
 
 Run the backup from the checked-out deployment repository:
@@ -103,7 +103,7 @@ TESTAGRAM_RESTORE_POSTGRES_IMAGE='postgres:17-alpine@sha256:REPLACE_WITH_APPROVE
   bash vps/restore-drill.sh /secure/backup/testagram-YYYYMMDDTHHMMSSZ.tar.gz.age
 ```
 
-The restore drill verifies the ciphertext checksum, decrypts the archive, validates the storage tar, restores PostgreSQL into a network-isolated temporary container, and checks for expected Testagram tables. It does **not** prove full login, upload, private-media, or playback recovery, and it does not by itself measure RPO/RTO. Record the drill date, artifact ID, elapsed restore time, and application-level E2E results before declaring disaster recovery ready.
+The restore drill verifies the ciphertext checksum, decrypts the archive, optionally validates the local node-storage tar, restores the Data Centre PostgreSQL dump into a network-isolated temporary container, and checks for expected Data Centre tables. It does **not** prove full login, upload, private-media, or playback recovery, and it does not by itself measure RPO/RTO. Record the drill date, artifact ID, elapsed restore time, and application-level E2E results before declaring disaster recovery ready.
 
 ## Forensic E2E gate
 
