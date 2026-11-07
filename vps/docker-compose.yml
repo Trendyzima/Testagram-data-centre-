@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       HTTP_ADDR: :8092
-      INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:?Set ALGORITHM_INTERNAL_TOKEN to a random value of at least 32 characters}
+      INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
     expose: ["8092"]
     networks: [ranker]
     healthcheck:
@@ -27,10 +27,12 @@ services:
       APPWRITE_SERVER_API_KEY: ${APPWRITE_SERVER_API_KEY:?Set a least-privilege server API key}
       NEON_DATABASE_URL: ${NEON_DATABASE_URL:-}
       NEON_REQUIRED: ${NEON_REQUIRED:-true}
-      ALGORITHM_ENDPOINT: http://algorithm:8092
-      ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:?Set ALGORITHM_INTERNAL_TOKEN}
+      # Ranking is optional for authentication. Set both values when the private ranker is enabled.
+      ALGORITHM_ENDPOINT: ${ALGORITHM_ENDPOINT:-}
+      ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
       FEED_RANKING_REQUIRED: "false"
-      FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:?Set the same private token in Backend and Federation}
+      # Federation is an independent protocol service and must not gate Appwrite login.
+      FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}
       ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
       ONSPACE_AI_API_KEY: ${ONSPACE_AI_API_KEY:-}
       # Backblaze B2 is the durable primary; Cloudflare R2 is the verified delivery/replica.
@@ -59,11 +61,6 @@ services:
       TESTAGRAM_RETENTION_DRY_RUN: "true"
     expose: ["8081"]
     networks: [services, ranker]
-    depends_on:
-      # Authentication and profile reads must start even if the optional
-      # ranking service is degraded. Feed requests fail closed until ranker is ready.
-      algorithm:
-        condition: service_started
 
   federation-db:
     profiles: ["local"]
@@ -95,9 +92,9 @@ services:
       SERVICE_ACTOR_USERNAME: testagram
       SERVICE_ACTOR_NAME: Testagram
       SERVICE_ACTOR_SUMMARY: Testagram federated social network
-      FEDERATION_DATABASE_URL: ${FEDERATION_DATABASE_URL:?Set a dedicated Neon pooled TLS URL or a local-profile PostgreSQL URL}
-      BACKEND_INTERNAL_URL: http://api:8081
-      BACKEND_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:?Set the same private token in Backend and Federation}
+      FEDERATION_DATABASE_URL: ${FEDERATION_DATABASE_URL:-}
+      BACKEND_INTERNAL_URL: ${FEDERATION_BACKEND_INTERNAL_URL:-}
+      BACKEND_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}
     expose: ["8081"]
     networks: [services, federation]
     depends_on:
