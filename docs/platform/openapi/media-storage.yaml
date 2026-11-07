@@ -1,0 +1,172 @@
+openapi: 3.1.0
+info:
+  title: Testagram Data Centre Media Control Plane
+  version: 1.0.0
+  description: Private Backend-to-Data-Centre API for B2 primary uploads, R2 replica verification and media delivery.
+servers:
+  - url: https://data-centre.internal
+security:
+  - DataCentreBearer: []
+paths:
+  /internal/v1/media/upload-url:
+    post:
+      operationId: createMediaUploadURL
+      summary: Register a tenant-scoped media upload and return a short-lived B2 URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadRequest'
+      responses:
+        '201':
+          description: Upload intent registered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [intent_id, upload_url, expires_at, max_bytes, primary]
+                properties:
+                  intent_id: { type: string }
+                  upload_url: { type: string, format: uri }
+                  expires_at: { type: string, format: date-time }
+                  max_bytes: { type: integer, minimum: 1 }
+                  primary: { const: backblaze_b2 }
+        '400': { description: Invalid upload metadata }
+        '401': { description: Invalid private service token }
+        '409': { description: Conflicting upload intent }
+        '503': { description: Media storage is disabled or unavailable }
+  /internal/v1/media/verify:
+    post:
+      operationId: verifyMediaAndQueueReplication
+      summary: Validate the upload declaration and enqueue B2 read-back/R2 replication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyRequest'
+      responses:
+        '202':
+          description: Verification and replica transfer queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, sha256]
+                properties:
+                  status: { const: replication_pending }
+                  sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        '200': { description: Object is already protected and verified }
+        '400': { description: Invalid verification metadata }
+        '404': { description: Upload intent not found }
+        '409': { description: Metadata conflicts with the registered upload }
+        '503': { description: Durable ledger unavailable }
+  /internal/v1/media/status:
+    get:
+      operationId: getMediaStatus
+      summary: Read durable upload and replica status
+      parameters:
+        - in: query
+          name: owner_id
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+        - in: query
+          name: namespace
+          required: true
+          schema: { type: string, enum: [media-private, media-public] }
+        - in: query
+          name: key
+          required: true
+          schema: { type: string, pattern: '^users/[A-Za-z0-9-]{1,128}/[a-f0-9]{32}$' }
+      responses:
+        '200':
+          description: Media lifecycle state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, content_type, size_bytes, sha256]
+                properties:
+                  status: { type: string, enum: [upload_pending, replication_pending, replication_failed, protected, delete_pending, deleted] }
+                  content_type: { type: string }
+                  size_bytes: { type: integer, minimum: 1 }
+                  sha256: { type: string }
+                  primary_verified_at: { type: [string, 'null'], format: date-time }
+                  replica_verified_at: { type: [string, 'null'], format: date-time }
+        '404': { description: Media object not found }
+        '503': { description: Media ledger unavailable }
+  /internal/v1/media/download-url:
+    post:
+      operationId: createMediaDownloadURL
+      summary: Create a short-lived delivery URL after Backend authorization
+      description: Backend must authorize the requesting user before calling this endpoint. The Data Centre trusts the authenticated Backend decision.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [requester_id, owner_id, namespace, key]
+              properties:
+                requester_id: { type: string }
+                owner_id: { type: string }
+                namespace: { type: string, enum: [media-private, media-public] }
+                key: { type: string }
+      responses:
+        '200':
+          description: Short-lived delivery URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, provider]
+                properties:
+                  url: { type: string, format: uri }
+                  provider: { type: string, enum: [cloudflare_r2, backblaze_b2] }
+        '404': { description: No protected media object exists }
+        '503': { description: Verified delivery URL unavailable }
+  /internal/v1/media/delete:
+    post:
+      operationId: deleteMediaObject
+      summary: Tombstone and delete a tenant-scoped object from both providers
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [requester_id, owner_id, namespace, key]
+              properties:
+                requester_id: { type: string }
+                owner_id: { type: string }
+                namespace: { type: string, enum: [media-private, media-public] }
+                key: { type: string }
+      responses:
+        '200': { description: Deleted from B2 and R2 }
+        '202': { description: Deletion remains pending and will be retried }
+        '404': { description: Media object not found }
+        '503': { description: Deletion ledger unavailable }
+components:
+  securitySchemes:
+    DataCentreBearer:
+      type: http
+      scheme: bearer
+  schemas:
+    UploadRequest:
+      type: object
+      additionalProperties: false
+      required: [owner_id, namespace, key, content_type, size_bytes]
+      properties:
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, enum: [media-private, media-public] }
+        key: { type: string, pattern: '^users/[A-Za-z0-9-]{1,128}/[a-f0-9]{32}$' }
+        content_type: { type: string }
+        size_bytes: { type: integer, minimum: 1 }
+    VerifyRequest:
+      allOf:
+        - $ref: '#/components/schemas/UploadRequest'
+        - type: object
+          required: [sha256]
+          properties:
+            sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
