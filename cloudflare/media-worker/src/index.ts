@@ -7,6 +7,7 @@ export interface Env {
 
 const encoder = new TextEncoder();
 const OBJECT_KEY = /^v1\/[0-9a-f]{32}$/;
+const PUBLIC_OBJECT_KEY = /^tenants\/([A-Za-z0-9-]{1,128})\/users\/\1\/[0-9a-f]{32}$/;
 
 function allowedOrigin(origin: string | null, env: Env): boolean {
   if (!origin) return true;
