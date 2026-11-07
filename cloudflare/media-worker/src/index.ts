@@ -1,5 +1,6 @@
 export interface Env {
   MEDIA_BUCKET: R2Bucket;
+  PUBLIC_MEDIA_BUCKET: R2Bucket;
   MEDIA_URL_SECRET: string;
   FRONTEND_ORIGINS: string;
 }
@@ -58,6 +59,41 @@ function parseRange(value: string | null, size: number): { offset: number; lengt
   end = Math.min(end, size - 1);
   return { offset: start, length: end - start + 1, start, end };
 }
+function publicResponse(body: BodyInit | null, status: number, headers: Headers): Response {
+  const result = response(body, status, headers);
+  result.headers.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=600');
+  result.headers.delete('Pragma');
+  return result;
+}
+async function servePublicMedia(request: Request, env: Env, headers: Headers, key: string): Promise<Response> {
+  const metadata = await env.PUBLIC_MEDIA_BUCKET.head(key);
+  if (!metadata) return response('media not found', 404, headers);
+  const range = parseRange(request.headers.get('Range'), metadata.size);
+  if (range === false) {
+    headers.set('Content-Range', 'bytes */' + metadata.size);
+    return response(null, 416, headers);
+  }
+  if (range) {
+    const ranged = await env.PUBLIC_MEDIA_BUCKET.get(key, { range: { offset: range.offset, length: range.length } });
+    if (!ranged) return response('media not found', 404, headers);
+    metadata.writeHttpMetadata(headers);
+    headers.set('ETag', metadata.httpEtag);
+    headers.set('Accept-Ranges', 'bytes');
+    headers.set('Content-Length', String(range.length));
+    headers.set('Content-Range', 'bytes ' + range.start + '-' + range.end + '/' + metadata.size);
+    headers.set('Content-Disposition', 'inline');
+    return publicResponse(ranged.body, 206, headers);
+  }
+  const object = await env.PUBLIC_MEDIA_BUCKET.get(key);
+  if (!object) return response('media not found', 404, headers);
+  metadata.writeHttpMetadata(headers);
+  headers.set('ETag', metadata.httpEtag);
+  headers.set('Accept-Ranges', 'bytes');
+  headers.set('Content-Length', String(metadata.size));
+  headers.set('Content-Disposition', 'inline');
+  return publicResponse(object.body, 200, headers);
+}
+
 function response(body: BodyInit | null, status: number, headers: Headers): Response {
   headers.set('Cache-Control', 'private, no-store, max-age=0');
   headers.set('Pragma', 'no-cache');
@@ -80,6 +116,13 @@ export default {
       return response(null, 204, headers);
     }
     if (request.method !== 'GET') return response('method not allowed', 405, headers);
+    const publicPrefix = '/v1/';
+    if (url.pathname.startsWith(publicPrefix)) {
+      if (url.search) return response('query parameters are not allowed for public media', 400, headers);
+      const publicKey = url.pathname.slice(publicPrefix.length);
+      if (!PUBLIC_OBJECT_KEY.test(publicKey)) return response('not found', 404, headers);
+      return servePublicMedia(request, env, headers, publicKey);
+    }
     const prefix = '/private/';
     if (!url.pathname.startsWith(prefix)) return response('not found', 404, headers);
     const key = url.pathname.slice(prefix.length);
