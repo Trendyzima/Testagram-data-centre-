@@ -40,6 +40,10 @@ class NodeClient(private val context: Context, private val config: NodeConfig) {
     }
 
     private fun post(path: String, body: JSONObject): JSONObject? {
+        val token = nodeToken ?: config.bootstrapToken
+        require(token.length >= 32 && token.trim() == token && !token.contains('\r') && !token.contains('\n')) {
+            "bootstrap/node token must be a single-line secret of at least 32 characters"
+        }
         val connection = (endpoint(path).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             instanceFollowRedirects = false
@@ -47,7 +51,7 @@ class NodeClient(private val context: Context, private val config: NodeConfig) {
             readTimeout = 10000
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Authorization", "Bearer " + (nodeToken ?: config.bootstrapToken))
+            setRequestProperty("Authorization", "Bearer " + token)
         }
         return try {
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
