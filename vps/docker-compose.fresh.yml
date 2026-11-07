@@ -59,7 +59,7 @@ services:
 
   federation-db:
     profiles: ["local"]
-    image: ${FEDERATION_POSTGRES_IMAGE:?Set FEDERATION_POSTGRES_IMAGE to a reviewed immutable PostgreSQL digest}
+    image: ${FEDERATION_POSTGRES_IMAGE:-postgres:17-alpine}
     restart: unless-stopped
     environment:
       POSTGRES_USER: testagram_federation
