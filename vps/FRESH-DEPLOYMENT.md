@@ -16,37 +16,15 @@ network, start the legacy cmd/api, or configure Supabase credentials.
   or Supabase Storage migrations to this infrastructure database.
 - control-plane: Data Centre infrastructure state only. Its PostgreSQL URL
   must point to a dedicated TLS database, not the legacy Supabase project.
-- edge: Caddy terminates TLS and forwards api.testagram.site to Backend and
-  nodes.testagram.site to the authenticated Data Centre control plane. The
-  Federation hostname is deliberately absent from the public Caddy config.
+- edge: Caddy terminates TLS and forwards only api.testagram.site to Backend.
+  The Federation hostname is deliberately absent from the public Caddy config.
 - federation-api: a private ActivityPub preview service on the internal
   services/federation networks, backed by its dedicated PostgreSQL database.
   It resolves opted-in actors through Backend and verifies/persists signed inbox
-  deliveries. An opt-in signed outbound delivery executor exists, but Compose
-  explicitly sets FEDERATION_DELIVERY_WORKER_ENABLED=false because the Backend
-  event poller, inbox processor and follower-fanout producer are not complete.
-  Its canonical actor origin is https://federation.testagram.site; that hostname
-  must not receive public DNS or Caddy routing until the remaining release gates pass.
-
-## Node control plane
-
-- Create a Cloudflare DNS record for `nodes.testagram.site` pointing to the VPS
-  origin. Caddy is the only public ingress; never expose port 8787 directly.
-- Android removable-SD nodes use `https://nodes.testagram.site` plus the
-  one-time bootstrap token during enrollment. They retain their per-node token
-  for authenticated heartbeats and control-plane polling.
-- Linux computer nodes run the Data Centre node-agent with the same HTTPS
-  control-plane URL and bootstrap token. Compute execution remains opt-in and
-  limited to the immutable workload allowlist.
-- Set `VPS_NODE_BOOTSTRAP_TOKEN` and `VPS_INTERNAL_TOKEN` to independent,
-  random, single-line secrets of at least 32 characters. Rotate the bootstrap
-  token after the planned enrollment window and revoke individual node tokens
-  when a node is retired.
-- Android nodes are removable-SD storage only. Computer nodes can report local
-  storage and compute capacity, but node-reported storage is **not** part of the
-  Backend B2/R2 media pool yet. Do not count it as production capacity until
-  signed object transfer, checksum verification, replica reconciliation and
-  restore tests are integrated with the Backend media ledger.
+  deliveries, but it does not yet process inbox activities or execute outbound
+  delivery/follower-fanout workers. Its canonical actor origin is
+  https://federation.testagram.site; that hostname must not receive public DNS
+  or Caddy routing until the remaining federation release gates pass.
 
 ## Before deployment
 
@@ -55,30 +33,37 @@ network, start the legacy cmd/api, or configure Supabase credentials.
 2. Publish Algorithm and pin its digest in TESTAGRAM_ALGORITHM_IMAGE.
 3. Publish the private Federation preview image and pin its digest in TESTAGRAM_FEDERATION_IMAGE.
 4. Pin Caddy to a reviewed immutable image digest.
-5. Provision a new Appwrite project and database. Create all documented
+5. Provision a dedicated Neon PostgreSQL database and least-privilege Federation role. Set FEDERATION_DATABASE_URL to its pooled TLS URL (sslmode=require or stronger). Import and reconcile existing Federation actors, keys, inbox/outbox activities, remote followers and delivery jobs before production cutover. The local federation-db service is only available with the Compose local profile.
+6. Provision a new Appwrite project and database. Create all documented
    collections, attributes and indexes; wait for asynchronous provisioning
    before starting the API.
-6. Create a least-privilege Appwrite server key. Keep it only in the runtime
+7. Create a least-privilege Appwrite server key. Keep it only in the runtime
    secret store. Never put it in XClone build variables.
-7. Configure IDENTITY_PREAUTH_SECRET in the Backend and trusted identity issuer
-   secret stores. Use a random value of at least 32 characters; never expose it
-   in frontend/mobile configuration.
 8. Configure exact frontend HTTPS origins, Appwrite endpoint/project/database,
    independent Algorithm token and a separate TLS PostgreSQL database for the
    Data Centre control plane.
 9. Run docker compose --env-file vps/fresh.env -f vps/docker-compose.fresh.yml config
    and inspect the rendered configuration for secrets and unexpected services.
-10. Keep FRESH_MEDIA_ENABLED=false until B2/R2 credentials, Appwrite storage
-   schema, upload read-back verification and independent archive are staged.
-11. Keep retention disabled and dry-run true. Do not enable destructive jobs
+10. Provision Backblaze B2 as the durable primary object store and Cloudflare R2
+   as the delivery/replica store. Backend currently implements B2 signed uploads,
+   B2 SHA-256 verification, synchronous R2 copy/read-back verification, private
+   download URLs and repair logic. Set separate least-privilege S3-compatible
+   credentials and endpoints; never reuse keys between providers. Configure the
+   optional Cloudflare private-media Worker URL/signing secret as a pair.
+11. Keep FRESH_MEDIA_ENABLED=false until B2/R2 credentials, Appwrite metadata
+   schema, upload read-back verification, checksum-matched replica reconciliation
+   and an independent archive are staged.
+12. Keep retention disabled and dry-run true. Do not enable destructive jobs
    during initial deployment.
-12. Run staging auth, feed authorization, ranker outage, media, backup/restore,
+13. Run staging auth, feed authorization, ranker outage, media, backup/restore,
     load and security tests before production DNS cutover.
 
 This compose file is a deployment foundation, not proof of production readiness.
 The private Backend-to-Federation actor and readiness contracts exist, but inbox
 activity application, Backend outbox polling, outbound delivery, follower fan-out
 and cross-repository end-to-end tests remain unfinished. Backend-to-Data-Centre
-media placement, verified B2/R2 replica recovery and operational restore drills
-also remain release gates. Do not add public Federation routing until those
+node media placement, signed node object transfer, durable replication jobs,
+provider reconciliation scheduling and operational restore drills also remain
+release gates. Real B2/R2 credentials and live provider E2E tests have not yet
+been exercised by this repository's CI. Do not add public Federation routing until those
 contracts and tests are complete.
