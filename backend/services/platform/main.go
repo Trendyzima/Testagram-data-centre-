@@ -136,9 +136,15 @@ func (s *server) metrics(w http.ResponseWriter, _ *http.Request) {
 	fmt.Fprintf(w, "testagram_platform_rate_limit_checks_total %d\n", s.rateChecks.Load())
 }
 func (s *server) authorize(w http.ResponseWriter, r *http.Request) bool {
-	got := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(s.internal)) != 1 {
-		http.Error(w, "unauthorized", 401)
+	const prefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, prefix) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	got := strings.TrimSpace(strings.TrimPrefix(header, prefix))
+	if got == "" || strings.ContainsAny(got, "\r\n") || subtle.ConstantTimeCompare([]byte(got), []byte(s.internal)) != 1 {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return false
 	}
 	return true
