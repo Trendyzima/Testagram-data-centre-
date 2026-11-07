@@ -27,7 +27,7 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 
 # Never silently deploy placeholder secrets or an unpinned image.
-if grep -Eq 'REPLACE_WITH|REPLACE_PASSWORD|REPLACE_WITH_64_HEX_DIGEST|ops@example.com' "$ENV_FILE"; then
+if grep -Eq 'REPLACE_WITH|REPLACE_PASSWORD|REPLACE_WITH_64_HEX_DIGEST|ops@example.com|ep-example|TESTAGRAM_ROLE|FEDERATION_ROLE' "$ENV_FILE"; then
   echo "Fresh env still contains placeholders. Set real secrets and immutable image digests before deployment." >&2
   exit 2
 fi
