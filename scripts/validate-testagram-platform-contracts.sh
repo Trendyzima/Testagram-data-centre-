@@ -23,4 +23,13 @@ grep -q 'TESTAGRAM_RETENTION_DRY_RUN: "true"' vps/docker-compose.fresh.yml
 grep -q '/readyz' docs/platform/openapi/internal-platform.yaml
 grep -q '/v1/hosting/backups' docs/platform/openapi/hosting-control-plane.yaml
 
+# Backup and restore must cover the Data Centre infrastructure database only.
+grep -q 'DATA_CENTRE_DATABASE_URL' vps/backup.sh
+grep -q 'pg_dump --dbname=' vps/backup.sh
+grep -q 'testagram_hosting.backup_manifests' vps/restore-drill.sh
+if grep -Eq 'SUPABASE|supabase|docker compose.*stop|supabase_services' vps/backup.sh vps/restore-drill.sh; then
+  echo "Backup/restore scripts must not depend on the retired provider or stop product services." >&2
+  exit 1
+fi
+
 echo "Fresh Appwrite runtime, B2/R2 storage contract and retired-provider exit checks: PASS"
