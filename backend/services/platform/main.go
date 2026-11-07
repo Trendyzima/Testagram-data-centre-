@@ -460,7 +460,7 @@ func requestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		id := strings.TrimSpace(r.Header.Get("X-Request-ID"))
-		if id == "" || len(id) > 128 || strings.ContainsAny(id, "\\r\\n") {
+		if id == "" || len(id) > 128 || strings.ContainsAny(id, "\r\n") {
 			id = fmt.Sprintf("platform-%d", start.UnixNano())
 		}
 		w.Header().Set("X-Request-ID", id)
