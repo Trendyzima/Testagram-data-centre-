@@ -153,3 +153,20 @@ func TestTLSAuthorizationRejectsHostOutsideManagedZone(t *testing.T) {
 		t.Fatalf("wanted 403 for external host, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestDecodeNodeCapabilitiesExposesIndependentComputerAndStorageFlags(t *testing.T) {
+	got := decodeNodeCapabilities([]byte(`{"computeNode":true,"storageNode":true,"storageOnly":false,"workloadExecution":true,"mediaStorageBytes":20000000000,"mediaStorageFreeBytes":15000000000}`))
+	if !got.ComputeNode || !got.StorageNode || got.StorageOnly || !got.WorkloadExecution {
+		t.Fatalf("unexpected node capabilities: %#v", got)
+	}
+	if got.MediaStorageBytes != 20_000_000_000 || got.MediaStorageFreeBytes != 15_000_000_000 {
+		t.Fatalf("unexpected media storage metrics: %#v", got)
+	}
+}
+
+func TestDecodeNodeCapabilitiesDefaultsMissingAndMalformedFields(t *testing.T) {
+	got := decodeNodeCapabilities([]byte(`{"storageNode":true,"mediaStorageBytes":"not-a-number"}`))
+	if !got.StorageNode || got.MediaStorageBytes != 0 || got.ComputeNode {
+		t.Fatalf("unexpected safe defaults: %#v", got)
+	}
+}
