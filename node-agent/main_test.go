@@ -208,3 +208,30 @@ func TestMediaDiskDoesNotReportCapacityAfterMountedVolumeChanges(t *testing.T) {
 		t.Fatalf("detached or replaced volume must report zero capacity, got total=%d free=%d", total, free)
 	}
 }
+
+func TestValidateControlPlaneURL(t *testing.T) {
+	for _, raw := range []string{
+		"https://nodes.testagram.site",
+		"http://localhost:8787",
+		"http://127.0.0.1:8787",
+		"http://[::1]:8787",
+	} {
+		if err := validateControlPlaneURL(raw); err != nil {
+			t.Fatalf("valid control-plane URL %q rejected: %v", raw, err)
+		}
+	}
+	for _, raw := range []string{
+		"",
+		"http://nodes.testagram.site",
+		"https://nodes.testagram.site:8443",
+		"https://user:secret@nodes.testagram.site",
+		"https://nodes.testagram.site/path",
+		"https://nodes.testagram.site?token=secret",
+		"https://nodes.testagram.site#fragment",
+		"file:///tmp/control-plane",
+	} {
+		if err := validateControlPlaneURL(raw); err == nil {
+			t.Fatalf("unsafe control-plane URL %q accepted", raw)
+		}
+	}
+}
