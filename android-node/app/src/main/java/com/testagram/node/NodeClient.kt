@@ -15,7 +15,8 @@ class NodeClient(private val context: Context, private val config: NodeConfig) {
             throw IllegalArgumentException("control-plane URL is invalid")
         }
         val host = uri.host?.lowercase() ?: throw IllegalArgumentException("control-plane URL must include a hostname")
-        val loopback = host == "localhost" || host == "127.0.0.1" || host == "::1"
+        val normalizedHost = host.removePrefix("[").removeSuffix("]")
+        val loopback = normalizedHost == "localhost" || normalizedHost == "127.0.0.1" || normalizedHost == "::1"
         require(uri.isAbsolute && uri.userInfo == null && uri.query == null && uri.fragment == null && (uri.path.isNullOrEmpty() || uri.path == "/")) {
             "control-plane URL must be a plain origin without credentials, path, query or fragment"
         }
