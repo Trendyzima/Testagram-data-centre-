@@ -30,14 +30,17 @@ age -d -i "$IDENTITY_FILE" -o "$STAGE/backup.tar.gz" "$BACKUP_FILE"
 tar -tzf "$STAGE/backup.tar.gz" >/dev/null
 tar -xzf "$STAGE/backup.tar.gz" -C "$STAGE"
 test -s "$STAGE/database.dump"
-test -s "$STAGE/storage.tar.gz"
-tar -tzf "$STAGE/storage.tar.gz" >/dev/null
-mkdir "$STAGE/storage-restored"
-tar -xzf "$STAGE/storage.tar.gz" -C "$STAGE/storage-restored"
-find "$STAGE/storage-restored" -name .testagram-storage-root -print -quit | grep -q . || {
-  echo "Restored storage archive is missing the Testagram storage marker" >&2
-  exit 1
-}
+if [ -s "$STAGE/storage.tar.gz" ]; then
+  tar -tzf "$STAGE/storage.tar.gz" >/dev/null
+  mkdir "$STAGE/storage-restored"
+  tar -xzf "$STAGE/storage.tar.gz" -C "$STAGE/storage-restored"
+  find "$STAGE/storage-restored" -name .testagram-storage-root -print -quit | grep -q . || {
+    echo "Restored storage archive is missing the Testagram storage marker" >&2
+    exit 1
+  }
+else
+  echo "No local node-storage archive was included; provider objects require their own B2/R2 restore drill."
+fi
 
 # The container is deliberately network-isolated and never publishes a port.
 # Use the exact approved PostgreSQL image digest from the deployment.
@@ -55,6 +58,6 @@ test "$EXPECTED" = "true" || { echo "Restored database is missing expected Data 
 
 echo "RESTORE DRILL PASSED"
 echo "Database: pg_restore completed and expected Data Centre tables are present."
-echo "Storage: archive integrity passed and the storage marker was restored."
+if [ -s "$STAGE/storage.tar.gz" ]; then echo "Storage: local node-storage archive integrity and marker passed."; else echo "Storage: local node storage not included in this drill."; fi
 echo "Isolation: temporary PostgreSQL container had no network and no published ports."
 echo "This validates archive readability, not full application login/upload/playback or a measured production RTO."
