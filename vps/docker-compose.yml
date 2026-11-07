@@ -1,7 +1,8 @@
 name: testagram-fresh
 services:
   algorithm:
-    image: ${TESTAGRAM_ALGORITHM_IMAGE:?Set TESTAGRAM_ALGORITHM_IMAGE to a reviewed immutable GHCR digest}
+    profiles: ["ranking"]
+    image: ${TESTAGRAM_ALGORITHM_IMAGE:-scratch}
     restart: unless-stopped
     environment:
       HTTP_ADDR: :8092
@@ -82,7 +83,8 @@ services:
       start_period: 10s
 
   federation-api:
-    image: ${TESTAGRAM_FEDERATION_IMAGE:?Set TESTAGRAM_FEDERATION_IMAGE to a reviewed immutable GHCR digest}
+    profiles: ["federation"]
+    image: ${TESTAGRAM_FEDERATION_IMAGE:-scratch}
     restart: unless-stopped
     environment:
       HTTP_ADDR: :8081
@@ -110,7 +112,8 @@ services:
       start_period: 15s
 
   migrate:
-    image: ${POSTGRES_CLIENT_IMAGE:?Set POSTGRES_CLIENT_IMAGE to a reviewed immutable PostgreSQL client image digest}
+    profiles: ["nodes"]
+    image: ${POSTGRES_CLIENT_IMAGE:-scratch}
     restart: "no"
     entrypoint: ["/bin/sh", "-ec"]
     command: |
@@ -120,20 +123,21 @@ services:
       psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_vps.sql
       psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/006_hosting_control_plane.sql
     environment:
-      DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:?Set a dedicated TLS PostgreSQL URL for Data Centre infrastructure state}
+      DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:-}
     volumes:
       - ../migrations:/migrations:ro
     networks: [services]
 
   control-plane:
+    profiles: ["nodes"]
     build:
       context: ..
       dockerfile: control-plane/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:?Set a dedicated TLS PostgreSQL URL for Data Centre infrastructure state}
-      VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN:?Set VPS_INTERNAL_TOKEN}
-      VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN:?Set VPS_NODE_BOOTSTRAP_TOKEN}
+      DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:-}
+      VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN:-}
+      VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN:-}
       TESTAGRAM_BASE_DOMAIN: ${TESTAGRAM_BASE_DOMAIN:-}
       TESTAGRAM_DOMAIN_TARGETS: ${TESTAGRAM_DOMAIN_TARGETS:-}
       TESTAGRAM_PUBLIC_DNS_TARGET: ${TESTAGRAM_PUBLIC_DNS_TARGET:-}
