@@ -11,6 +11,7 @@ cmp -s vps/docker-compose.yml vps/docker-compose.fresh.yml
 api_block="$(sed -n '/^  api:/,/^  federation-db:/p' vps/docker-compose.fresh.yml)"
 grep -q 'algorithm:' <<< "$api_block"
 grep -q 'condition: service_started' <<< "$api_block"
+grep -q 'FEED_RANKING_REQUIRED: "false"' <<< "$api_block"
 edge_block="$(sed -n '/^  edge:/,/^networks:/p' vps/docker-compose.fresh.yml)"
 grep -q 'api:' <<< "$edge_block"
 if grep -q 'federation-api' <<< "$edge_block"; then
