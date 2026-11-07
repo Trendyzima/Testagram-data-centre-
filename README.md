@@ -53,7 +53,7 @@ After installation:
 1. Open **Testagram Node**.
 2. Select a mounted **removable SD card** in the Android folder picker. Internal phone storage and cloud-provider folders are rejected.
 3. Confirm the card's detected capacity and complete the write/read/delete verification test.
-4. Configure the Testagram control-plane URL, bootstrap token, node name and media signing secret.
+4. On the server, enable TESTAGRAM_ENABLE_NODES=true and rerun the installer so the dedicated node database, control-plane and nodes.testagram.site TLS route are activated. Then configure the control-plane URL, bootstrap token, node name and media signing secret on the phone.
 5. Turn Node B **ON**.
 6. Confirm heartbeats report the selected SD card's total/free bytes and removable-card identity.
 7. Node B runs in storage-only mode. On-device video transcoding is disabled; video processing must run on a separate server/worker.
