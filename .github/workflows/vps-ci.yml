@@ -1,9 +1,9 @@
 name: testagram-vps-ci
 on:
   push:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
   pull_request:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
   workflow_dispatch:
 jobs:
   go:
@@ -65,29 +65,18 @@ jobs:
       - name: Validate fresh platform boundary
         run: |
           set -euo pipefail
-          bash -n testagram-platform/bootstrap.sh
-          bash -n testagram-platform/prepare.sh
-          bash -n testagram-platform/status.sh
-          bash -n testagram-platform/healthcheck.sh
-          bash -n testagram-platform/storage.sh
           bash -n vps/backup.sh
           bash -n vps/restore-drill.sh
           bash scripts/validate-testagram-platform-contracts.sh
           python -m pip install --disable-pip-version-check PyYAML
           python scripts/validate-platform-openapi.py
-          tmp_storage="$(mktemp -d)"
-          TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash testagram-platform/storage.sh
-          test -d "$tmp_storage/platform"
-          test -d "$tmp_storage/media"
-          test -d "$tmp_storage/nodes"
-          rm -rf "$tmp_storage"
           bash -n vps/install.sh
           bash -n scripts/install-local-docker.sh
           bash -n android-node/install-apk.sh
           test -f vps/docker-compose.yml
           test -f backend/docker-compose.yml
           test -f backend/runtime/Caddyfile
-          echo "VPS local-storage root initialization: PASS"
+          echo "Fresh runtime shell and API contract checks: PASS"
 
       - name: Validate database migrations
         run: |
