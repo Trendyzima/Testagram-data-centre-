@@ -45,8 +45,11 @@ network, start the legacy cmd/api, or configure Supabase credentials.
 9. Run docker compose --env-file vps/fresh.env -f vps/docker-compose.fresh.yml config
    and inspect the rendered configuration for secrets and unexpected services.
 10. Provision Backblaze B2 as the durable primary object store and Cloudflare R2
-   as the delivery/replica store. Set separate least-privilege S3-compatible
-   credentials and endpoints; never reuse keys between providers.
+   as the delivery/replica store. Backend currently implements B2 signed uploads,
+   B2 SHA-256 verification, synchronous R2 copy/read-back verification, private
+   download URLs and repair logic. Set separate least-privilege S3-compatible
+   credentials and endpoints; never reuse keys between providers. Configure the
+   optional Cloudflare private-media Worker URL/signing secret as a pair.
 11. Keep FRESH_MEDIA_ENABLED=false until B2/R2 credentials, Appwrite metadata
    schema, upload read-back verification, checksum-matched replica reconciliation
    and an independent archive are staged.
@@ -59,6 +62,8 @@ This compose file is a deployment foundation, not proof of production readiness.
 The private Backend-to-Federation actor and readiness contracts exist, but inbox
 activity application, Backend outbox polling, outbound delivery, follower fan-out
 and cross-repository end-to-end tests remain unfinished. Backend-to-Data-Centre
-media placement, verified B2-to-R2 replica recovery, node object transfer,
-checksum reconciliation and operational restore drills also remain release gates. Do not add public Federation routing until those
+node media placement, signed node object transfer, durable replication jobs,
+provider reconciliation scheduling and operational restore drills also remain
+release gates. Real B2/R2 credentials and live provider E2E tests have not yet
+been exercised by this repository's CI. Do not add public Federation routing until those
 contracts and tests are complete.
