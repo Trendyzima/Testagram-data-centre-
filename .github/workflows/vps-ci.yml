@@ -14,8 +14,8 @@ jobs:
       TESTAGRAM_ALGORITHM_IMAGE: ghcr.io/trendyzima/testagram-feed@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
       TESTAGRAM_FEDERATION_IMAGE: ghcr.io/trendyzima/testagram-federation@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
       TESTAGRAM_FRESH_BACKEND_IMAGE: ghcr.io/trendyzima/testagram-backend-fresh@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-      CADDY_IMAGE: caddy:2.10-alpine
-      POSTGRES_CLIENT_IMAGE: postgres:17-alpine
+      CADDY_IMAGE: caddy:2.10-alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      POSTGRES_CLIENT_IMAGE: postgres:17-alpine@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
       DATA_CENTRE_DATABASE_URL: postgresql://postgres:testagram@db:5432/data_centre?sslmode=disable
       APPWRITE_ENDPOINT: https://cloud.appwrite.io/v1
       APPWRITE_PROJECT_ID: ci-project
@@ -27,7 +27,7 @@ jobs:
       # Non-production credentials used only to render/validate the fresh Compose model in CI.
       # Production must supply one independently generated secret to both Backend and Federation.
       FRESH_FEDERATION_INTERNAL_TOKEN: ci-federation-internal-token-long-enough
-      FEDERATION_POSTGRES_IMAGE: postgres:17-alpine
+      FEDERATION_POSTGRES_IMAGE: postgres:17-alpine@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
       FEDERATION_DB_PASSWORD: ci-federation-db-password-only
       # Compose interpolation fixture only; CI does not connect Federation to this local URL.
       FEDERATION_DATABASE_URL: postgresql://testagram_federation:ci-federation-db-password-only@localhost:5432/testagram_federation?sslmode=disable
