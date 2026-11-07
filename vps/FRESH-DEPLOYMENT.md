@@ -16,8 +16,9 @@ network, start the legacy cmd/api, or configure Supabase credentials.
   or Supabase Storage migrations to this infrastructure database.
 - control-plane: Data Centre infrastructure state only. Its PostgreSQL URL
   must point to a dedicated TLS database, not the legacy Supabase project.
-- edge: Caddy terminates TLS and forwards only api.testagram.site to Backend.
-  The Federation hostname is deliberately absent from the public Caddy config.
+- edge: Caddy terminates TLS and forwards api.testagram.site to Backend and
+  nodes.testagram.site to the authenticated Data Centre control plane. The
+  Federation hostname is deliberately absent from the public Caddy config.
 - federation-api: a private ActivityPub preview service on the internal
   services/federation networks, backed by its dedicated PostgreSQL database.
   It resolves opted-in actors through Backend and verifies/persists signed inbox
@@ -28,7 +29,23 @@ network, start the legacy cmd/api, or configure Supabase credentials.
 
 ## Node control plane
 
-Android storage nodes and Linux computer nodes register through the dedicated HTTPS hostname `nodes.testagram.site`. The control-plane port remains loopback-bound; Caddy is the only public ingress. Keep the bootstrap token private and use per-node tokens after registration. Node-reported storage is not part of the Backend B2/R2 media pool until checksum-verified object transfer and recovery are integrated.
+- Create a Cloudflare DNS record for `nodes.testagram.site` pointing to the VPS
+  origin. Caddy is the only public ingress; never expose port 8787 directly.
+- Android removable-SD nodes use `https://nodes.testagram.site` plus the
+  one-time bootstrap token during enrollment. They retain their per-node token
+  for authenticated heartbeats and control-plane polling.
+- Linux computer nodes run the Data Centre node-agent with the same HTTPS
+  control-plane URL and bootstrap token. Compute execution remains opt-in and
+  limited to the immutable workload allowlist.
+- Set `VPS_NODE_BOOTSTRAP_TOKEN` and `VPS_INTERNAL_TOKEN` to independent,
+  random, single-line secrets of at least 32 characters. Rotate the bootstrap
+  token after the planned enrollment window and revoke individual node tokens
+  when a node is retired.
+- Android nodes are removable-SD storage only. Computer nodes can report local
+  storage and compute capacity, but node-reported storage is **not** part of the
+  Backend B2/R2 media pool yet. Do not count it as production capacity until
+  signed object transfer, checksum verification, replica reconciliation and
+  restore tests are integrated with the Backend media ledger.
 
 ## Before deployment
 
@@ -45,16 +62,16 @@ Android storage nodes and Linux computer nodes register through the dedicated HT
 7. Configure IDENTITY_PREAUTH_SECRET in the Backend and trusted identity issuer
    secret stores. Use a random value of at least 32 characters; never expose it
    in frontend/mobile configuration.
-7. Configure exact frontend HTTPS origins, Appwrite endpoint/project/database,
+8. Configure exact frontend HTTPS origins, Appwrite endpoint/project/database,
    independent Algorithm token and a separate TLS PostgreSQL database for the
    Data Centre control plane.
-8. Run docker compose --env-file vps/fresh.env -f vps/docker-compose.fresh.yml config
+9. Run docker compose --env-file vps/fresh.env -f vps/docker-compose.fresh.yml config
    and inspect the rendered configuration for secrets and unexpected services.
-9. Keep FRESH_MEDIA_ENABLED=false until B2/R2 credentials, Appwrite storage
+10. Keep FRESH_MEDIA_ENABLED=false until B2/R2 credentials, Appwrite storage
    schema, upload read-back verification and independent archive are staged.
-10. Keep retention disabled and dry-run true. Do not enable destructive jobs
+11. Keep retention disabled and dry-run true. Do not enable destructive jobs
    during initial deployment.
-11. Run staging auth, feed authorization, ranker outage, media, backup/restore,
+12. Run staging auth, feed authorization, ranker outage, media, backup/restore,
     load and security tests before production DNS cutover.
 
 This compose file is a deployment foundation, not proof of production readiness.
