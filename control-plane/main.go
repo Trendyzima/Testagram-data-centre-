@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Trendyzima/Testagram-data-centre-/internal/crypto"
+	"github.com/Trendyzima/Testagram-data-centre-/internal/objectstorage"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,6 +22,7 @@ type Server struct {
 	db        *pgxpool.Pool
 	internal  string
 	bootstrap string
+	media     *objectstorage.Lifecycle
 }
 
 type Registration struct {
@@ -408,7 +410,11 @@ func main() {
 	}
 	defer db.Close()
 
-	s := &Server{db: db, internal: internal, bootstrap: bootstrap}
+	mediaLifecycle, err := objectstorage.NewLifecycleFromEnv()
+	if err != nil {
+		log.Fatal("media storage configuration failed: ", err)
+	}
+	s := &Server{db: db, internal: internal, bootstrap: bootstrap, media: mediaLifecycle}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/readyz", s.ready)
@@ -417,6 +423,11 @@ func main() {
 	mux.HandleFunc("/v1/nodes/poll", s.poll)
 	mux.HandleFunc("/v1/workloads", s.schedule)
 	mux.HandleFunc("/v1/workloads/", s.result)
+	mux.HandleFunc("POST /internal/v1/media/upload-url", s.mediaUploadURL)
+	mux.HandleFunc("POST /internal/v1/media/verify", s.mediaVerify)
+	mux.HandleFunc("GET /internal/v1/media/status", s.mediaStatus)
+	mux.HandleFunc("POST /internal/v1/media/download-url", s.mediaDownloadURL)
+	mux.HandleFunc("POST /internal/v1/media/delete", s.mediaDelete)
 	s.registerHostingRoutes(mux)
 
 	addr := os.Getenv("VPS_CONTROL_PLANE_ADDR")
@@ -430,6 +441,12 @@ func main() {
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
+	}
+	if s.media != nil {
+		go s.runMediaReplication(context.Background())
+		log.Printf("Data Centre B2/R2 media control plane enabled")
+	} else {
+		log.Printf("Data Centre media control plane disabled")
 	}
 	log.Printf("Testagram VPS control plane listening on %s", addr)
 	certFile := os.Getenv("VPS_CONTROL_PLANE_TLS_CERT_FILE")
