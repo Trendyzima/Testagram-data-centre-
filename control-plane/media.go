@@ -288,7 +288,7 @@ func (s *Server) mediaDownloadURL(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusNotFound, map[string]string{"error": "verified media object not found"})
 		return
 	}
-	grant, err := s.media.DownloadURL(ctx, in.RequesterID, in.OwnerID, in.Namespace, in.Key, strings.TrimSpace(digest), size)
+	grant, err := s.media.DownloadURLAuthorized(ctx, in.OwnerID, in.Namespace, in.Key, strings.TrimSpace(digest), size)
 	if err != nil {
 		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "verified media delivery URL unavailable"})
 		return
