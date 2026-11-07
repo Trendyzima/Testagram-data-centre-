@@ -4,7 +4,7 @@ This Worker is a transport layer only. Appwrite remains the identity provider; B
 
 ## Security contract
 
-- Browser connects to /v1/realtime/conversations/{conversation_id} with an Authorization Bearer ticket minted by Backend.
+- Browser connects to /v1/realtime/conversations/{conversation_id} using the `testagram.realtime.v1` WebSocket subprotocol plus exactly one `ticket.<signed-ticket>` subprotocol. The Worker negotiates only `testagram.realtime.v1`; it never echoes the ticket. Native browser WebSockets cannot set an Authorization header, and tickets must never be placed in query strings.
 - Ticket is HMAC-SHA256 signed by Backend and contains issuer, audience, subject, conversation ID, scope, issued-at, expiry and random token ID.
 - Tickets are conversation-scoped, expire within five minutes, and are never placed in query strings.
 - The Worker accepts only exact configured browser origins.
