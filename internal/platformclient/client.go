@@ -90,7 +90,15 @@ func newRequestID() string {
 	return fmt.Sprintf("platform-%d", time.Now().UnixNano())
 }
 
+func validateKey(key string) error {
+	if strings.TrimSpace(key) == "" || len(key) > 512 || strings.ContainsAny(key, "\\r\\n\\x00") {
+		return errors.New("platform key must be non-empty, at most 512 bytes, and contain no control delimiters")
+	}
+	return nil
+}
+
 func (c *Client) Get(ctx context.Context, key string) (string, error) {
+	if err := validateKey(key); err != nil { return "", err }
 	q := url.Values{"key": []string{key}}
 	var result struct {
 		Value string `json:"value"`
@@ -106,6 +114,8 @@ func (c *Client) Get(ctx context.Context, key string) (string, error) {
 }
 
 func (c *Client) Set(ctx context.Context, key, value string, ttl time.Duration) error {
+	if err := validateKey(key); err != nil { return err }
+	if len(value) > 256<<10 { return errors.New("cache value exceeds 256 KiB") }
 	seconds := int64(ttl / time.Second)
 	if ttl%time.Second != 0 {
 		seconds++
@@ -117,11 +127,13 @@ func (c *Client) Set(ctx context.Context, key, value string, ttl time.Duration) 
 }
 
 func (c *Client) Delete(ctx context.Context, key string) error {
+	if err := validateKey(key); err != nil { return err }
 	q := url.Values{"key": []string{key}}
 	return c.do(ctx, http.MethodDelete, "/v1/cache/delete?"+q.Encode(), nil, nil)
 }
 
 func (c *Client) Check(ctx context.Context, key string, limit int64, window time.Duration) (RateLimitResult, error) {
+	if err := validateKey(key); err != nil { return RateLimitResult{}, err }
 	seconds := int64(window / time.Second)
 	if window%time.Second != 0 {
 		seconds++
@@ -135,14 +147,24 @@ func (c *Client) Check(ctx context.Context, key string, limit int64, window time
 }
 
 func (c *Client) Enqueue(ctx context.Context, queue string, payload map[string]string) (string, error) {
-	if len(payload) == 0 {
-		return "", errors.New("queue payload must not be empty")
+	if strings.TrimSpace(queue) == "" || len(queue) > 128 || strings.ContainsAny(queue, "\\r\\n\\x00") {
+		return "", errors.New("queue name must be non-empty, at most 128 bytes, and contain no control delimiters")
+	}
+	if len(payload) == 0 || len(payload) > 256 {
+		return "", errors.New("queue payload must contain between 1 and 256 fields")
+	}
+	for key, value := range payload {
+		if strings.TrimSpace(key) == "" || len(key) > 128 || len(value) > 16<<10 || strings.ContainsAny(key, "\\r\\n\\x00") {
+			return "", errors.New("queue payload contains an invalid field or oversized value")
+		}
 	}
 	var result struct {
 		ID string `json:"id"`
 	}
 	err := c.do(ctx, http.MethodPost, "/v1/queue/enqueue", map[string]any{"queue": queue, "payload": payload}, &result)
-	return result.ID, err
+	if err != nil { return "", err }
+	if strings.TrimSpace(result.ID) == "" || len(result.ID) > 128 { return "", errors.New("platform API returned an invalid queue job ID") }
+	return result.ID, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
