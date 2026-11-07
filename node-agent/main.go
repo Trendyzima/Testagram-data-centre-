@@ -30,6 +30,8 @@ type Agent struct {
 	storageStatsAt                                                                            time.Time
 	storageStatsTotal                                                                         int64
 	storageStatsFree                                                                          int64
+	storageDevice                                                                             uint64
+	storageDeviceSet                                                                          bool
 }
 
 type Registration struct {
@@ -102,6 +104,12 @@ func (a *Agent) mediaDisk() (int64, int64) {
 	a.storageStatsMu.Lock()
 	defer a.storageStatsMu.Unlock()
 	if !a.storageEnabled || strings.TrimSpace(a.storageRoot) == "" {
+		a.storageStatsAt = time.Now()
+		a.storageStatsTotal, a.storageStatsFree = 0, 0
+		return 0, 0
+	}
+	device, deviceErr := filesystemDevice(a.storageRoot)
+	if deviceErr != nil || !a.storageDeviceSet || device != a.storageDevice {
 		a.storageStatsAt = time.Now()
 		a.storageStatsTotal, a.storageStatsFree = 0, 0
 		return 0, 0
@@ -186,6 +194,29 @@ func validateStorageRoot(storageRoot, computeRoot string) error {
 		return errors.New("media storage root must not be inside the compute volume root")
 	}
 	return nil
+}
+
+func filesystemDevice(path string) (uint64, error) {
+	var stat syscall.Stat_t
+	if err := syscall.Stat(path, &stat); err != nil {
+		return 0, err
+	}
+	return uint64(stat.Dev), nil
+}
+
+func validateStorageDevice(storageRoot string, allowSystemDisk bool) (uint64, error) {
+	storageDevice, err := filesystemDevice(storageRoot)
+	if err != nil {
+		return 0, err
+	}
+	rootDevice, err := filesystemDevice(string(os.PathSeparator))
+	if err != nil {
+		return 0, err
+	}
+	if storageDevice == rootDevice && !allowSystemDisk {
+		return 0, errors.New("VPS_STORAGE_ROOT must be on a dedicated mounted filesystem; set VPS_STORAGE_ALLOW_SYSTEM_DISK=true only for an explicit override")
+	}
+	return storageDevice, nil
 }
 
 func (a *Agent) capabilities() map[string]any {
@@ -586,6 +617,11 @@ func main() {
 		if err := validateStorageRoot(storageCanonical, computeCanonical); err != nil {
 			log.Fatal(err)
 		}
+		device, err := validateStorageDevice(storageCanonical, envEnabled("VPS_STORAGE_ALLOW_SYSTEM_DISK"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		a.storageDevice, a.storageDeviceSet = device, true
 		a.storageRoot = storageCanonical
 	}
 	if a.stateFile == "" {
