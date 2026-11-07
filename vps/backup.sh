@@ -17,6 +17,7 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+STORAGE_ROOT="${TESTAGRAM_STORAGE_ROOT:-$STORAGE_ROOT}"
 test -n "${DATA_CENTRE_DATABASE_URL:-}" || { echo "DATA_CENTRE_DATABASE_URL is required" >&2; exit 1; }
 test -n "$BACKUP_REMOTE" || { echo "TESTAGRAM_BACKUP_REMOTE must be user@host:/absolute/path" >&2; exit 1; }
 test -n "$AGE_RECIPIENT" || { echo "TESTAGRAM_BACKUP_AGE_RECIPIENT must be an age public recipient" >&2; exit 1; }
@@ -44,8 +45,8 @@ trap 'exit 143' TERM
 
 # This is the Data Centre infrastructure database only. Neon social data and
 # Federation databases have independent backup/restore release gates.
-pg_dump "$DATA_CENTRE_DATABASE_URL" --format=custom --no-owner --no-acl > "$STAGE/data-centre.dump"
-test -s "$STAGE/data-centre.dump"
+pg_dump "$DATA_CENTRE_DATABASE_URL" --format=custom --no-owner --no-acl > "$STAGE/database.dump"
+test -s "$STAGE/database.dump"
 if [ -n "$STORAGE_ROOT" ]; then
   STORAGE_REAL="$(realpath "$STORAGE_ROOT")"
   tar -C "$(dirname "$STORAGE_REAL")" -czf "$STAGE/node-storage.tar.gz" "$(basename "$STORAGE_REAL")"
@@ -57,9 +58,9 @@ database_scope=data-centre-infrastructure-only
 storage_root=${STORAGE_ROOT:-not-included}
 EOF
 if [ -f "$STAGE/node-storage.tar.gz" ]; then
-  tar -C "$STAGE" -czf "$ARCHIVE" data-centre.dump node-storage.tar.gz metadata.txt
+  tar -C "$STAGE" -czf "$ARCHIVE" database.dump node-storage.tar.gz metadata.txt
 else
-  tar -C "$STAGE" -czf "$ARCHIVE" data-centre.dump metadata.txt
+  tar -C "$STAGE" -czf "$ARCHIVE" database.dump metadata.txt
 fi
 test -s "$ARCHIVE"
 age -r "$AGE_RECIPIENT" -o "$ENCRYPTED.partial" "$ARCHIVE"
