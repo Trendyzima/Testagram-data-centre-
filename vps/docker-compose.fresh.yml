@@ -33,6 +33,8 @@ services:
       FRESH_DATA_CENTRE_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}
       FEED_RANKING_REQUIRED: "true"
       FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:?Set the same private token in Backend and Federation}
+      FEDERATION_OUTBOX_POLLER_ENABLED: ${FEDERATION_OUTBOX_POLLER_ENABLED:-false}
+      FEDERATION_DELIVERY_WORKER_ENABLED: ${FEDERATION_DELIVERY_WORKER_ENABLED:-false}
       ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
       ONSPACE_AI_API_KEY: ${ONSPACE_AI_API_KEY:-}
       # Backblaze B2 is the durable primary; Cloudflare R2 is the verified delivery/replica.
