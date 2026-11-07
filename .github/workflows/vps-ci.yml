@@ -168,6 +168,8 @@ jobs:
             echo "Public Federation routing is blocked until inbox/outbox workers and end-to-end gates are complete."
             exit 1
           fi
+           grep -Eq '^[[:space:]]*nodes[.]testagram[.]site[[:space:]]*[{]' vps/fresh/Caddyfile
+           grep -A3 '^[[:space:]]*nodes[.]testagram[.]site[[:space:]]*{' vps/fresh/Caddyfile | grep -q 'reverse_proxy control-plane:8787'
           docker run --rm \
             -e TESTAGRAM_DOMAIN=video.testagram.local \
             -e TESTAGRAM_ORIGIN=http://control-plane:8787 \
