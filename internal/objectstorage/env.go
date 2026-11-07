@@ -45,7 +45,7 @@ func NewLifecycleFromEnv() (*Lifecycle, error) {
 			return nil, errors.New("MEDIA_UPLOAD_URL_TTL must be a valid Go duration")
 		}
 	}
-	downloadTTL := 10 * time.Minute
+	downloadTTL := 5 * time.Minute
 	if raw := envValue("MEDIA_DOWNLOAD_URL_TTL"); raw != "" {
 		downloadTTL, err = time.ParseDuration(raw)
 		if err != nil {
