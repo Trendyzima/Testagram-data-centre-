@@ -1,62 +1,75 @@
-# Fresh Appwrite deployment (separate from the legacy VPS stack)
+# Fresh Appwrite deployment (default login runtime with opt-in auxiliary profiles)
 
-This stack is the clean Appwrite runtime. It does not attach the legacy Supabase
-network, start the legacy cmd/api, or configure Supabase credentials.
+The default profile starts the Appwrite-backed Backend API and Caddy edge. Ranking,
+Federation and the Data Centre node control-plane are independent opt-in profiles;
+none is allowed to gate Appwrite login. This stack does not attach retired provider
+networks, start the legacy cmd/api, or configure retired database credentials.
 
 ## Services and trust boundaries
 
-- api: Backend's dedicated Dockerfile.fresh image. Verifies Appwrite JWTs,
-  serves the public /v1 API, owns authorization and calls private services.
-- algorithm: private stateless ranker on an internal-only Docker network. Only
-  Backend can reach it; its bearer token is not exposed to XClone. Backend has
-  a second egress-capable network for Appwrite and object-provider access.
-- migrate: applies only `001_vps.sql` and `006_hosting_control_plane.sql` to
-  the dedicated Data Centre PostgreSQL database before control-plane starts.
-  It deliberately does not apply product/video, notification, platform-event,
-  or Supabase Storage migrations to this infrastructure database.
-- control-plane: Data Centre infrastructure state only. Its PostgreSQL URL
-  must point to a dedicated TLS database, not the legacy Supabase project.
-- edge: Caddy terminates TLS and forwards only api.testagram.site to Backend.
-  The Federation hostname is deliberately absent from the public Caddy config.
-- federation-api: a private ActivityPub preview service on the internal
-  services/federation networks, backed by its dedicated PostgreSQL database.
-  It resolves opted-in actors through Backend and verifies/persists signed inbox
-  deliveries, but it does not yet process inbox activities or execute outbound
-  delivery/follower-fanout workers. Its canonical actor origin is
-  https://federation.testagram.site; that hostname must not receive public DNS
-  or Caddy routing until the remaining federation release gates pass.
+- **api (default):** Backend's dedicated fresh Docker image. Verifies Appwrite
+  JWTs, serves the public /v1 API, owns authorization and calls private services.
+  Its /readyz health gate checks the Appwrite profile store required by login;
+  Neon, Algorithm and Federation are not login prerequisites.
+- **edge (default):** Caddy terminates TLS and forwards api.testagram.site to
+  Backend. It depends only on the healthy API. The Federation hostname is
+  deliberately absent from the public Caddy configuration.
+- **algorithm (ranking profile):** private stateless ranker on an internal-only
+  Docker network. Only Backend can reach it; its bearer token is not exposed to
+  XClone. When disabled or unavailable, Backend uses safe chronological ordering.
+- **federation-api (federation profile):** private ActivityPub preview service
+  backed by its dedicated PostgreSQL database and private Backend identity API.
+  It is not routed publicly and does not gate the public edge. Inbox activity
+  application, Backend outbox polling, outbound delivery and follower fan-out
+  remain release gates.
+- **migrate and control-plane (nodes profile):** Data Centre infrastructure
+  migrations and Android/Linux node management. They use a separate TLS database
+  and independent service/bootstrap tokens. They are not required for login.
+- **federation-db (local profile):** local-development-only PostgreSQL for
+  Federation protocol state. Production Federation uses its own dedicated Neon
+  database and least-privilege role.
 
 ## Before deployment
 
-1. Publish the fresh Backend image using Backend container-release.yml and pin
-   the resulting GHCR digest in TESTAGRAM_FRESH_BACKEND_IMAGE.
-2. Publish Algorithm and pin its digest in TESTAGRAM_ALGORITHM_IMAGE.
-3. Publish the private Federation preview image and pin its digest in TESTAGRAM_FEDERATION_IMAGE.
-4. Pin Caddy to a reviewed immutable image digest.
-5. Provision a dedicated Neon PostgreSQL database and least-privilege Federation role. Set FEDERATION_DATABASE_URL to its pooled TLS URL (sslmode=require or stronger). Import and reconcile existing Federation actors, keys, inbox/outbox activities, remote followers and delivery jobs before production cutover. The local federation-db service is only available with the Compose local profile.
-6. Provision a new Appwrite project and database. Create all documented
+1. Publish the fresh Backend image and pin its GHCR digest in
+   TESTAGRAM_FRESH_BACKEND_IMAGE. Pin Caddy to a reviewed immutable digest.
+2. Provision a new Appwrite project and database. Create all documented
    collections, attributes and indexes; wait for asynchronous provisioning
    before starting the API.
-7. Create a least-privilege Appwrite server key. Keep it only in the runtime
+3. Create a least-privilege Appwrite server key. Keep it only in the runtime
    secret store. Never put it in XClone build variables.
-8. Configure exact frontend HTTPS origins, Appwrite endpoint/project/database,
-   independent Algorithm token and a separate TLS PostgreSQL database for the
-   Data Centre control plane.
-9. Run docker compose --env-file vps/fresh.env -f vps/docker-compose.fresh.yml config
-   and inspect the rendered configuration for secrets and unexpected services.
-10. Provision Backblaze B2 as the durable primary object store and Cloudflare R2
-   as the delivery/replica store. Backend currently implements B2 signed uploads,
-   B2 SHA-256 verification, synchronous R2 copy/read-back verification, private
-   download URLs and repair logic. Set separate least-privilege S3-compatible
-   credentials and endpoints; never reuse keys between providers. Configure the
-   optional Cloudflare private-media Worker URL/signing secret as a pair.
-11. Keep FRESH_MEDIA_ENABLED=false until B2/R2 credentials, Appwrite metadata
-   schema, upload read-back verification, checksum-matched replica reconciliation
-   and an independent archive are staged.
-12. Keep retention disabled and dry-run true. Do not enable destructive jobs
-   during initial deployment.
-13. Run staging auth, feed authorization, ranker outage, media, backup/restore,
-    load and security tests before production DNS cutover.
+4. Configure exact frontend HTTPS origins, Appwrite endpoint/project/database
+   and server API key. Configure XClone with the matching Appwrite endpoint,
+   project ID and VITE_TESTAGRAM_FRESH_API_URL=https://api.testagram.site.
+5. Neon is not required to start the login service. Set NEON_DATABASE_URL to a
+   dedicated pooled TLS URL when enabling the canonical social data plane.
+   /readyz/platform remains unavailable until schema migration, repository
+   integration and reconciliation are complete.
+6. Keep TESTAGRAM_ENABLE_RANKING=false for the minimal login deployment. To
+   enable ranking, set it true and provide a pinned Algorithm image, internal
+   endpoint and a 32+ character ALGORITHM_INTERNAL_TOKEN. Backend keeps a
+   chronological fallback if ranking is disabled or temporarily unavailable.
+7. Keep TESTAGRAM_ENABLE_FEDERATION=false until the separate Neon Federation
+   database is provisioned and reconciled. To enable it, provide the pinned
+   Federation image, FEDERATION_DATABASE_URL, FEDERATION_BACKEND_INTERNAL_URL
+   and the same strong private token to Backend and Federation. Do not publish
+   federation.testagram.site or add public Caddy routing until interoperability
+   and durable delivery gates pass.
+8. Keep TESTAGRAM_ENABLE_NODES=false until the separate Data Centre database,
+   pinned PostgreSQL client image, VPS_INTERNAL_TOKEN and
+   VPS_NODE_BOOTSTRAP_TOKEN are provisioned. Enabling it activates the nodes
+   Compose profile and its migrations/control-plane.
+9. Provision Backblaze B2 as the durable primary object store and Cloudflare R2
+   as the delivery/replica store. Backend implements B2 signed uploads, B2
+   SHA-256 verification, synchronous R2 copy/read-back verification, private
+   download URLs and repair logic. Keep FRESH_MEDIA_ENABLED=false until real
+   provider credentials, Appwrite metadata schema, replica reconciliation and
+   independent restore tests are staged.
+10. Keep retention disabled and dry-run true. Do not enable destructive jobs
+    during initial deployment.
+11. Run staging authentication/session restoration, CORS preflight, feed
+    authorization, ranking outage, media, backup/restore, load and security
+    tests before production DNS cutover.
 
 This compose file is a deployment foundation, not proof of production readiness.
 The private Backend-to-Federation actor and readiness contracts exist, but inbox
