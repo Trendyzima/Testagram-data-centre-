@@ -97,6 +97,7 @@ jobs:
           test "${#FRESH_FEDERATION_INTERNAL_TOKEN}" -ge 32
           docker compose -f backend/docker-compose.yml config
           docker compose -f vps/docker-compose.fresh.yml config
+          docker compose --profile ranking --profile federation --profile nodes -f vps/docker-compose.fresh.yml config -q
           docker compose -f vps/docker-compose.yml config
           cmp -s vps/docker-compose.yml vps/docker-compose.fresh.yml
           ! grep -Eqi "supabase|SUPABASE" vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml
