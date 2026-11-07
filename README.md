@@ -91,7 +91,7 @@ Before using them:
 Run the backup from the checked-out deployment repository:
 
 ```bash
-sudo --preserve-env=TESTAGRAM_BACKUP_REMOTE,TESTAGRAM_BACKUP_AGE_RECIPIENT,TESTAGRAM_ENV_FILE,TESTAGRAM_STORAGE_ROOT \
+sudo --preserve-env=TESTAGRAM_BACKUP_REMOTE,TESTAGRAM_BACKUP_AGE_RECIPIENT,TESTAGRAM_FRESH_ENV_FILE,TESTAGRAM_STORAGE_ROOT \
   bash vps/backup.sh
 ```
 
