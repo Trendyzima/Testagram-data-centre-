@@ -4,17 +4,25 @@ umask 077
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${TESTAGRAM_FRESH_ENV_FILE:-${TESTAGRAM_ROOT:-/opt/testagram}/vps/fresh.env}"
-STORAGE_ROOT="${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}"
+test -f "$ENV_FILE" || { echo "Fresh runtime env file not found: $ENV_FILE" >&2; exit 1; }
+read_env_value() {
+  local key="$1" value
+  value="$(sed -n "s/^${key}=//p" "$ENV_FILE" | head -n 1)"
+  value="${value%$'\\r'}"
+  if [[ "$value" == \"*\" ]]; then value="${value:1:${#value}-2}"; fi
+  printf '%s' "$value"
+}
+STORAGE_ROOT="${TESTAGRAM_STORAGE_ROOT:-$(read_env_value TESTAGRAM_STORAGE_ROOT)}"
+STORAGE_ROOT="${STORAGE_ROOT:-/var/lib/testagram/storage}"
 BACKUP_ROOT="${TESTAGRAM_BACKUP_ROOT:-/var/backups/testagram}"
-BACKUP_REMOTE="${TESTAGRAM_BACKUP_REMOTE:-}"
-AGE_RECIPIENT="${TESTAGRAM_BACKUP_AGE_RECIPIENT:-}"
+BACKUP_REMOTE="${TESTAGRAM_BACKUP_REMOTE:-$(read_env_value TESTAGRAM_BACKUP_REMOTE)}"
+AGE_RECIPIENT="${TESTAGRAM_BACKUP_AGE_RECIPIENT:-$(read_env_value TESTAGRAM_BACKUP_AGE_RECIPIENT)}"
 
 for bin in pg_dump age rsync sha256sum tar flock sed; do
   command -v "$bin" >/dev/null 2>&1 || { echo "$bin is required" >&2; exit 1; }
 done
 test -f "$ENV_FILE" || { echo "Fresh runtime env file not found: $ENV_FILE" >&2; exit 1; }
-DATABASE_URL="$(sed -n 's/^DATA_CENTRE_DATABASE_URL=//p' "$ENV_FILE" | head -n 1)"
-DATABASE_URL="${DATABASE_URL#\"}"; DATABASE_URL="${DATABASE_URL%\"}"
+DATABASE_URL="$(read_env_value DATA_CENTRE_DATABASE_URL)"
 test -n "$DATABASE_URL" || { echo "DATA_CENTRE_DATABASE_URL is missing from $ENV_FILE" >&2; exit 1; }
 case "$DATABASE_URL" in
   *sslmode=require*|*sslmode=verify-ca*|*sslmode=verify-full*) ;;
