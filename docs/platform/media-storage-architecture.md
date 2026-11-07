@@ -3,11 +3,12 @@
 ## Ownership
 
 The Data Centre repository owns deployment, node registration/capacity,
-node-level replica placement and independent backup/restore orchestration. The
-Go Backend remains the only public API and authorization boundary and owns the
-B2/R2 provider operations, signed upload/download authorization, checksum
-verification and provider-replica ledger. XClone and node agents never receive
-long-lived provider credentials.
+node-level replica placement, B2/R2 provider operations, signed storage URLs,
+checksum verification, physical deletion and replica recovery. The Go Backend
+remains the only public product API and authorization boundary; it owns user
+permissions, upload quotas and canonical media metadata, and calls the private
+Data Centre media control plane. XClone and node agents never receive long-lived
+provider credentials.
 
 The object-storage layout is:
 
@@ -28,10 +29,12 @@ required buckets and operations.
 1. XClone requests an upload intent from Backend. Backend authenticates the
    Appwrite session, authorizes the owner and visibility, enforces quotas, and
    creates a pending object record and quota reservation in Appwrite.
-2. Backend issues a short-lived, object-scoped upload authorization for the
-   B2 primary. Provider credentials remain server-side.
-3. The client uploads the object to B2. Backend verifies object existence,
-   content type, byte length and SHA-256 before marking the primary copy verified.
+2. Backend requests a short-lived, tenant-scoped B2 upload URL from the private
+   Data Centre API. The signed URL remains server-side; XClone uploads through
+   Backend's bounded gateway.
+3. Backend submits the expected size, content type and SHA-256 to Data Centre.
+   Data Centre reads back the B2 object, queues B2-to-R2 replication, verifies
+   both checksums and reports `protected` only after the replica is confirmed.
 4. Backend currently copies the verified B2 object to R2 synchronously in the
    upload-completion request, reads the R2 object back and verifies size, type
    and SHA-256 before committing the protected media/replica records in Appwrite.
