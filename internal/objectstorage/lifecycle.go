@@ -262,29 +262,36 @@ func (l *Lifecycle) DownloadURLAuthorized(ctx context.Context, ownerTenant, name
 	if _, err := l.manager.namespace(namespace); err != nil {
 		return DownloadGrant{}, err
 	}
-	b2Bucket, r2Bucket, err := l.bucketPair(namespace)
-	if err != nil { return DownloadGrant{}, err }
-	if size < 1 || size > l.maxVideoBytes || len(sha256Hex) != 64 {
+	if len(sha256Hex) != 64 || size < 1 || size > l.maxVideoBytes {
 		return DownloadGrant{}, ErrObjectMismatch
 	}
+	b2Bucket, r2Bucket, err := l.bucketPair(namespace)
+	if err != nil {
+		return DownloadGrant{}, err
+	}
 	scopedKey := tenantPrefix(ownerTenant) + key
+	// The object is only eligible for this path after the durable ledger records
+	// successful SHA-256 read-back from both providers. Avoid re-streaming large
+	// videos on every view; reconciliation rechecks checksums asynchronously.
 	if info, headErr := l.replica.Head(ctx, r2Bucket, scopedKey); headErr == nil && info.Size == size {
-		if digest, hashErr := l.replica.SHA256(ctx, r2Bucket, scopedKey, size); hashErr == nil && strings.EqualFold(digest, sha256Hex) {
-			signed, signErr := l.replica.PresignGet(ctx, r2Bucket, scopedKey, l.downloadTTL)
-			if signErr == nil { return DownloadGrant{URL: signed, Provider: "cloudflare_r2"}, nil }
+		signed, signErr := l.replica.PresignGet(ctx, r2Bucket, scopedKey, l.downloadTTL)
+		if signErr == nil {
+			return DownloadGrant{URL: signed, Provider: "cloudflare_r2"}, nil
 		}
 	}
 	info, err := l.primary.Head(ctx, b2Bucket, scopedKey)
-	if err != nil { return DownloadGrant{}, err }
-	if info.Size != size { return DownloadGrant{}, ErrObjectMismatch }
-	digest, err := l.primary.SHA256(ctx, b2Bucket, scopedKey, size)
-	if err != nil { return DownloadGrant{}, err }
-	if !strings.EqualFold(digest, sha256Hex) { return DownloadGrant{}, ErrChecksumMismatch }
+	if err != nil {
+		return DownloadGrant{}, err
+	}
+	if info.Size != size {
+		return DownloadGrant{}, ErrObjectMismatch
+	}
 	signed, err := l.primary.PresignGet(ctx, b2Bucket, scopedKey, l.downloadTTL)
-	if err != nil { return DownloadGrant{}, err }
+	if err != nil {
+		return DownloadGrant{}, err
+	}
 	return DownloadGrant{URL: signed, Provider: "backblaze_b2"}, nil
 }
-
 func (l *Lifecycle) Delete(ctx context.Context, requesterTenant, ownerTenant, namespace, key string) error {
 	_, r2Bucket, err := l.bucketPair(namespace)
 	if err != nil {
