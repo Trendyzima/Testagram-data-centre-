@@ -315,8 +315,22 @@ func (s *Server) mediaDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	_, err := s.db.Exec(ctx, `UPDATE testagram_storage.media_objects SET status='delete_pending',updated_at=NOW()
-		WHERE owner_id=$1 AND namespace=$2 AND object_key=$3 AND status <> 'deleted'`,
+	var currentStatus string
+	err := s.db.QueryRow(ctx, `SELECT status FROM testagram_storage.media_objects WHERE owner_id=$1 AND namespace=$2 AND object_key=$3`,
+		in.OwnerID, in.Namespace, in.Key).Scan(&currentStatus)
+	if err == pgx.ErrNoRows {
+		reply(w, http.StatusNotFound, map[string]string{"error": "media object not found"})
+		return
+	}
+	if err != nil {
+		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "media deletion state unavailable"})
+		return
+	}
+	if currentStatus == "deleted" {
+		reply(w, http.StatusOK, map[string]any{"status": "deleted"})
+		return
+	}
+	_, err = s.db.Exec(ctx, `UPDATE testagram_storage.media_objects SET status='delete_pending',updated_at=NOW() WHERE owner_id=$1 AND namespace=$2 AND object_key=$3`,
 		in.OwnerID, in.Namespace, in.Key)
 	if err != nil {
 		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "media deletion state unavailable"})
