@@ -22,7 +22,7 @@ Node B advertises storageOnly=true, storageNode=true, computeNode=false, workloa
 
 ## Computer node enrollment
 
-The Go node agent defaults to no contributed storage and no workload execution. Enable compute independently with VPS_ENABLE_COMPUTE_NODE=true and a strict allowlist of immutable image@sha256 references. Enable media storage independently with VPS_ENABLE_STORAGE_NODE=true, VPS_STORAGE_ROOT and a positive VPS_STORAGE_QUOTA_BYTES. The media path must be absolute and disjoint from VPS_VOLUME_ROOT; filesystem root and overlapping paths are rejected. The agent reports media capacity/free bytes separately in its capabilities and calculates used bytes without following symlinks. A dual-purpose computer is explicitly configured for both capabilities.
+The Go node agent defaults to no contributed storage and no workload execution. Enable compute independently with VPS_ENABLE_COMPUTE_NODE=true and a strict allowlist of immutable image@sha256 references. Enable media storage independently with VPS_ENABLE_STORAGE_NODE=true, VPS_STORAGE_ROOT and a positive VPS_STORAGE_QUOTA_BYTES. The media path must be absolute and disjoint from VPS_VOLUME_ROOT; filesystem root and overlapping paths are rejected. The agent reports media capacity/free bytes separately in its capabilities and calculates used bytes without following symlinks. The hosting inventory/usage API labels these as reported capacity; they are not verified usable bytes until the storage service writes an object, reads it back, verifies SHA-256 and records a healthy replica. A dual-purpose computer is explicitly configured for both capabilities.
 
 ## Placement and durability
 
