@@ -10,7 +10,6 @@ EnvironmentFile=/etc/testagram/node-agent.env
 ExecStart=/opt/testagram/bin/node-agent
 Restart=on-failure
 RestartSec=5s
-ExecStartPre=/usr/bin/install -d -m 0700 /srv/testagram-media
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
