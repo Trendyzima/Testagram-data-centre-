@@ -16,16 +16,23 @@ network, start the legacy cmd/api, or configure Supabase credentials.
   or Supabase Storage migrations to this infrastructure database.
 - control-plane: Data Centre infrastructure state only. Its PostgreSQL URL
   must point to a dedicated TLS database, not the legacy Supabase project.
-- edge: Caddy terminates TLS and forwards api.testagram.site to Backend.
-- Federation is intentionally not started or exposed. Its private Backend
-  integration, signature verification and durable inbox/outbox are not ready.
+- edge: Caddy terminates TLS and forwards only api.testagram.site to Backend.
+  The Federation hostname is deliberately absent from the public Caddy config.
+- federation-api: a private ActivityPub preview service on the internal
+  services/federation networks, backed by its dedicated PostgreSQL database.
+  It resolves opted-in actors through Backend and verifies/persists signed inbox
+  deliveries, but it does not yet process inbox activities or execute outbound
+  delivery/follower-fanout workers. Its canonical actor origin is
+  https://federation.testagram.site; that hostname must not receive public DNS
+  or Caddy routing until the remaining federation release gates pass.
 
 ## Before deployment
 
 1. Publish the fresh Backend image using Backend container-release.yml and pin
    the resulting GHCR digest in TESTAGRAM_FRESH_BACKEND_IMAGE.
 2. Publish Algorithm and pin its digest in TESTAGRAM_ALGORITHM_IMAGE.
-3. Pin Caddy to a reviewed immutable image digest.
+3. Publish the private Federation preview image and pin its digest in TESTAGRAM_FEDERATION_IMAGE.
+4. Pin Caddy to a reviewed immutable image digest.
 4. Provision a new Appwrite project and database. Create all documented
    collections, attributes and indexes; wait for asynchronous provisioning
    before starting the API.
