@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -245,7 +247,12 @@ func (a *Agent) post(path string, body any, out any) (int, error) {
 	req.Header.Set("Authorization", a.authHeader())
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 12 * time.Second}
+	client := &http.Client{
+		Timeout: 12 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
@@ -543,6 +550,34 @@ func validContainerID(id string) bool {
 	return true
 }
 
+func validateControlPlaneURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" {
+		return errors.New("control-plane URL must be an absolute origin")
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		return errors.New("control-plane URL must not contain credentials, path, query or fragment")
+	}
+	host := parsed.Hostname()
+	loopback := strings.EqualFold(host, "localhost")
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		loopback = true
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "https":
+		if parsed.Port() != "" && parsed.Port() != "443" {
+			return errors.New("HTTPS control-plane URL must use port 443")
+		}
+	case "http":
+		if !loopback {
+			return errors.New("HTTP control-plane URL is allowed only for localhost")
+		}
+	default:
+		return errors.New("control-plane URL must use HTTPS")
+	}
+	return nil
+}
+
 func validImageDigest(v string) bool {
 	if len(v) != 71 || !strings.HasPrefix(v, "sha256:") {
 		return false
@@ -558,8 +593,11 @@ func validImageDigest(v string) bool {
 func main() {
 	control := os.Getenv("VPS_CONTROL_PLANE_URL")
 	bootstrap := os.Getenv("VPS_NODE_BOOTSTRAP_TOKEN")
-	if control == "" || bootstrap == "" {
-		log.Fatal("VPS_CONTROL_PLANE_URL and VPS_NODE_BOOTSTRAP_TOKEN are required")
+	if err := validateControlPlaneURL(control); err != nil {
+		log.Fatalf("invalid VPS_CONTROL_PLANE_URL: %v", err)
+	}
+	if len(bootstrap) < 32 || strings.TrimSpace(bootstrap) != bootstrap || strings.ContainsAny(bootstrap, "\r\n") {
+		log.Fatal("VPS_NODE_BOOTSTRAP_TOKEN must be a single-line secret of at least 32 characters")
 	}
 
 	a := &Agent{
