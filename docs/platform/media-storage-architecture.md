@@ -2,10 +2,12 @@
 
 ## Ownership
 
-The Data Centre repository owns media durability orchestration, replica placement,
-node registration/capacity, checksum reconciliation, backup and restore drills.
-The Go Backend remains the only public API and authorization boundary. XClone
-never receives provider credentials.
+The Data Centre repository owns deployment, node registration/capacity,
+node-level replica placement and independent backup/restore orchestration. The
+Go Backend remains the only public API and authorization boundary and owns the
+B2/R2 provider operations, signed upload/download authorization, checksum
+verification and provider-replica ledger. XClone and node agents never receive
+long-lived provider credentials.
 
 The object-storage layout is:
 
@@ -14,7 +16,7 @@ The object-storage layout is:
 | Durable primary | Backblaze B2 | Canonical original uploads and durable source objects |
 | Delivery/replica | Cloudflare R2 | Verified replica for Cloudflare-side delivery and reduced origin egress |
 | Optional node replicas | Registered Android/Linux nodes | Additional verified copies or explicitly disposable caches; never the only copy |
-| Metadata and ownership | Neon via Backend | Object key, owner, visibility, checksum, size, provider state and replica ledger |
+| Media metadata and quotas | Appwrite via Backend | Current fresh runtime stores upload reservations, media ownership, quotas and provider replica state in private Appwrite collections; Neon is the target social data plane, not yet the media ledger |
 | Identity and storage metadata collections | Appwrite | Identity integration and documented metadata/indexes only; not the binary media store |
 
 B2 and R2 are both S3-compatible, but their endpoints, regions, credentials,
@@ -29,22 +31,21 @@ required buckets and operations.
    creates a pending object record in Neon.
 2. Backend issues a short-lived, object-scoped upload authorization for the
    B2 primary. Provider credentials remain server-side.
-3. The client uploads the object to B2. Backend/Data Centre verifies the
-   object exists and matches the expected byte length and SHA-256 checksum
-   before marking the primary copy verified.
-4. A durable outbox event schedules replication to R2. The worker claims the
-   event transactionally, copies the exact object, then reads back or otherwise
-   cryptographically verifies the R2 copy before acknowledging the event.
-5. Only after primary verification is the media considered stored. Delivery
-   prefers the verified R2 copy when policy permits; otherwise it may use the
-   verified B2 primary. Never publish a URL for an unverified object.
+3. The client uploads the object to B2. Backend verifies object existence,
+   content type, byte length and SHA-256 before marking the primary copy verified.
+4. Backend currently copies the verified B2 object to R2 synchronously in the
+   upload-completion request, reads the R2 object back and verifies size, type
+   and SHA-256 before committing the protected media/replica records in Appwrite.
+5. Only after both cloud copies are verified is the media marked protected.
+   Delivery prefers R2, with B2 as the verified fallback. Never publish a URL
+   for an unverified object.
 6. Node replicas are optional additional copies. A node must prove its mounted
    storage identity, available quota, object checksum and heartbeat health.
    Reported disk capacity alone is not replica evidence.
-7. Periodic reconciliation compares Neon replica-ledger state with provider
-   object metadata and node attestations. Missing/corrupt replicas are retried
-   and repaired from a verified copy; permanent failures enter a dead-letter
-   queue and alert operators.
+7. Backend's current `RepairObject` path compares provider objects against
+   the stored SHA-256 and repairs a missing/corrupt cloud replica from the
+   surviving verified copy. A durable scheduled reconciliation queue and
+   dead-letter workflow remain required before production scale.
 
 ## Object identity and security
 
@@ -95,22 +96,22 @@ the Backend media runtime:
   `CLOUDFLARE_R2_SECRET_ACCESS_KEY`
 
 The credentials are intentionally injected into the Backend media service,
-not the node control plane: the control plane manages node enrollment and
-capacity, not public upload authorization. Data Centre's node agent must only
-receive node-scoped credentials or one-time transfer capabilities when the
-verified replica-transfer worker is implemented.
+not the node control plane: the Backend currently performs provider uploads,
+replication, integrity checks and private URL signing. The control plane manages
+node enrollment and capacity, not public upload authorization. Data Centre's
+node agent must only receive node-scoped credentials or one-time transfer
+capabilities when verified node-level object transfer is implemented.
 
 ## Release gates — not yet satisfied
 
 The presence of environment variables is configuration, not proof of storage
 integration. Keep media disabled until all of these pass in staging:
 
-- B2 bucket access, upload, read-back, checksum and delete tests.
-- R2 bucket access, upload, read-back, checksum and delete tests.
-- B2-to-R2 replication with idempotency, retry, backoff and dead-letter tests.
+- Real B2 and R2 bucket access, upload, read-back, checksum and delete tests using isolated staging buckets (the Backend currently has mocked provider tests).
+- Crash/retry testing of the current synchronous B2-to-R2 completion path; durable outbox-driven replication, bounded retries and dead-letter recovery remain future work.
 - Provider outage tests proving no unverified object is published.
-- Neon ledger/outbox transaction tests and crash recovery between copy and ack.
-- Android removable-SD and Linux node transfer tests with signed receipts.
+- Reconciliation of Appwrite media/replica metadata with both provider buckets; migrate this ledger to Neon only as part of an explicit tested data-plane cutover.
+- Android removable-SD and Linux node transfer tests with signed receipts; node-to-provider object transfer is not yet implemented.
 - Replica corruption, missing-object repair and restore-from-each-verified-copy tests.
 - Private-media authorization, CDN cache isolation and URL-expiry tests.
 - End-to-end upload, feed rendering, download and playback tests.
