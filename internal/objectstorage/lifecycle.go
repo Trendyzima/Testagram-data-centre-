@@ -219,34 +219,35 @@ func (l *Lifecycle) VerifyPrimary(ctx context.Context, tenantID, namespace, key,
 }
 
 func (l *Lifecycle) Replicate(ctx context.Context, tenantID, namespace, key, contentType, sha256Hex string, size int64) error {
-	verified, err := l.VerifyPrimary(ctx, tenantID, namespace, key, contentType, sha256Hex, size)
+	maxBytes, err := l.maxBytes(contentType)
 	if err != nil {
 		return err
+	}
+	if size > maxBytes {
+		return ErrTooLarge
 	}
 	b2Bucket, r2Bucket, err := l.bucketPair(namespace)
 	if err != nil {
 		return err
 	}
 	scopedKey := tenantPrefix(tenantID) + key
-	if err := l.replica.CopyFrom(ctx, l.primary, b2Bucket, scopedKey, r2Bucket, scopedKey, size, contentType, verified.SHA256); err != nil {
+	// CopyFrom reads and hashes the B2 source stream, uploads it to R2, then
+	// reads the destination back and verifies its checksum. One transfer pass
+	// therefore verifies both replicas without a redundant B2 download.
+	if err := l.replica.CopyFrom(ctx, l.primary, b2Bucket, scopedKey, r2Bucket, scopedKey, size, contentType, strings.ToLower(sha256Hex)); err != nil {
 		return fmt.Errorf("verify B2 primary and replicate to R2: %w", err)
 	}
 	return nil
 }
-
 func (l *Lifecycle) VerifyAndReplicate(ctx context.Context, tenantID, namespace, key, contentType, sha256Hex string, size int64) (VerifiedObject, error) {
-	verified, err := l.VerifyPrimary(ctx, tenantID, namespace, key, contentType, sha256Hex, size)
-	if err != nil {
-		return VerifiedObject{}, err
-	}
 	if err := l.Replicate(ctx, tenantID, namespace, key, contentType, sha256Hex, size); err != nil {
 		return VerifiedObject{}, err
 	}
-	verified.ReplicaVerified = true
-	verified.VerifiedAt = time.Now().UTC()
-	return verified, nil
+	return VerifiedObject{
+		Key: key, Size: size, ContentType: contentType, SHA256: strings.ToLower(sha256Hex),
+		PrimaryVerified: true, ReplicaVerified: true, VerifiedAt: time.Now().UTC(),
+	}, nil
 }
-
 func (l *Lifecycle) DownloadURL(ctx context.Context, requesterTenant, ownerTenant, namespace, key, sha256Hex string, size int64) (DownloadGrant, error) {
 	// Direct callers must own private objects. Backend may use the authorized method after its own access check.
 	if _, err := l.manager.DownloadURL(ctx, requesterTenant, ownerTenant, namespace, key); err != nil {
