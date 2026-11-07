@@ -67,13 +67,13 @@ func TestCacheSetSendsBearerAndTTL(t *testing.T) {
 func TestCacheGetAndMiss(t *testing.T) {
 	t.Run("hit", func(t *testing.T) {
 		client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Query().Get("key") != "hello world" {
+			if r.URL.Query().Get("key") != "hello:world" {
 				t.Errorf("query value not encoded: %s", r.URL.RawQuery)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"value":"there"}`))
 		})
-		got, err := client.Get(context.Background(), "hello world")
+		got, err := client.Get(context.Background(), "hello:world")
 		if err != nil || got != "there" {
 			t.Fatalf("Get() = %q, %v", got, err)
 		}
