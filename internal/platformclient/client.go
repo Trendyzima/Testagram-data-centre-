@@ -91,7 +91,7 @@ func newRequestID() string {
 }
 
 func validateKey(key string) error {
-	if strings.TrimSpace(key) == "" || len(key) > 512 || strings.ContainsAny(key, "\\r\\n\\x00") {
+	if strings.TrimSpace(key) == "" || len(key) > 512 || strings.ContainsAny(key, "\r\n\x00") {
 		return errors.New("platform key must be non-empty, at most 512 bytes, and contain no control delimiters")
 	}
 	return nil
@@ -147,14 +147,14 @@ func (c *Client) Check(ctx context.Context, key string, limit int64, window time
 }
 
 func (c *Client) Enqueue(ctx context.Context, queue string, payload map[string]string) (string, error) {
-	if strings.TrimSpace(queue) == "" || len(queue) > 128 || strings.ContainsAny(queue, "\\r\\n\\x00") {
+	if strings.TrimSpace(queue) == "" || len(queue) > 128 || strings.ContainsAny(queue, "\r\n\x00") {
 		return "", errors.New("queue name must be non-empty, at most 128 bytes, and contain no control delimiters")
 	}
 	if len(payload) == 0 || len(payload) > 256 {
 		return "", errors.New("queue payload must contain between 1 and 256 fields")
 	}
 	for key, value := range payload {
-		if strings.TrimSpace(key) == "" || len(key) > 128 || len(value) > 16<<10 || strings.ContainsAny(key, "\\r\\n\\x00") {
+		if strings.TrimSpace(key) == "" || len(key) > 128 || len(value) > 16<<10 || strings.ContainsAny(key, "\r\n\x00") {
 			return "", errors.New("queue payload contains an invalid field or oversized value")
 		}
 	}
