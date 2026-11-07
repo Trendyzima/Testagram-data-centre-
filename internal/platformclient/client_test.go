@@ -134,3 +134,35 @@ func TestNonSuccessReturnsStatusError(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+
+func TestRejectsInvalidPlatformInputsBeforeNetworkCall(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected network request for invalid input: %s %s", r.Method, r.URL)
+	})
+	if _, err := client.Get(context.Background(), "  "); err == nil {
+		t.Fatal("expected blank cache key rejection")
+	}
+	if err := client.Set(context.Background(), "key", strings.Repeat("x", (256<<10)+1), time.Minute); err == nil {
+		t.Fatal("expected oversized cache value rejection")
+	}
+	if err := client.Delete(context.Background(), "bad\\nkey"); err == nil {
+		t.Fatal("expected control-character cache key rejection")
+	}
+	if _, err := client.Enqueue(context.Background(), "", map[string]string{"id": "1"}); err == nil {
+		t.Fatal("expected blank queue name rejection")
+	}
+	if _, err := client.Enqueue(context.Background(), "mail", map[string]string{}); err == nil {
+		t.Fatal("expected empty queue payload rejection")
+	}
+}
+
+func TestEnqueueRejectsMissingJobID(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":""}`))
+	})
+	if _, err := client.Enqueue(context.Background(), "mail", map[string]string{"message_id": "m-1"}); err == nil {
+		t.Fatal("expected invalid queue job ID rejection")
+	}
+}
