@@ -58,7 +58,7 @@ After installation:
 6. Confirm heartbeats report the selected SD card's total/free bytes and removable-card identity.
 7. Node B runs in storage-only mode. On-device video transcoding is disabled; video processing must run on a separate server/worker.
 
-Android is the local media/storage node. The Linux Docker host runs Supabase and the backend/control-plane services.
+Android is the local media/storage node. The Linux Docker host runs the Testagram Backend and Data Centre control-plane services. Supabase is retired and is not part of the fresh runtime.
 
 ## Docker VPS quick install
 
@@ -95,11 +95,11 @@ sudo --preserve-env=TESTAGRAM_BACKUP_REMOTE,TESTAGRAM_BACKUP_AGE_RECIPIENT,TESTA
   bash vps/backup.sh
 ```
 
-For a restore drill, obtain the encrypted `.tar.gz.age` artifact and its `.sha256` sidecar, then use the separately held age identity and the exact approved Supabase Postgres image digest used by the deployment:
+For a restore drill, obtain the encrypted `.tar.gz.age` artifact and its `.sha256` sidecar, then use the separately held age identity and the exact approved PostgreSQL image digest used by the deployment:
 
 ```bash
 TESTAGRAM_BACKUP_AGE_IDENTITY_FILE=/secure/off-host-age-identity.txt \
-TESTAGRAM_RESTORE_POSTGRES_IMAGE='registry.example/supabase-postgres@sha256:REPLACE_WITH_APPROVED_DIGEST' \
+TESTAGRAM_RESTORE_POSTGRES_IMAGE='postgres:17-alpine@sha256:REPLACE_WITH_APPROVED_DIGEST' \
   bash vps/restore-drill.sh /secure/backup/testagram-YYYYMMDDTHHMMSSZ.tar.gz.age
 ```
 
