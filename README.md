@@ -140,7 +140,7 @@ The five-repository ownership boundary is:
 - [Testagram Backend](https://github.com/Trendyzima/Testagram-backend-): canonical Appwrite identity, accounts, posts, social graph, permissions, visibility and API orchestration.
 - [Federated Content](https://github.com/Trendyzima/federated-content): ActivityPub protocol state, signed ingress, actor discovery and asynchronous federation processing.
 - [the-algorithm](https://github.com/Trendyzima/the-algorithm): private ranking and recommendation scoring; Backend remains the authorization authority.
-- **Data Centre (this repository)**: deployment, private networking, B2/R2 media durability, storage nodes, backups and recovery.
+- **Data Centre (this repository)**: deployment, private networking, node-level storage, provider configuration, backups and recovery. Backend owns the actual B2/R2 media lifecycle and replica verification.
 
 Federation now has PostgreSQL-backed actor/inbox/outbox state, signed inbox verification,
 safe remote-key resolution and a private Backend identity/readiness contract. It is
