@@ -5,6 +5,10 @@ import (
 	"errors"
 	"encoding/hex"
 	"fmt"
+	"crypto/hmac"
+	"crypto/sha256"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -28,6 +32,8 @@ type LifecycleConfig struct {
 	MaxVideoBytes    int64
 	UploadTTL        time.Duration
 	DownloadTTL      time.Duration
+	CDNBaseURL       string
+	CDNSigningSecret string
 }
 
 type UploadGrant struct {
@@ -62,6 +68,8 @@ type Lifecycle struct {
 	r2Public string
 	uploadTTL time.Duration
 	downloadTTL time.Duration
+	cdnBaseURL string
+	cdnSigningSecret []byte
 	maxImageBytes int64
 	maxVideoBytes int64
 }
@@ -114,6 +122,17 @@ func NewLifecycle(cfg LifecycleConfig) (*Lifecycle, error) {
 	if cfg.MaxVideoBytes == 0 { cfg.MaxVideoBytes = 500 << 20 }
 	if cfg.UploadTTL == 0 { cfg.UploadTTL = 15 * time.Minute }
 	if cfg.DownloadTTL == 0 { cfg.DownloadTTL = 5 * time.Minute }
+	cdnBaseURL := strings.TrimRight(strings.TrimSpace(cfg.CDNBaseURL), "/")
+	cdnSecret := strings.TrimSpace(cfg.CDNSigningSecret)
+	if (cdnBaseURL == "") != (cdnSecret == "") || (cdnBaseURL != "" && len(cdnSecret) < 32) {
+		return nil, errors.New("Cloudflare media CDN URL and signing secret must be configured together; secret must contain at least 32 characters")
+	}
+	if cdnBaseURL != "" {
+		u, err := url.Parse(cdnBaseURL)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+			return nil, errors.New("Cloudflare media CDN base URL must be a pathless HTTPS origin")
+		}
+	}
 	if cfg.MaxImageBytes < 1 || cfg.MaxVideoBytes < 1 || cfg.MaxImageBytes > 5<<30 || cfg.MaxVideoBytes > 5<<30 {
 		return nil, errors.New("media size limits must be between 1 byte and 5 GiB")
 	}
@@ -159,6 +178,7 @@ func NewLifecycle(cfg LifecycleConfig) (*Lifecycle, error) {
 		b2Private: cfg.B2PrivateBucket, b2Public: cfg.B2PublicBucket,
 		r2Private: cfg.R2PrivateBucket, r2Public: cfg.R2PublicBucket,
 		uploadTTL: cfg.UploadTTL, downloadTTL: cfg.DownloadTTL,
+		cdnBaseURL: cdnBaseURL, cdnSigningSecret: []byte(cdnSecret),
 		maxImageBytes: cfg.MaxImageBytes, maxVideoBytes: cfg.MaxVideoBytes,
 	}, nil
 }
@@ -301,6 +321,11 @@ func (l *Lifecycle) DownloadURLAuthorized(ctx context.Context, ownerTenant, name
 	// successful SHA-256 read-back from both providers. Avoid re-streaming large
 	// videos on every view; reconciliation rechecks checksums asynchronously.
 	if info, headErr := l.replica.Head(ctx, r2Bucket, scopedKey); headErr == nil && info.Size == size {
+		if l.cdnBaseURL != "" && strings.HasPrefix(key, "v1/") && len(key) == 35 {
+			if signed, signErr := l.signPrivateCDNURL(key); signErr == nil {
+				return DownloadGrant{URL: signed, Provider: "cloudflare_worker"}, nil
+			}
+		}
 		signed, signErr := l.replica.PresignGet(ctx, r2Bucket, scopedKey, l.downloadTTL)
 		if signErr == nil {
 			return DownloadGrant{URL: signed, Provider: "cloudflare_r2"}, nil
@@ -318,6 +343,23 @@ func (l *Lifecycle) DownloadURLAuthorized(ctx context.Context, ownerTenant, name
 		return DownloadGrant{}, err
 	}
 	return DownloadGrant{URL: signed, Provider: "backblaze_b2"}, nil
+}
+func (l *Lifecycle) signPrivateCDNURL(objectKey string) (string, error) {
+	if l.cdnBaseURL == "" || len(l.cdnSigningSecret) < 32 || !strings.HasPrefix(objectKey, "v1/") || len(objectKey) != 35 {
+		return "", errors.New("private Cloudflare media CDN is not configured for this object key")
+	}
+	expires := time.Now().Add(l.downloadTTL).Unix()
+	message := fmt.Sprintf("GET\n%s\n%d", objectKey, expires)
+	mac := hmac.New(sha256.New, l.cdnSigningSecret)
+	_, _ = mac.Write([]byte(message))
+	u, err := url.Parse(l.cdnBaseURL)
+	if err != nil { return "", err }
+	u.Path = "/private/" + objectKey
+	query := u.Query()
+	query.Set("e", strconv.FormatInt(expires, 10))
+	query.Set("s", hex.EncodeToString(mac.Sum(nil)))
+	u.RawQuery = query.Encode()
+	return u.String(), nil
 }
 func (l *Lifecycle) Delete(ctx context.Context, requesterTenant, ownerTenant, namespace, key string) error {
 	_, r2Bucket, err := l.bucketPair(namespace)
