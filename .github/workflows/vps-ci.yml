@@ -28,6 +28,8 @@ jobs:
       FRESH_FEDERATION_INTERNAL_TOKEN: ci-federation-internal-token-long-enough
       FEDERATION_POSTGRES_IMAGE: postgres:17-alpine
       FEDERATION_DB_PASSWORD: ci-federation-db-password-only
+      # Compose interpolation fixture only; CI does not connect Federation to this local URL.
+      FEDERATION_DATABASE_URL: postgresql://testagram_federation:ci-federation-db-password-only@localhost:5432/testagram_federation?sslmode=disable
       VPS_INTERNAL_TOKEN: ci-internal
       VPS_NODE_BOOTSTRAP_TOKEN: ci-bootstrap
       ALGORITHM_INTERNAL_TOKEN: ci-algorithm-internal-token-long-enough
