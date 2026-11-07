@@ -97,7 +97,7 @@ func TestCacheGetAndMiss(t *testing.T) {
 
 func TestRateLimitAndEnqueue(t *testing.T) {
 	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer unit-test-secret" {
+		if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("u", 40) {
 			t.Errorf("missing authorization")
 		}
 		switch r.URL.Path {
