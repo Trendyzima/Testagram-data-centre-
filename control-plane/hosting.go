@@ -43,6 +43,51 @@ type DeploymentRequest struct {
 	Volume       string            `json:"volume"`
 }
 
+type NodeCapabilities struct {
+	Containers            bool   `json:"containers"`
+	LocalVolumes          bool   `json:"localVolumes"`
+	ComputeNode           bool   `json:"computeNode"`
+	StorageNode           bool   `json:"storageNode"`
+	StorageOnly           bool   `json:"storageOnly"`
+	WorkloadExecution     bool   `json:"workloadExecution"`
+	StorageType           string `json:"storageType"`
+	StorageIdentity       string `json:"storageIdentity"`
+	MediaStorageBytes     int64  `json:"mediaStorageBytes"`
+	MediaStorageFreeBytes int64  `json:"mediaStorageFreeBytes"`
+}
+
+func decodeNodeCapabilities(raw []byte) NodeCapabilities {
+	var capabilities NodeCapabilities
+	_ = json.Unmarshal(raw, &capabilities)
+	return capabilities
+}
+
+type NodeCapacitySummary struct {
+	ComputeNodes                   int   `json:"computeNodes"`
+	ComputeCores                   int64 `json:"computeCores"`
+	StorageNodes                   int   `json:"storageNodes"`
+	ReportedMediaStorageTotalBytes int64 `json:"reportedMediaStorageTotalBytes"`
+	ReportedMediaStorageFreeBytes  int64 `json:"reportedMediaStorageFreeBytes"`
+}
+
+func addNodeCapacity(summary *NodeCapacitySummary, cpuCores int, capabilities NodeCapabilities) {
+	if capabilities.ComputeNode && capabilities.WorkloadExecution {
+		summary.ComputeNodes++
+		if cpuCores > 0 {
+			summary.ComputeCores += int64(cpuCores)
+		}
+	}
+	if capabilities.StorageNode {
+		summary.StorageNodes++
+		if capabilities.MediaStorageBytes > 0 {
+			summary.ReportedMediaStorageTotalBytes += capabilities.MediaStorageBytes
+		}
+		if capabilities.MediaStorageFreeBytes > 0 {
+			summary.ReportedMediaStorageFreeBytes += capabilities.MediaStorageFreeBytes
+		}
+	}
+}
+
 type BackupManifestRequest struct {
 	Kind       string `json:"kind"`
 	StorageURI string `json:"storageUri"`
@@ -119,7 +164,7 @@ func (s *Server) hostingNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
-	rows, err := s.db.Query(ctx, "select n.id::text,n.name,n.platform,n.arch,n.cpu_cores,n.memory_bytes,n.storage_bytes,n.free_bytes,"+
+	rows, err := s.db.Query(ctx, "select n.id::text,n.name,n.platform,n.arch,n.cpu_cores,n.memory_bytes,n.storage_bytes,n.free_bytes,n.capabilities,"+
 		"n.status,n.last_seen_at,coalesce(x.active_workloads,0),coalesce(x.cpu_reserved,0),coalesce(x.memory_reserved,0) "+
 		"from public.vps_nodes n left join lateral ("+
 		"select count(*) filter (where status in ('assigned','running'))::int active_workloads,"+
@@ -136,15 +181,21 @@ func (s *Server) hostingNodes(w http.ResponseWriter, r *http.Request) {
 		var id, name, platform, arch, status string
 		var cpu int
 		var memory, storage, free, cpuReserved, memoryReserved int64
+		var capabilitiesJSON []byte
 		var lastSeen time.Time
 		var active int
-		if err := rows.Scan(&id, &name, &platform, &arch, &cpu, &memory, &storage, &free, &status, &lastSeen, &active, &cpuReserved, &memoryReserved); err != nil {
+		if err := rows.Scan(&id, &name, &platform, &arch, &cpu, &memory, &storage, &free, &capabilitiesJSON, &status, &lastSeen, &active, &cpuReserved, &memoryReserved); err != nil {
 			reply(w, http.StatusInternalServerError, map[string]string{"error": "node inventory decode failed"})
 			return
 		}
+		capabilities := decodeNodeCapabilities(capabilitiesJSON)
 		items = append(items, map[string]any{"id": id, "name": name, "platform": platform, "arch": arch, "cpuCores": cpu,
 			"memoryBytes": memory, "storageBytes": storage, "freeBytes": free, "status": status, "lastSeenAt": lastSeen,
-			"activeWorkloads": active, "reservedCpuMillis": cpuReserved, "reservedMemoryBytes": memoryReserved})
+			"activeWorkloads": active, "reservedCpuMillis": cpuReserved, "reservedMemoryBytes": memoryReserved,
+			"computeNode": capabilities.ComputeNode, "storageNode": capabilities.StorageNode, "storageOnly": capabilities.StorageOnly,
+			"workloadExecution": capabilities.WorkloadExecution, "reportedMediaStorageBytes": capabilities.MediaStorageBytes,
+			"reportedMediaStorageFreeBytes": capabilities.MediaStorageFreeBytes, "storageType": capabilities.StorageType,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "node inventory unavailable"})
@@ -178,9 +229,33 @@ func (s *Server) hostingUsage(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "usage query unavailable"})
 		return
 	}
+	capacityRows, err := s.db.Query(ctx, "select cpu_cores,capabilities from public.vps_nodes where status='online' and last_seen_at>now()-interval '45 seconds'")
+	if err != nil {
+		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "node capacity query unavailable"})
+		return
+	}
+	var capacity NodeCapacitySummary
+	for capacityRows.Next() {
+		var cores int
+		var raw []byte
+		if err := capacityRows.Scan(&cores, &raw); err != nil {
+			capacityRows.Close()
+			reply(w, http.StatusServiceUnavailable, map[string]string{"error": "node capacity decode failed"})
+			return
+		}
+		addNodeCapacity(&capacity, cores, decodeNodeCapabilities(raw))
+	}
+	if err := capacityRows.Err(); err != nil {
+		capacityRows.Close()
+		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "node capacity query failed"})
+		return
+	}
+	capacityRows.Close()
 	reply(w, http.StatusOK, map[string]any{"nodes": nodes, "freshNodes": freshNodes, "activeWorkloads": active,
 		"queuedWorkloads": queued, "failedWorkloads": failed, "reservedCpuMillis": cpuReserved,
-		"reservedMemoryBytes": memoryReserved, "sampledAt": time.Now().UTC()})
+		"reservedMemoryBytes": memoryReserved, "computeNodes": capacity.ComputeNodes, "computeCores": capacity.ComputeCores,
+		"storageNodes": capacity.StorageNodes, "reportedMediaStorageTotalBytes": capacity.ReportedMediaStorageTotalBytes,
+		"reportedMediaStorageFreeBytes": capacity.ReportedMediaStorageFreeBytes, "sampledAt": time.Now().UTC()})
 }
 
 func normalizedBaseDomain() (string, error) {

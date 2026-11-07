@@ -153,3 +153,33 @@ func TestTLSAuthorizationRejectsHostOutsideManagedZone(t *testing.T) {
 		t.Fatalf("wanted 403 for external host, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestDecodeNodeCapabilitiesExposesIndependentComputerAndStorageFlags(t *testing.T) {
+	got := decodeNodeCapabilities([]byte(`{"computeNode":true,"storageNode":true,"storageOnly":false,"workloadExecution":true,"mediaStorageBytes":20000000000,"mediaStorageFreeBytes":15000000000}`))
+	if !got.ComputeNode || !got.StorageNode || got.StorageOnly || !got.WorkloadExecution {
+		t.Fatalf("unexpected node capabilities: %#v", got)
+	}
+	if got.MediaStorageBytes != 20_000_000_000 || got.MediaStorageFreeBytes != 15_000_000_000 {
+		t.Fatalf("unexpected media storage metrics: %#v", got)
+	}
+}
+
+func TestDecodeNodeCapabilitiesDefaultsMissingAndMalformedFields(t *testing.T) {
+	got := decodeNodeCapabilities([]byte(`{"storageNode":true,"mediaStorageBytes":"not-a-number"}`))
+	if !got.StorageNode || got.MediaStorageBytes != 0 || got.ComputeNode {
+		t.Fatalf("unexpected safe defaults: %#v", got)
+	}
+}
+
+func TestNodeCapacitySummarySeparatesComputeAndStorage(t *testing.T) {
+	var summary NodeCapacitySummary
+	addNodeCapacity(&summary, 8, NodeCapabilities{ComputeNode: true, WorkloadExecution: true, StorageNode: true, MediaStorageBytes: 20_000_000_000, MediaStorageFreeBytes: 12_000_000_000})
+	addNodeCapacity(&summary, 4, NodeCapabilities{StorageNode: true, StorageOnly: true, MediaStorageBytes: 8_000_000_000, MediaStorageFreeBytes: 7_000_000_000})
+	addNodeCapacity(&summary, 16, NodeCapabilities{ComputeNode: true, WorkloadExecution: false, StorageNode: false})
+	if summary.ComputeNodes != 1 || summary.ComputeCores != 8 {
+		t.Fatalf("compute summary incorrectly counted storage-only or disabled nodes: %#v", summary)
+	}
+	if summary.StorageNodes != 2 || summary.ReportedMediaStorageTotalBytes != 28_000_000_000 || summary.ReportedMediaStorageFreeBytes != 19_000_000_000 {
+		t.Fatalf("unexpected media storage summary: %#v", summary)
+	}
+}

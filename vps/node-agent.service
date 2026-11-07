@@ -15,6 +15,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/testagram/storage/nodes
+ReadWritePaths=/srv/testagram-media
 ReadWritePaths=/opt/testagram
 CapabilityBoundingSet=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

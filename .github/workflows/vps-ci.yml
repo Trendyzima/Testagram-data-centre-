@@ -99,11 +99,11 @@ jobs:
           # Storage-only Android nodes must never receive compute workloads.
           curl -fsS -o /tmp/android-node-registration.json \
             -H "Authorization: Bearer ci-bootstrap" -H "Content-Type: application/json" \
-            -d '{"name":"android-storage-only","platform":"android","arch":"arm64","cpuCores":8,"memoryBytes":8589934592,"storageBytes":1000000000000,"freeBytes":1000000000000,"endpoint":"android-storage-only","capabilities":{"storageOnly":true,"microSD":true}}' \
+            -d '{"name":"android-storage-only","platform":"android","arch":"arm64","cpuCores":8,"memoryBytes":8589934592,"storageBytes":1000000000000,"freeBytes":1000000000000,"endpoint":"android-storage-only","capabilities":{"storageOnly":true,"storageNode":true,"computeNode":false,"workloadExecution":false,"mediaStorageBytes":1000000000000,"mediaStorageFreeBytes":1000000000000,"microSD":true}}' \
             http://127.0.0.1:8787/v1/nodes/register
           curl -fsS -o /tmp/linux-node-registration.json \
             -H "Authorization: Bearer ci-bootstrap" -H "Content-Type: application/json" \
-            -d '{"name":"linux-compute","platform":"linux","arch":"amd64","cpuCores":2,"memoryBytes":8589934592,"storageBytes":10000000000,"freeBytes":5000000000,"endpoint":"linux-compute","capabilities":{"workloadExecution":true}}' \
+            -d '{"name":"linux-compute","platform":"linux","arch":"amd64","cpuCores":2,"memoryBytes":8589934592,"storageBytes":10000000000,"freeBytes":5000000000,"endpoint":"linux-compute","capabilities":{"computeNode":true,"storageNode":false,"workloadExecution":true,"mediaStorageBytes":0,"mediaStorageFreeBytes":0}}' \
             http://127.0.0.1:8787/v1/nodes/register
           curl -fsS -o /tmp/scheduled-workload.json \
             -H "Authorization: Bearer ci-internal" -H "Content-Type: application/json" \

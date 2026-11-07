@@ -21,9 +21,17 @@ import (
 )
 
 type Agent struct {
-	control, bootstrap, nodeToken, nodeID, name, endpoint, volumeRoot, stateFile string
-	workloadTimeout                                                              time.Duration
-	mu                                                                           sync.RWMutex
+	control, bootstrap, nodeToken, nodeID, name, endpoint, volumeRoot, storageRoot, stateFile string
+	workloadTimeout                                                                           time.Duration
+	computeEnabled                                                                            bool
+	storageEnabled                                                                            bool
+	mu                                                                                        sync.RWMutex
+	storageStatsMu                                                                            sync.Mutex
+	storageStatsAt                                                                            time.Time
+	storageStatsTotal                                                                         int64
+	storageStatsFree                                                                          int64
+	storageDevice                                                                             uint64
+	storageDeviceSet                                                                          bool
 }
 
 type Registration struct {
@@ -86,6 +94,143 @@ func (a *Agent) disk() (int64, int64) {
 		return 0, 0
 	}
 	return int64(stat.Blocks) * int64(stat.Bsize), int64(stat.Bavail) * int64(stat.Bsize)
+}
+
+func envEnabled(name string) bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(name)), "true")
+}
+
+func (a *Agent) mediaDisk() (int64, int64) {
+	a.storageStatsMu.Lock()
+	defer a.storageStatsMu.Unlock()
+	if !a.storageEnabled || strings.TrimSpace(a.storageRoot) == "" {
+		a.storageStatsAt = time.Now()
+		a.storageStatsTotal, a.storageStatsFree = 0, 0
+		return 0, 0
+	}
+	device, deviceErr := filesystemDevice(a.storageRoot)
+	if deviceErr != nil || !a.storageDeviceSet || device != a.storageDevice {
+		a.storageStatsAt = time.Now()
+		a.storageStatsTotal, a.storageStatsFree = 0, 0
+		return 0, 0
+	}
+	if !a.storageStatsAt.IsZero() && time.Since(a.storageStatsAt) < 30*time.Second {
+		return a.storageStatsTotal, a.storageStatsFree
+	}
+	quota, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("VPS_STORAGE_QUOTA_BYTES")), 10, 64)
+	if err != nil || quota <= 0 {
+		a.storageStatsAt = time.Now()
+		a.storageStatsTotal, a.storageStatsFree = 0, 0
+		return 0, 0
+	}
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(a.storageRoot, &stat); err != nil {
+		a.storageStatsAt = time.Now()
+		a.storageStatsTotal, a.storageStatsFree = 0, 0
+		return 0, 0
+	}
+	used, err := directoryBytes(a.storageRoot)
+	if err != nil || used >= quota {
+		total := min64(quota, int64(stat.Blocks)*int64(stat.Bsize))
+		a.storageStatsAt = time.Now()
+		a.storageStatsTotal, a.storageStatsFree = total, 0
+		return total, 0
+	}
+	total := min64(quota, int64(stat.Blocks)*int64(stat.Bsize))
+	free := min64(quota-used, int64(stat.Bavail)*int64(stat.Bsize))
+	a.storageStatsAt = time.Now()
+	a.storageStatsTotal, a.storageStatsFree = total, free
+	return total, free
+}
+
+func directoryBytes(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if !entry.IsDir() {
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if info.Mode().IsRegular() {
+				total += info.Size()
+			}
+		}
+		return nil
+	})
+	return total, err
+}
+
+func min64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func validateStorageRoot(storageRoot, computeRoot string) error {
+	storageRoot = filepath.Clean(storageRoot)
+	computeRoot = filepath.Clean(computeRoot)
+	if !filepath.IsAbs(storageRoot) || storageRoot == string(os.PathSeparator) || storageRoot == computeRoot {
+		return errors.New("VPS_STORAGE_ROOT must be a dedicated absolute path, separate from VPS_VOLUME_ROOT")
+	}
+	rel, err := filepath.Rel(storageRoot, computeRoot)
+	if err != nil {
+		return err
+	}
+	if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))) {
+		return errors.New("compute volume root must not be inside the media storage root")
+	}
+	rel, err = filepath.Rel(computeRoot, storageRoot)
+	if err != nil {
+		return err
+	}
+	if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))) {
+		return errors.New("media storage root must not be inside the compute volume root")
+	}
+	return nil
+}
+
+func filesystemDevice(path string) (uint64, error) {
+	var stat syscall.Stat_t
+	if err := syscall.Stat(path, &stat); err != nil {
+		return 0, err
+	}
+	return uint64(stat.Dev), nil
+}
+
+func validateStorageDevice(storageRoot string, allowSystemDisk bool) (uint64, error) {
+	storageDevice, err := filesystemDevice(storageRoot)
+	if err != nil {
+		return 0, err
+	}
+	rootDevice, err := filesystemDevice(string(os.PathSeparator))
+	if err != nil {
+		return 0, err
+	}
+	if storageDevice == rootDevice && !allowSystemDisk {
+		return 0, errors.New("VPS_STORAGE_ROOT must be on a dedicated mounted filesystem; set VPS_STORAGE_ALLOW_SYSTEM_DISK=true only for an explicit override")
+	}
+	return storageDevice, nil
+}
+
+func (a *Agent) capabilities() map[string]any {
+	mediaTotal, mediaFree := a.mediaDisk()
+	return map[string]any{
+		"containers":            runtimeBin() != "",
+		"localVolumes":          true,
+		"computeNode":           a.computeEnabled,
+		"storageNode":           a.storageEnabled,
+		"storageOnly":           a.storageEnabled && !a.computeEnabled,
+		"workloadExecution":     a.computeEnabled,
+		"mediaStorageBytes":     mediaTotal,
+		"mediaStorageFreeBytes": mediaFree,
+	}
 }
 
 func (a *Agent) post(path string, body any, out any) (int, error) {
@@ -180,12 +325,8 @@ func (a *Agent) register() error {
 	body := Registration{
 		Name: a.name, Platform: runtime.GOOS, Arch: runtime.GOARCH,
 		CPUCores: runtime.NumCPU(), MemoryBytes: a.memory(), StorageBytes: total, FreeBytes: free,
-		Endpoint: a.endpoint,
-		Capabilities: map[string]any{
-			"containers":        runtimeBin() != "",
-			"localVolumes":      true,
-			"workloadExecution": strings.TrimSpace(os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) != "",
-		},
+		Endpoint:     a.endpoint,
+		Capabilities: a.capabilities(),
 	}
 	var out struct {
 		ID    string `json:"id"`
@@ -211,10 +352,7 @@ func (a *Agent) heartbeat() error {
 	total, free := a.disk()
 	body := Registration{
 		CPUCores: runtime.NumCPU(), MemoryBytes: a.memory(), StorageBytes: total, FreeBytes: free,
-		Capabilities: map[string]any{
-			"containers":        runtimeBin() != "",
-			"workloadExecution": strings.TrimSpace(os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) != "",
-		},
+		Capabilities: a.capabilities(),
 	}
 	_, err := a.post("/v1/nodes/heartbeat", body, nil)
 	return err
@@ -241,6 +379,9 @@ func (a *Agent) report(id string, success bool) error {
 }
 
 func (a *Agent) execute(w Workload) error {
+	if !a.computeEnabled {
+		return errors.New("compute workload execution is disabled on this node")
+	}
 	if w.StorageBytes > 0 {
 		_, free := a.disk()
 		if free < w.StorageBytes {
@@ -423,10 +564,13 @@ func main() {
 
 	a := &Agent{
 		control: control, bootstrap: bootstrap,
-		name:       os.Getenv("VPS_NODE_NAME"),
-		endpoint:   os.Getenv("VPS_NODE_ENDPOINT"),
-		volumeRoot: os.Getenv("VPS_VOLUME_ROOT"),
-		stateFile:  os.Getenv("VPS_NODE_STATE_FILE"),
+		name:           os.Getenv("VPS_NODE_NAME"),
+		endpoint:       os.Getenv("VPS_NODE_ENDPOINT"),
+		volumeRoot:     os.Getenv("VPS_VOLUME_ROOT"),
+		storageRoot:    os.Getenv("VPS_STORAGE_ROOT"),
+		stateFile:      os.Getenv("VPS_NODE_STATE_FILE"),
+		computeEnabled: envEnabled("VPS_ENABLE_COMPUTE_NODE") && strings.TrimSpace(os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) != "" && runtimeBin() != "",
+		storageEnabled: envEnabled("VPS_ENABLE_STORAGE_NODE"),
 	}
 	if strings.TrimSpace(os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) == "" {
 		log.Printf("workload execution is disabled until VPS_ALLOWED_WORKLOAD_IMAGES contains approved image@sha256 references")
@@ -445,6 +589,41 @@ func main() {
 		log.Fatalf("invalid VPS_WORKLOAD_TIMEOUT: %v", err)
 	}
 	a.workloadTimeout = timeout
+	if a.storageEnabled {
+		if a.storageRoot == "" {
+			log.Fatal("VPS_STORAGE_ROOT is required when VPS_ENABLE_STORAGE_NODE=true")
+		}
+		quota, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("VPS_STORAGE_QUOTA_BYTES")), 10, 64)
+		if err != nil || quota <= 0 {
+			log.Fatal("VPS_STORAGE_QUOTA_BYTES must be a positive integer when storage is enabled")
+		}
+		if err := validateStorageRoot(a.storageRoot, a.volumeRoot); err != nil {
+			log.Fatal(err)
+		}
+		if err := os.MkdirAll(a.volumeRoot, 0700); err != nil {
+			log.Fatal(err)
+		}
+		if err := os.MkdirAll(a.storageRoot, 0700); err != nil {
+			log.Fatal(err)
+		}
+		storageCanonical, err := filepath.EvalSymlinks(a.storageRoot)
+		if err != nil {
+			log.Fatal(err)
+		}
+		computeCanonical, err := filepath.EvalSymlinks(a.volumeRoot)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := validateStorageRoot(storageCanonical, computeCanonical); err != nil {
+			log.Fatal(err)
+		}
+		device, err := validateStorageDevice(storageCanonical, envEnabled("VPS_STORAGE_ALLOW_SYSTEM_DISK"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		a.storageDevice, a.storageDeviceSet = device, true
+		a.storageRoot = storageCanonical
+	}
 	if a.stateFile == "" {
 		a.stateFile = "/var/lib/testagram/storage/nodes/node-state.json"
 	}
@@ -476,15 +655,17 @@ func main() {
 			continue
 		}
 
-		if work, err := a.poll(); err != nil {
-			log.Printf("poll: %v", err)
-		} else if work != nil {
-			err = a.execute(work.Workload)
-			if reportErr := a.report(work.ID, err == nil); reportErr != nil {
-				log.Printf("report %s: %v", work.ID, reportErr)
-			}
-			if err != nil {
-				log.Printf("workload %s failed: %v", work.ID, err)
+		if a.computeEnabled {
+			if work, err := a.poll(); err != nil {
+				log.Printf("poll: %v", err)
+			} else if work != nil {
+				err = a.execute(work.Workload)
+				if reportErr := a.report(work.ID, err == nil); reportErr != nil {
+					log.Printf("report %s: %v", work.ID, reportErr)
+				}
+				if err != nil {
+					log.Printf("workload %s failed: %v", work.ID, err)
+				}
 			}
 		}
 
