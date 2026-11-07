@@ -146,7 +146,7 @@ func TestRejectsInvalidPlatformInputsBeforeNetworkCall(t *testing.T) {
 	if err := client.Set(context.Background(), "key", strings.Repeat("x", (256<<10)+1), time.Minute); err == nil {
 		t.Fatal("expected oversized cache value rejection")
 	}
-	if err := client.Delete(context.Background(), "bad\\nkey"); err == nil {
+	if err := client.Delete(context.Background(), "bad\nkey"); err == nil {
 		t.Fatal("expected control-character cache key rejection")
 	}
 	if _, err := client.Enqueue(context.Background(), "", map[string]string{"id": "1"}); err == nil {
