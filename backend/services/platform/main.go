@@ -453,7 +453,13 @@ func env(k, d string) string {
 func requestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+		id := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+		if id == "" || len(id) > 128 || strings.ContainsAny(id, "\\r\\n") {
+			id = fmt.Sprintf("platform-%d", start.UnixNano())
+		}
+		w.Header().Set("X-Request-ID", id)
+		w.Header().Set("X-Testagram-API-Version", "1")
 		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
+		log.Printf("%s %s request_id=%s duration=%s", r.Method, r.URL.Path, id, time.Since(start))
 	})
 }
