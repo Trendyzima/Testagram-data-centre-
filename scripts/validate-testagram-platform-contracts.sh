@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
-for script in \
-  testagram-platform/bootstrap.sh \
-  testagram-platform/prepare.sh \
-  testagram-platform/status.sh \
-  testagram-platform/healthcheck.sh \
-  testagram-platform/storage.sh \
-  testagram-platform/preflight.sh \
-  testagram-platform/deploy.sh; do
+
+for script in vps/backup.sh vps/restore-drill.sh vps/install.sh scripts/install-local-docker.sh; do
   bash -n "$script"
 done
-grep -q 'STAGE=.*BASHPID' testagram-platform/prepare.sh
-grep -q '^name: testagram-supabase' testagram-platform/docker-compose.vps.yml
-grep -qi 'Testagram' docs/platform/service-catalog.md
-grep -qi 'self-sustaining' docs/platform/self-sustaining-operations.md
+
+cmp -s vps/docker-compose.yml vps/docker-compose.fresh.yml
+for file in vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml; do
+  if grep -Eqi 'supabase' "$file"; then
+    echo "Retired provider reference remains in active runtime path: $file" >&2
+    exit 1
+  fi
+done
+
+grep -q 'B2_S3_ENDPOINT' vps/docker-compose.fresh.yml
+grep -q 'CLOUDFLARE_R2_ENDPOINT' vps/docker-compose.fresh.yml
+grep -q 'Backblaze B2' docs/platform/media-storage-architecture.md
+grep -q 'Cloudflare R2' docs/platform/media-storage-architecture.md
+grep -q 'FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}' vps/docker-compose.fresh.yml
+grep -q 'TESTAGRAM_RETENTION_ENABLED: "false"' vps/docker-compose.fresh.yml
+grep -q 'TESTAGRAM_RETENTION_DRY_RUN: "true"' vps/docker-compose.fresh.yml
 grep -q '/readyz' docs/platform/openapi/internal-platform.yaml
-grep -q '/v1/cache/set' docs/platform/openapi/internal-platform.yaml
-grep -q '/v1/queue/claim' docs/platform/openapi/internal-platform.yaml
-grep -q '/v1/audit' docs/platform/openapi/internal-platform.yaml
-echo "Testagram platform shell and contract smoke checks: PASS"
+grep -q '/v1/hosting/backups' docs/platform/openapi/hosting-control-plane.yaml
+
+echo "Fresh Appwrite runtime, B2/R2 storage contract and retired-provider exit checks: PASS"
