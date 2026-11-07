@@ -33,6 +33,8 @@ services:
       FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:?Set the same private token in Backend and Federation}
       ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
       ONSPACE_AI_API_KEY: ${ONSPACE_AI_API_KEY:-}
+      # Backblaze B2 is the durable primary; Cloudflare R2 is the verified delivery/replica.
+      # Provider keys stay in Backend, never in XClone or node-agent containers.
       FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}
       TESTAGRAM_STORAGE_POOL_BYTES: ${TESTAGRAM_STORAGE_POOL_BYTES:-150000000000}
       TESTAGRAM_STORAGE_PER_USER_BYTES: ${TESTAGRAM_STORAGE_PER_USER_BYTES:-2147483648}
