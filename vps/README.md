@@ -1,48 +1,90 @@
-# Testagram single-VPS runtime
+# Testagram VPS runtime
 
-The VPS is the runtime authority for the complete Testagram backend.
+The supported VPS deployment is the fresh five-repository runtime. The legacy
+single-repository provider stack is not an installation or upgrade target.
 
-It runs the official self-hosted Supabase Docker stack, Testagram control
-plane, video API and FFmpeg worker, notification service, maintenance worker,
-local Valkey, and the Testagram Caddy edge. The node-agent can run as a host
-systemd service and uses the VPS storage tree for node volumes.
+## Runtime ownership
 
-The current self-hosted Supabase Docker distribution uses Envoy as the default
-API gateway. The gateway remains private; Testagram Caddy is the public HTTPS edge.
+- **XClone** is the web/mobile/TV/desktop client.
+- **Testagram Backend** is the public API, identity/session verifier, canonical
+  product authorization and orchestration layer.
+- **Federated Content** is a private ActivityPub service. Public Federation
+  routing remains disabled until signed inbox application, Backend outbox
+  polling, delivery workers and interoperability gates pass.
+- **Algorithm** is a private feed-ranking service reachable only by Backend.
+- **Data Centre** owns VPS deployment, Android storage nodes, Linux compute
+  nodes, infrastructure state, backup and recovery operations.
 
-Persistent storage is VPS-local:
-- /var/lib/testagram/storage/supabase
-- /var/lib/testagram/storage/media
-- /var/lib/testagram/storage/nodes
-- /var/lib/testagram/supabase for the official Supabase Postgres data/config
+The supported Compose definition is `vps/docker-compose.yml`, kept byte-for-byte
+aligned with `vps/docker-compose.fresh.yml`. It runs Appwrite-backed identity,
+the Backend API, private Algorithm and Federation services, and the Data Centre
+control plane. Product data uses the separately configured Neon database.
+Backblaze B2 is the intended durable media primary and Cloudflare R2 is the
+verified delivery/replica target. Keep media disabled until provider credentials,
+metadata, read-back verification and recovery tests pass.
 
-Deploy with:
-sudo bash vps/install.sh
+## Deploy
 
-Never expose Postgres, Supavisor, Redis/Valkey, control-plane, or internal
-service ports directly to the Internet.
+On a Linux host with Docker Engine, Docker Compose v2 and Git:
 
-## Five-repository application runtime
+```bash
+bash scripts/install-local-docker.sh
+```
 
-The VPS stack includes the separately released Testagram Backend API and the
-private Algorithm ranker on the internal Docker network. Caddy serves the
-Backend API at TESTAGRAM_API_DOMAIN (default api.testagram.site); XClone remains
-the only product frontend and should set VITE_TESTAGRAM_API_URL to that origin.
-The ranker has no public port and accepts only the server-side
-ALGORITHM_INTERNAL_TOKEN.
+The installer creates `vps/fresh.env` from `vps/fresh.env.example` on first
+run and stops. Set real Appwrite, Neon, B2/R2, private-service secrets and
+immutable image digests before running it again. The compatibility entry point
+`sudo bash vps/install.sh` delegates to the same installer; it does not start
+a second stack.
 
-Set TESTAGRAM_BACKEND_IMAGE, TESTAGRAM_ALGORITHM_IMAGE and
-ALGORITHM_INTERNAL_TOKEN in the protected VPS environment before starting the
-stack. Image tags must refer to successfully published GHCR images. If packages
-are private, authenticate Docker to ghcr.io on the VPS using a read-only package
-token; never place that token in the repository.
+Inspect the rendered stack:
 
-The federation container is available only under the federation-preview Compose
-profile and is not routed through Caddy. Its current inbox deliberately returns
-501 until HTTP signature verification, durable inbox/outbox and dynamic actor
-resolution are complete. Do not expose it publicly or claim production
-federation until those gates pass.
+```bash
+docker compose --env-file /opt/testagram/vps/fresh.env -f /opt/testagram/vps/docker-compose.yml config
+docker compose --env-file /opt/testagram/vps/fresh.env -f /opt/testagram/vps/docker-compose.yml ps
+```
 
-The backend uses the same PostgreSQL cluster and validates the configured
-identity-provider session. The algorithm has no database credentials and
-cannot mutate accounts or posts. Media object credentials remain server-only.
+Never expose PostgreSQL, the Algorithm ranker, Federation API, Valkey, or
+control-plane internal ports directly to the Internet. The ranker and
+Federation databases are isolated on private networks. Do not add public
+Federation DNS/Caddy routing before the release gates pass.
+
+## Android storage and Linux compute nodes
+
+Android devices are storage-only nodes. They must not receive executable
+compute workloads. Linux compute nodes may run digest-pinned, allowlisted
+workloads. Register nodes through the authenticated Data Centre control plane
+and verify heartbeats, removable-card identity, available capacity and
+checksummed transfer results before placing media.
+
+## Encrypted backup and restore drill
+
+The backup scripts now operate on the dedicated
+`DATA_CENTRE_DATABASE_URL` infrastructure database, not product social data.
+They can optionally include `TESTAGRAM_STORAGE_ROOT`; coordinate a quiet period
+or use a filesystem snapshot while node writers are active.
+
+Required operator tools: `pg_dump`, Docker Engine, `age`, `rsync`, `tar`,
+`flock`, `sha256sum`, SSH key authentication and a verified host key.
+
+Set `TESTAGRAM_FRESH_ENV_FILE`, `TESTAGRAM_BACKUP_REMOTE` and
+`TESTAGRAM_BACKUP_AGE_RECIPIENT`, then run:
+
+```bash
+bash vps/backup.sh
+```
+
+For an isolated restore drill, use the separately held age identity and an
+approved immutable PostgreSQL image digest:
+
+```bash
+TESTAGRAM_BACKUP_AGE_IDENTITY_FILE=/secure/off-host-age-identity.txt \
+TESTAGRAM_RESTORE_POSTGRES_IMAGE='postgres:17-alpine@sha256:REPLACE_WITH_APPROVED_DIGEST' \
+  bash vps/restore-drill.sh /secure/backup/testagram-data-centre-YYYYMMDDTHHMMSSZ.tar.gz.age
+```
+
+The restore drill verifies the encrypted archive checksum, decrypts the dump,
+restores it into a network-isolated temporary PostgreSQL container and checks
+Data Centre node/hosting/backup tables. It does not prove product login,
+media upload/playback, B2/R2 object recovery or a measured production RPO/RTO.
+Record separate application-level recovery evidence before declaring DR ready.
