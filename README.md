@@ -127,3 +127,19 @@ That gate is not marked green until a physical device supplies evidence for ever
 - [Provider-independent internal platform client](internal/platformclient/client.go)
 
 The platform rebrand preserves compatibility with the existing runtime paths and Compose identity. It does not itself migrate production authentication, database policies, media, or traffic.
+
+
+## Fresh Appwrite runtime
+
+The clean runtime is defined separately in vps/docker-compose.fresh.yml and
+vps/FRESH-DEPLOYMENT.md. It runs the dedicated Backend testagram-backend-fresh
+image, private Algorithm ranker, Data Centre infrastructure control plane and
+Caddy edge without attaching the legacy Supabase network or starting the legacy
+Backend API. Federation remains disabled until its private Backend integration,
+signature verification and durable inbox/outbox are implemented.
+
+Keep FRESH_MEDIA_ENABLED=false until B2/R2 and the Appwrite media collections
+are staged and independently verified. Retention remains disabled and dry-run.
+The fresh compose file is a deployment foundation, not a production-readiness
+claim; Backend-to-Data-Centre media placement and Backend-to-Federation APIs
+remain release blockers.
