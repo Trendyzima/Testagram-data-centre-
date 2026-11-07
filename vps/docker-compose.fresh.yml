@@ -94,8 +94,10 @@ services:
     depends_on:
       federation-db:
         condition: service_healthy
+      # Federation has its own authenticated Backend readiness probe. Do not
+      # gate it on the public API's full readiness, which also requires Algorithm.
       api:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "/federation-api", "--healthcheck"]
       interval: 10s
