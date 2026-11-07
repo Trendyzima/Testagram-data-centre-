@@ -7,9 +7,9 @@ CREATE TABLE IF NOT EXISTS testagram_storage.media_objects (
     object_key TEXT NOT NULL,
     content_type TEXT NOT NULL,
     size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
-    sha256 CHAR(64),
+    sha256 TEXT,
     status TEXT NOT NULL CHECK (status IN (
-        'upload_pending','primary_verified','replication_failed','protected','delete_pending','deleted'
+        'upload_pending','replication_pending','primary_verified','replication_failed','protected','delete_pending','deleted'
     )),
     primary_verified_at TIMESTAMPTZ,
     replica_verified_at TIMESTAMPTZ,
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS testagram_storage.media_replication_jobs (
     object_key TEXT NOT NULL,
     content_type TEXT NOT NULL,
     size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
-    sha256 CHAR(64) NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+    sha256 TEXT NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
     status TEXT NOT NULL CHECK (status IN ('queued','processing','completed','dead')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     available_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
