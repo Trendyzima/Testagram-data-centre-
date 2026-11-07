@@ -13,6 +13,20 @@ jobs:
       TESTAGRAM_BACKEND_IMAGE: ghcr.io/trendyzima/testagram-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       TESTAGRAM_ALGORITHM_IMAGE: ghcr.io/trendyzima/testagram-feed@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
       TESTAGRAM_FEDERATION_IMAGE: ghcr.io/trendyzima/testagram-federation@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+      TESTAGRAM_FRESH_BACKEND_IMAGE: ghcr.io/trendyzima/testagram-backend-fresh@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+      CADDY_IMAGE: caddy:2.10-alpine
+      POSTGRES_CLIENT_IMAGE: postgres:17-alpine
+      DATA_CENTRE_DATABASE_URL: postgresql://postgres:testagram@db:5432/data_centre?sslmode=disable
+      APPWRITE_ENDPOINT: https://cloud.appwrite.io/v1
+      APPWRITE_PROJECT_ID: ci-project
+      APPWRITE_DATABASE_ID: ci-database
+      APPWRITE_SERVER_API_KEY: ci-appwrite-server-key
+      FRESH_API_ALLOWED_ORIGINS: https://testagram.site,https://www.testagram.site
+      FRESH_MEDIA_ENABLED: "false"
+      VPS_INTERNAL_TOKEN: ci-internal
+      VPS_NODE_BOOTSTRAP_TOKEN: ci-bootstrap
+      ALGORITHM_INTERNAL_TOKEN: ci-algorithm-internal-token-long-enough
+      TLS_ADMIN_EMAIL: ci@example.invalid
       TESTAGRAM_AUTH_PROVIDER: supabase
       # Local Postgres service for CI only; production uses Neon with TLS.
       TESTAGRAM_DATABASE_URL: postgresql://postgres:testagram@db:5432/postgres?sslmode=disable
@@ -83,6 +97,9 @@ jobs:
       - name: Validate Compose syntax
         run: |
           docker compose -f backend/docker-compose.yml config
+          docker compose -f vps/docker-compose.fresh.yml config
+          ! grep -qi 'supabase' vps/docker-compose.fresh.yml
+          docker run --rm -e TLS_ADMIN_EMAIL=ci@example.invalid -v "$PWD/vps/fresh/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
       - name: Validate VPS control plane Compose runtime
         run: |
           set -euo pipefail
