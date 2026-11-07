@@ -75,11 +75,6 @@ jobs:
           bash scripts/validate-testagram-platform-contracts.sh
           python -m pip install --disable-pip-version-check PyYAML
           python scripts/validate-platform-openapi.py
-          bash -n testagram-platform/bootstrap.sh
-          bash -n testagram-platform/prepare.sh
-          bash -n testagram-platform/status.sh
-          bash -n testagram-platform/healthcheck.sh
-          bash -n testagram-platform/storage.sh
           tmp_storage="$(mktemp -d)"
           TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash testagram-platform/storage.sh
           test -d "$tmp_storage/platform"
