@@ -132,7 +132,7 @@ func (m *Manager) UploadURL(ctx context.Context, tenantID, namespace, key, conte
 	if _, ok := ns.AllowedTypes[contentType]; !ok {
 		return "", fmt.Errorf("%w: content type not allowed", ErrForbidden)
 	}
-	scopedKey := tenantPrefix(tenantID) + key
+	scopedKey := storageObjectKey(tenantID, key)
 	return m.provider.PresignPut(ctx, ns.PhysicalBucket, scopedKey, contentType, size, ns.UploadTTL)
 }
 
@@ -150,7 +150,7 @@ func (m *Manager) DownloadURL(ctx context.Context, requesterTenant, ownerTenant,
 	if !ns.Public && requesterTenant != ownerTenant {
 		return "", ErrForbidden
 	}
-	return m.provider.PresignGet(ctx, ns.PhysicalBucket, tenantPrefix(ownerTenant)+key, ns.DownloadTTL)
+	return m.provider.PresignGet(ctx, ns.PhysicalBucket, storageObjectKey(ownerTenant, key), ns.DownloadTTL)
 }
 
 // VerifyUpload checks provider-observed metadata before an upload can be marked
@@ -170,7 +170,7 @@ func (m *Manager) VerifyUpload(ctx context.Context, tenantID, namespace, key, ex
 	if _, ok := ns.AllowedTypes[expectedContentType]; !ok {
 		return ObjectInfo{}, ErrForbidden
 	}
-	info, err := m.provider.Head(ctx, ns.PhysicalBucket, tenantPrefix(tenantID)+key)
+	info, err := m.provider.Head(ctx, ns.PhysicalBucket, storageObjectKey(tenantID, key))
 	if err != nil {
 		return ObjectInfo{}, err
 	}
@@ -271,6 +271,14 @@ func (m *Manager) namespace(name string) (Namespace, error) {
 }
 
 func tenantPrefix(tenant string) string { return "tenants/" + tenant + "/" }
+func storageObjectKey(tenant, key string) string {
+	if strings.HasPrefix(key, "v1/") && len(key) == 35 {
+		if _, err := hex.DecodeString(strings.TrimPrefix(key, "v1/")); err == nil {
+			return key
+		}
+	}
+	return tenantPrefix(tenant) + key
+}
 
 func validKey(key string) bool {
 	if key == "" || len(key) > 1024 || strings.HasPrefix(key, "/") || strings.ContainsAny(key, "\\\x00\r\n") {
