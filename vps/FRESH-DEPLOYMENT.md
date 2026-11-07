@@ -58,7 +58,8 @@ networks, start the legacy cmd/api, or configure retired database credentials.
 8. Keep TESTAGRAM_ENABLE_NODES=false until the separate Data Centre database,
    pinned PostgreSQL client image, VPS_INTERNAL_TOKEN and
    VPS_NODE_BOOTSTRAP_TOKEN are provisioned. Enabling it activates the nodes
-   Compose profile and its migrations/control-plane.
+   Compose profile and its migrations/control-plane. The installer also
+   activates the nodes.testagram.site Caddy site only for this profile.
 9. Provision Backblaze B2 as the durable primary object store and Cloudflare R2
    as the delivery/replica store. Backend implements B2 signed uploads, B2
    SHA-256 verification, synchronous R2 copy/read-back verification, private
