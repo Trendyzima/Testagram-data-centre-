@@ -209,7 +209,7 @@ func (m *Manager) VerifyUploadChecksum(ctx context.Context, tenantID, namespace,
 	if !ok {
 		return ErrChecksumUnavailable
 	}
-	actual, err := checksummer.SHA256(ctx, ns.PhysicalBucket, tenantPrefix(tenantID)+key, maxBytes)
+	actual, err := checksummer.SHA256(ctx, ns.PhysicalBucket, storageObjectKey(tenantID, key), maxBytes)
 	if err != nil {
 		return err
 	}
@@ -229,7 +229,7 @@ func (m *Manager) Delete(ctx context.Context, requesterTenant, ownerTenant, name
 	if !tenantIDPattern.MatchString(ownerTenant) || requesterTenant != ownerTenant || !validKey(key) {
 		return ErrForbidden
 	}
-	return m.provider.Delete(ctx, ns.PhysicalBucket, tenantPrefix(ownerTenant)+key)
+	return m.provider.Delete(ctx, ns.PhysicalBucket, storageObjectKey(ownerTenant, key))
 }
 
 // List returns only the authenticated tenant's objects. The provider cursor is
