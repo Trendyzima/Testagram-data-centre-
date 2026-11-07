@@ -26,6 +26,10 @@ network, start the legacy cmd/api, or configure Supabase credentials.
   https://federation.testagram.site; that hostname must not receive public DNS
   or Caddy routing until the remaining federation release gates pass.
 
+## Node control plane
+
+Android storage nodes and Linux computer nodes register through the dedicated HTTPS hostname `nodes.testagram.site`. The control-plane port remains loopback-bound; Caddy is the only public ingress. Keep the bootstrap token private and use per-node tokens after registration. Node-reported storage is not part of the Backend B2/R2 media pool until checksum-verified object transfer and recovery are integrated.
+
 ## Before deployment
 
 1. Publish the fresh Backend image using Backend container-release.yml and pin
