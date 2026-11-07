@@ -17,7 +17,6 @@ The object-storage layout is:
 | Delivery/replica | Cloudflare R2 | Verified replica for Cloudflare-side delivery and reduced origin egress |
 | Optional node replicas | Registered Android/Linux nodes | Additional verified copies or explicitly disposable caches; never the only copy |
 | Media metadata and quotas | Appwrite via Backend | Current fresh runtime stores upload reservations, media ownership, quotas and provider replica state in private Appwrite collections; Neon is the target social data plane, not yet the media ledger |
-| Identity and storage metadata collections | Appwrite | Identity integration and documented metadata/indexes only; not the binary media store |
 
 B2 and R2 are both S3-compatible, but their endpoints, regions, credentials,
 buckets and operational semantics must remain independently configured. Never
@@ -28,7 +27,7 @@ required buckets and operations.
 
 1. XClone requests an upload intent from Backend. Backend authenticates the
    Appwrite session, authorizes the owner and visibility, enforces quotas, and
-   creates a pending object record in Neon.
+   creates a pending object record and quota reservation in Appwrite.
 2. Backend issues a short-lived, object-scoped upload authorization for the
    B2 primary. Provider credentials remain server-side.
 3. The client uploads the object to B2. Backend verifies object existence,
@@ -52,7 +51,7 @@ required buckets and operations.
 - Use opaque, non-user-controlled object keys; do not put email addresses or
   other personal data in bucket paths.
 - Store SHA-256, byte length, media type, owner, visibility, created time and
-  per-provider verification state in the canonical metadata ledger.
+  per-provider verification state in the current Appwrite media metadata ledger.
 - Validate MIME type from file content, enforce upload size limits and reject
   path traversal or caller-supplied bucket/key overrides.
 - Keep buckets private. Use short-lived signed requests or Backend-proxied
