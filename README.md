@@ -58,7 +58,7 @@ After installation:
 6. Confirm heartbeats report the selected SD card's total/free bytes and removable-card identity.
 7. Node B runs in storage-only mode. On-device video transcoding is disabled; video processing must run on a separate server/worker.
 
-Android is the local media/storage node. The Linux Docker host runs the Testagram Backend and Data Centre control-plane services. Supabase is retired and is not part of the fresh runtime.
+Android is the local media/storage node. The Linux Docker host runs the Testagram Backend and Data Centre control-plane services. The fresh runtime uses Appwrite, Neon, Backblaze B2 and Cloudflare R2.
 
 ## Docker VPS quick install
 
@@ -132,7 +132,7 @@ The clean runtime is defined separately in `vps/docker-compose.fresh.yml` and
 `vps/FRESH-DEPLOYMENT.md`. It runs the dedicated fresh Backend API, private
 Algorithm ranker, private Federation service, Data Centre infrastructure
 control plane and Caddy edge without attaching legacy services or starting the
-legacy Backend API. Supabase is retired and is not part of this architecture.
+legacy Backend API. The default runtime uses Appwrite, Neon, Backblaze B2 and Cloudflare R2.
 
 The five-repository ownership boundary is:
 
