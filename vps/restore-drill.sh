@@ -18,29 +18,28 @@ test -f "$CHECKSUM_FILE" || { echo "Checksum sidecar missing: $CHECKSUM_FILE" >&
 (cd "$BACKUP_DIR" && sha256sum -c "$(basename "$CHECKSUM_FILE")")
 
 STAGE="$(mktemp -d)"
-CONTAINER="testagram-restore-drill-$(date -u +%s)-$$"
+CONTAINER="testagram-datacentre-restore-$(date -u +%s)-$$"
 PASS="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
 cleanup() {
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   rm -rf "$STAGE"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 age -d -i "$IDENTITY_FILE" -o "$STAGE/backup.tar.gz" "$BACKUP_FILE"
 tar -tzf "$STAGE/backup.tar.gz" >/dev/null
 tar -xzf "$STAGE/backup.tar.gz" -C "$STAGE"
-test -s "$STAGE/database.dump"
-test -s "$STAGE/storage.tar.gz"
-tar -tzf "$STAGE/storage.tar.gz" >/dev/null
-mkdir "$STAGE/storage-restored"
-tar -xzf "$STAGE/storage.tar.gz" -C "$STAGE/storage-restored"
-find "$STAGE/storage-restored" -name .testagram-storage-root -print -quit | grep -q . || {
-  echo "Restored storage archive is missing the Testagram storage marker" >&2
-  exit 1
-}
+test -s "$STAGE/data-centre.dump"
 
-# The container is deliberately network-isolated and never publishes a port.
-# Use the exact approved Supabase Postgres image digest from the deployment.
+if [ -f "$STAGE/node-storage.tar.gz" ]; then
+  tar -tzf "$STAGE/node-storage.tar.gz" >/dev/null
+  mkdir "$STAGE/storage-restored"
+  tar -xzf "$STAGE/node-storage.tar.gz" -C "$STAGE/storage-restored"
+fi
+
+# Restore into an isolated container with no network and no published ports.
 docker run -d --name "$CONTAINER" --network none -e "POSTGRES_PASSWORD=$PASS" "$RESTORE_IMAGE" >/dev/null
 ready=0
 for _ in $(seq 1 60); do
@@ -48,13 +47,13 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 test "$ready" -eq 1 || { echo "Isolated restore database did not become ready" >&2; exit 1; }
-docker cp "$STAGE/database.dump" "$CONTAINER:/tmp/database.dump" >/dev/null
-docker exec "$CONTAINER" pg_restore -U postgres -d postgres --no-owner --no-acl --exit-on-error /tmp/database.dump
-EXPECTED="$(docker exec "$CONTAINER" psql -U postgres -d postgres -Atqc "SELECT (to_regclass('public.vps_nodes') IS NOT NULL AND to_regclass('testagram_video.videos') IS NOT NULL AND to_regclass('testagram_platform.feature_flags') IS NOT NULL)::text")"
-test "$EXPECTED" = "true" || { echo "Restored database is missing expected Testagram schemas/tables" >&2; exit 1; }
+docker cp "$STAGE/data-centre.dump" "$CONTAINER:/tmp/data-centre.dump" >/dev/null
+docker exec "$CONTAINER" pg_restore -U postgres -d postgres --no-owner --no-acl --exit-on-error /tmp/data-centre.dump
+EXPECTED="$(docker exec "$CONTAINER" psql -U postgres -d postgres -Atqc "SELECT (to_regclass('public.vps_nodes') IS NOT NULL AND to_regclass('testagram_hosting.backup_manifests') IS NOT NULL AND to_regclass('testagram_hosting.recovery_drills') IS NOT NULL)::text")"
+test "$EXPECTED" = "true" || { echo "Restored database is missing expected Data Centre infrastructure tables" >&2; exit 1; }
 
-echo "RESTORE DRILL PASSED"
-echo "Database: pg_restore completed and expected Testagram tables are present."
-echo "Storage: archive integrity passed and the storage marker was restored."
+echo "DATA CENTRE RESTORE DRILL PASSED"
+echo "Database: pg_restore completed and node/hosting backup tables are present."
+if [ -f "$STAGE/node-storage.tar.gz" ]; then echo "Node storage: archive integrity and extraction passed."; else echo "Node storage: not included in this backup."; fi
 echo "Isolation: temporary PostgreSQL container had no network and no published ports."
-echo "This validates archive readability, not full application login/upload/playback or a measured production RTO."
+echo "This validates archive readability, not full node re-enrollment, media recovery or a measured production RTO."
