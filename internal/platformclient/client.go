@@ -64,7 +64,7 @@ func New(baseURL, token string, timeout time.Duration) (*Client, error) {
 		(u.Scheme != "https" && !(u.Scheme == "http" && isPrivatePlatformHost(u.Hostname()))) {
 		return nil, errors.New("platform base URL must be HTTPS (HTTP only for private service hosts)")
 	}
-	if len(token) < 32 || strings.ContainsAny(token, "\\r\\n") {
+	if len(token) < 32 || strings.ContainsAny(token, "\r\n") {
 		return nil, errors.New("platform internal token must contain at least 32 characters")
 	}
 	if timeout <= 0 || timeout > 5*time.Second {
