@@ -189,7 +189,7 @@ func (l *Lifecycle) UploadURL(ctx context.Context, tenantID, namespace, key, con
 	maxBytes, err := l.maxBytes(contentType)
 	if err != nil { return UploadGrant{}, err }
 	if size > maxBytes { return UploadGrant{}, ErrTooLarge }
-	b2Bucket, _, err := l.bucketPair(namespace)
+	_, _, err := l.bucketPair(namespace)
 	if err != nil { return UploadGrant{}, err }
 	url, err := l.manager.UploadURL(ctx, tenantID, namespace, key, contentType, size)
 	if err != nil { return UploadGrant{}, err }
@@ -246,10 +246,11 @@ func (l *Lifecycle) DownloadURL(ctx context.Context, requesterTenant, ownerTenan
 }
 
 func (l *Lifecycle) Delete(ctx context.Context, requesterTenant, ownerTenant, namespace, key string) error {
-	if err := l.manager.Delete(ctx, requesterTenant, ownerTenant, namespace, key); err != nil {
+	_, r2Bucket, err := l.bucketPair(namespace)
+	if err != nil {
 		return err
 	}
-	_, r2Bucket, err := l.bucketPair(namespace)
-	if err != nil { return err }
-	return l.replica.Delete(ctx, r2Bucket, tenantPrefix(ownerTenant)+key)
+	primaryErr := l.manager.Delete(ctx, requesterTenant, ownerTenant, namespace, key)
+	replicaErr := l.replica.Delete(ctx, r2Bucket, tenantPrefix(ownerTenant)+key)
+	return errors.Join(primaryErr, replicaErr)
 }
