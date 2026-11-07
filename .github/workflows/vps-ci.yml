@@ -78,7 +78,7 @@ jobs:
           test -f backend/runtime/Caddyfile
           grep -q "B2_S3_ENDPOINT" vps/docker-compose.fresh.yml
           grep -q "CLOUDFLARE_R2_ENDPOINT" vps/docker-compose.fresh.yml
-          grep -q "FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}" vps/docker-compose.fresh.yml
+          grep -q 'FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}' vps/docker-compose.fresh.yml
           grep -q "TESTAGRAM_RETENTION_ENABLED: \"false\"" vps/docker-compose.fresh.yml
           grep -q "TESTAGRAM_RETENTION_DRY_RUN: \"true\"" vps/docker-compose.fresh.yml
           echo "Fresh runtime, B2/R2 storage contract and disabled-retention gates: PASS"
