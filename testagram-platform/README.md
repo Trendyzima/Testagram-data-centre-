@@ -1,6 +1,6 @@
-# Testagram Platform Runtime
+# Testagram Platform Runtime — legacy migration boundary
 
-This is Testagram's deployment-owned entrypoint for its self-hosted platform services. The application-facing deployment, local storage paths, health checks, and runtime project are branded **Testagram**.
+**This is a legacy Supabase-backed runtime retained temporarily for controlled data export and rollback. It is not the target production deployment and must not be used for new fresh-platform releases.** The target deployment is `vps/docker-compose.fresh.yml`: Appwrite identity, Backend-managed Neon social data, Federation's separate PostgreSQL state, Algorithm ranking, and B2/R2 media through the storage service. Keep this legacy runtime isolated until user/account/media data has been exported, reconciled and restore-tested; do not delete its live data or credentials as part of code cleanup.
 
 ## Important implementation boundary
 
