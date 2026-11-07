@@ -155,7 +155,7 @@ func (s *Server) mediaVerify(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	if !s.internalOnly(w, r) || s.mediaUnavailable(w) {
+	if !s.mediaInternalOnly(w, r) || s.mediaUnavailable(w) {
 		return
 	}
 	var in mediaVerifyRequest
@@ -237,7 +237,7 @@ func (s *Server) mediaStatus(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	if !s.internalOnly(w, r) || s.mediaUnavailable(w) {
+	if !s.mediaInternalOnly(w, r) || s.mediaUnavailable(w) {
 		return
 	}
 	ownerID := r.URL.Query().Get("owner_id")
@@ -274,7 +274,7 @@ func (s *Server) mediaDownloadURL(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	if !s.internalOnly(w, r) || s.mediaUnavailable(w) {
+	if !s.mediaInternalOnly(w, r) || s.mediaUnavailable(w) {
 		return
 	}
 	var in mediaDownloadRequest
@@ -317,7 +317,7 @@ func (s *Server) mediaDelete(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	if !s.internalOnly(w, r) || s.mediaUnavailable(w) {
+	if !s.mediaInternalOnly(w, r) || s.mediaUnavailable(w) {
 		return
 	}
 	var in mediaDeleteRequest
@@ -353,7 +353,7 @@ func (s *Server) mediaDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.media.Delete(ctx, in.RequesterID, in.OwnerID, in.Namespace, in.Key); err != nil {
-		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "media deletion pending provider recovery"})
+		reply(w, http.StatusAccepted, map[string]string{"status": "delete_pending"})
 		return
 	}
 	_, err = s.db.Exec(ctx, `UPDATE testagram_storage.media_objects SET status='deleted',deleted_at=NOW(),updated_at=NOW()
@@ -371,6 +371,7 @@ func (s *Server) runMediaReplication(ctx context.Context) {
 	for {
 		if s.media != nil {
 			s.processMediaReplicationBatch(ctx)
+			s.processMediaDeletionBatch(ctx)
 		}
 		select {
 		case <-ctx.Done():
@@ -380,6 +381,40 @@ func (s *Server) runMediaReplication(ctx context.Context) {
 	}
 }
 
+func (s *Server) processMediaDeletionBatch(ctx context.Context) {
+	batchCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	rows, err := s.db.Query(batchCtx, `SELECT owner_id,namespace,object_key FROM testagram_storage.media_objects WHERE status='delete_pending' ORDER BY updated_at LIMIT 5`)
+	if err != nil {
+		return
+	}
+	type deletion struct {
+		ownerID string
+		namespace string
+		key string
+	}
+	items := make([]deletion, 0, 5)
+	for rows.Next() {
+		var item deletion
+		if err := rows.Scan(&item.ownerID, &item.namespace, &item.key); err != nil {
+			rows.Close()
+			return
+		}
+		items = append(items, item)
+	}
+	rows.Close()
+	for _, item := range items {
+		deleteCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		err := s.media.Delete(deleteCtx, item.ownerID, item.ownerID, item.namespace, item.key)
+		cancel()
+		if err != nil {
+			continue
+		}
+		updateCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_, _ = s.db.Exec(updateCtx, `UPDATE testagram_storage.media_objects SET status='deleted',deleted_at=coalesce(deleted_at,NOW()),updated_at=NOW() WHERE owner_id=$1 AND namespace=$2 AND object_key=$3 AND status='delete_pending'`, item.ownerID, item.namespace, item.key)
+		cancel()
+	}
+}
 func (s *Server) processMediaReplicationBatch(ctx context.Context) {
 	batchCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
@@ -465,7 +500,7 @@ func (s *Server) processMediaReplicationJob(ctx context.Context, job mediaReplic
 		return
 	}
 	_, txErr = tx.Exec(ctx, `UPDATE testagram_storage.media_objects SET status=$4,updated_at=NOW()
-		WHERE owner_id=$1 AND namespace=$2 AND object_key=$3`, job.OwnerID, job.Namespace, job.Key, objectState)
+		WHERE owner_id=$1 AND namespace=$2 AND object_key=$3 AND status='replication_pending'`, job.OwnerID, job.Namespace, job.Key, objectState)
 	if txErr != nil {
 		return
 	}
