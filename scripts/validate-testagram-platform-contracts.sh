@@ -24,6 +24,9 @@ grep -q 'profiles: ["nodes"]' <(sed -n '/^  control-plane:/,/^  edge:/p' vps/doc
 grep -q 'TESTAGRAM_ENABLE_RANKING' scripts/install-local-docker.sh
 grep -q 'TESTAGRAM_ENABLE_FEDERATION' scripts/install-local-docker.sh
 grep -q 'TESTAGRAM_ENABLE_NODES' scripts/install-local-docker.sh
+! grep -q 'nodes.testagram.site' vps/fresh/Caddyfile
+grep -q 'nodes.testagram.site' vps/fresh/Caddyfile.nodes
+grep -q 'Caddyfile.nodes' scripts/install-local-docker.sh
 edge_block="$(sed -n '/^  edge:/,/^networks:/p' vps/docker-compose.fresh.yml)"
 grep -q 'api:' <<< "$edge_block"
 if grep -q 'federation-api' <<< "$edge_block"; then
