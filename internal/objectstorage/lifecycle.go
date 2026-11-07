@@ -299,6 +299,6 @@ func (l *Lifecycle) Delete(ctx context.Context, requesterTenant, ownerTenant, na
 		return err
 	}
 	primaryErr := l.manager.Delete(ctx, requesterTenant, ownerTenant, namespace, key)
-	replicaErr := l.replica.Delete(ctx, r2Bucket, tenantPrefix(ownerTenant)+key)
+	replicaErr := l.replica.Delete(ctx, r2Bucket, storageObjectKey(ownerTenant, key))
 	return errors.Join(primaryErr, replicaErr)
 }
