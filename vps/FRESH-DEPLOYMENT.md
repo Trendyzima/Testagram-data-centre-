@@ -21,10 +21,11 @@ network, start the legacy cmd/api, or configure Supabase credentials.
 - federation-api: a private ActivityPub preview service on the internal
   services/federation networks, backed by its dedicated PostgreSQL database.
   It resolves opted-in actors through Backend and verifies/persists signed inbox
-  deliveries, but it does not yet process inbox activities or execute outbound
-  delivery/follower-fanout workers. Its canonical actor origin is
-  https://federation.testagram.site; that hostname must not receive public DNS
-  or Caddy routing until the remaining federation release gates pass.
+  deliveries. An opt-in signed outbound delivery executor exists, but Compose
+  explicitly sets FEDERATION_DELIVERY_WORKER_ENABLED=false because the Backend
+  event poller, inbox processor and follower-fanout producer are not complete.
+  Its canonical actor origin is https://federation.testagram.site; that hostname
+  must not receive public DNS or Caddy routing until the remaining release gates pass.
 
 ## Before deployment
 
