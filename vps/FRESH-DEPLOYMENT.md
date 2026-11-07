@@ -20,9 +20,12 @@ network, start the legacy cmd/api, or configure Supabase credentials.
   The Federation hostname is deliberately absent from the public Caddy config.
 - federation-api: a private ActivityPub preview service on the internal
   services/federation networks, backed by its dedicated PostgreSQL database.
-  It resolves opted-in actors through Backend and verifies/persists signed inbox
-  deliveries, but it does not yet process inbox activities or execute outbound
-  delivery/follower-fanout workers. Its canonical actor origin is
+  It resolves opted-in actors through Backend, verifies/persists signed inbox
+  deliveries, and includes a durable Backend outbox poller that converts eligible
+  public posts into ActivityPub Create activities. The poller and outbound delivery
+  worker remain opt-in until staging verifies recipient state, retries and peer
+  interoperability. Inbound activity projection into Backend-owned social data
+  and accepted remote follower fan-out remain unfinished. Its canonical actor origin is
   https://federation.testagram.site; that hostname must not receive public DNS
   or Caddy routing until the remaining federation release gates pass.
 
@@ -59,11 +62,23 @@ network, start the legacy cmd/api, or configure Supabase credentials.
     load and security tests before production DNS cutover.
 
 This compose file is a deployment foundation, not proof of production readiness.
-The private Backend-to-Federation actor and readiness contracts exist, but inbox
-activity application, Backend outbox polling, outbound delivery, follower fan-out
-and cross-repository end-to-end tests remain unfinished. Backend-to-Data-Centre
+The private Backend-to-Federation actor and readiness contracts exist. A durable
+Backend outbox poller and quarantine path are implemented in the Federation PR,
+but must be enabled and verified in staging. Inbox activity application,
+authoritative remote-follow acceptance, outbound delivery, follower fan-out and
+cross-repository end-to-end tests remain release gates. Backend-to-Data-Centre
 node media placement, signed node object transfer, durable replication jobs,
 provider reconciliation scheduling and operational restore drills also remain
 release gates. Real B2/R2 credentials and live provider E2E tests have not yet
 been exercised by this repository's CI. Do not add public Federation routing until those
 contracts and tests are complete.
+
+
+## Data Centre media lifecycle
+
+The Data Centre implementation adds a private B2-primary/R2-replica media
+control plane with durable upload metadata, asynchronous verification and
+replication jobs, retry/dead-letter handling, protected-state downloads and
+retryable deletion. It is disabled by default. Backend must switch its media
+handlers to this API and the public Cloudflare worker must be bound to the
+separate R2 public bucket before media storage is enabled in staging.
