@@ -16,7 +16,44 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var mediaObjectKeyPattern = regexp.MustCompile(`^users/[A-Za-z0-9_-]{1,128}/[a-f0-9]{32}$`)
+var mediaObjectKeyPattern = regexp.MustCompile(`^users/[A-Za-z0-9_-]{1,128}/[a-f0-9]{32}package main
+
+import (
+	"context"
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"os"
+	"io"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/Trendyzima/Testagram-data-centre-/internal/objectstorage"
+	"github.com/jackc/pgx/v5"
+)
+
+)
+var freshMediaObjectKeyPattern = regexp.MustCompile(`^v1/[a-f0-9]{32}package main
+
+import (
+	"context"
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"os"
+	"io"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/Trendyzima/Testagram-data-centre-/internal/objectstorage"
+	"github.com/jackc/pgx/v5"
+)
+
+)
 var mediaSHA256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type mediaUploadURLRequest struct {
@@ -78,10 +115,10 @@ func decodeStrictJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 }
 
 func validMediaRequest(ownerID, namespace, key string) bool {
+	ownerScopedKey := mediaObjectKeyPattern.MatchString(key) && strings.HasPrefix(key, "users/"+ownerID+"/")
 	return ownerID != "" && len(ownerID) <= 128 &&
 		(namespace == "media-private" || namespace == "media-public") &&
-		mediaObjectKeyPattern.MatchString(key) &&
-		strings.HasPrefix(key, "users/"+ownerID+"/")
+		(ownerScopedKey || freshMediaObjectKeyPattern.MatchString(key))
 }
 
 func (s *Server) mediaInternalOnly(w http.ResponseWriter, r *http.Request) bool {
