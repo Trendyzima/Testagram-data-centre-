@@ -134,9 +134,18 @@ export default {
       return json({ error: "websocket upgrade required" }, 426);
     }
     if (!allowedOrigin(request.headers.get("Origin"), env)) return json({ error: "origin not allowed" }, 403);
-    const authorization = request.headers.get("Authorization") ?? "";
-    if (!authorization.startsWith("Bearer ")) return json({ error: "realtime ticket required" }, 401);
-    const claims = await verifyTicket(env.REALTIME_TICKET_SECRET, authorization.slice(7).trim(), match[1]);
+    // The browser WebSocket API cannot set Authorization headers. Carry the
+    // short-lived ticket in a requested subprotocol, but never echo that token
+    // back as the negotiated protocol or place it in the URL.
+    const offeredProtocols = (request.headers.get("Sec-WebSocket-Protocol") ?? "")
+      .split(",").map((value) => value.trim()).filter(Boolean);
+    const protocol = "testagram.realtime.v1";
+    const ticketProtocols = offeredProtocols.filter((value) => value.startsWith("ticket."));
+    if (!offeredProtocols.includes(protocol) || ticketProtocols.length !== 1) {
+      return json({ error: "realtime protocol and ticket are required" }, 401);
+    }
+    const ticket = ticketProtocols[0].slice("ticket.".length);
+    const claims = await verifyTicket(env.REALTIME_TICKET_SECRET, ticket, match[1]);
     if (!claims) return json({ error: "invalid or expired realtime ticket" }, 401);
 
     const id = env.REALTIME.idFromName(match[1]);
@@ -144,6 +153,7 @@ export default {
       method: "GET",
       headers: {
         Upgrade: "websocket",
+        "Sec-WebSocket-Protocol": protocol,
         "x-testagram-conversation-id": claims.conversation_id,
         "x-testagram-subject": claims.sub,
       },
@@ -176,7 +186,7 @@ export class ConversationRoom {
       const server = pair[1];
       this.state.acceptWebSocket(server, [conversationID]);
       server.serializeAttachment({ conversationID, subject });
-      return new Response(null, { status: 101, webSocket: client });
+      return new Response(null, { status: 101, webSocket: client, headers: { "Sec-WebSocket-Protocol": "testagram.realtime.v1" } });
     }
 
     if (url.pathname === "/publish" && request.method === "POST") {
