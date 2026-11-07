@@ -68,6 +68,8 @@ class NodeClient(private val context: Context, private val config: NodeConfig) {
         .put("workloadExecution", false)
         .put("storageType", "removable_sd")
         .put("storageIdentity", card.uuid)
+        .put("mediaStorageBytes", card.totalBytes)
+        .put("mediaStorageFreeBytes", card.availableBytes)
         .put("onDeviceTranscoding", false)
 
     fun register() {
