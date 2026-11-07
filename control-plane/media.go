@@ -370,6 +370,7 @@ func (s *Server) runMediaReplication(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		if s.media != nil {
+			s.expirePendingMediaUploads(ctx)
 			s.processMediaReplicationBatch(ctx)
 			s.processMediaDeletionBatch(ctx)
 		}
@@ -381,6 +382,13 @@ func (s *Server) runMediaReplication(ctx context.Context) {
 	}
 }
 
+func (s *Server) expirePendingMediaUploads(ctx context.Context) {
+	batchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, _ = s.db.Exec(batchCtx, `UPDATE testagram_storage.media_objects
+		SET status='delete_pending',updated_at=NOW()
+		WHERE status='upload_pending' AND created_at < NOW()-interval '30 minutes'`)
+}
 func (s *Server) processMediaDeletionBatch(ctx context.Context) {
 	batchCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
