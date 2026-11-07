@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}"
-PLATFORM_OBJECTS="$ROOT/supabase" # Keep legacy object path stable; do not move live data during rebrand.
+PLATFORM_OBJECTS="$ROOT/platform"
 MEDIA="$ROOT/media"
 NODES="$ROOT/nodes"
 
@@ -19,6 +19,6 @@ touch "$ROOT/.testagram-storage-root"
 chmod 0660 "$ROOT/.testagram-storage-root"
 
 printf 'Testagram VPS storage ready: %s\n' "$ROOT"
-printf '  Platform object backing store (legacy-compatible path): %s\n' "$PLATFORM_OBJECTS"
+printf '  Platform object backing store: %s\n' "$PLATFORM_OBJECTS"
 printf '  Testagram media:  %s\n' "$MEDIA"
 printf '  Node volumes:     %s\n' "$NODES"
