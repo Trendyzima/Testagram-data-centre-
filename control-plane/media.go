@@ -200,7 +200,7 @@ func (s *Server) mediaVerify(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid media verification request"})
 		return
 	}
-	if !validMediaRequest(in.OwnerID, in.Namespace, in.Key) || in.ContentType == "" || in.SizeBytes < 1 || !mediaSHA256Pattern.MatchString(strings.ToLower(in.SHA256)) {
+	if !validMediaRequest(in.OwnerID, in.Namespace, in.Key) || in.ContentType == "" || in.SizeBytes < 1 || (in.SHA256 != "" && !mediaSHA256Pattern.MatchString(strings.ToLower(in.SHA256))) {
 		reply(w, http.StatusBadRequest, map[string]string{"error": "invalid media verification metadata"})
 		return
 	}
@@ -212,13 +212,13 @@ func (s *Server) mediaVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	var status, contentType string
+	var status, contentType, replicaState string
 	var size int64
 	var existingSHA string
-	err = tx.QueryRow(ctx, `SELECT status,content_type,size_bytes,coalesce(sha256,'')
+	err = tx.QueryRow(ctx, `SELECT status,content_type,size_bytes,coalesce(sha256,''),replica_state
 		FROM testagram_storage.media_objects
 		WHERE owner_id=$1 AND namespace=$2 AND object_key=$3
-		FOR UPDATE`, in.OwnerID, in.Namespace, in.Key).Scan(&status, &contentType, &size, &existingSHA)
+		FOR UPDATE`, in.OwnerID, in.Namespace, in.Key).Scan(&status, &contentType, &size, &existingSHA, &replicaState)
 	if err == pgx.ErrNoRows {
 		reply(w, http.StatusNotFound, map[string]string{"error": "media upload intent not found"})
 		return
@@ -228,21 +228,23 @@ func (s *Server) mediaVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	digest := strings.ToLower(in.SHA256)
-	if contentType != in.ContentType || size != in.SizeBytes || (existingSHA != "" && existingSHA != digest) {
+	if contentType != in.ContentType || size != in.SizeBytes || (existingSHA != "" && digest != "" && existingSHA != digest) {
 		reply(w, http.StatusConflict, map[string]string{"error": "media verification metadata conflicts with upload intent"})
 		return
 	}
-	if status == "protected" {
+	if status == "protected" && replicaState == "verified" {
 		_ = tx.Commit(ctx)
-		reply(w, http.StatusOK, map[string]any{"status": "protected", "sha256": digest})
+		reply(w, http.StatusOK, map[string]any{"status": "protected", "sha256": existingSHA})
 		return
 	}
-	if status != "upload_pending" && status != "replication_pending" && status != "replication_failed" {
+	if status != "upload_pending" && status != "replication_pending" && status != "replication_failed" && status != "protected" {
 		reply(w, http.StatusConflict, map[string]string{"error": "media object is not eligible for verification"})
 		return
 	}
 	_, err = tx.Exec(ctx, `UPDATE testagram_storage.media_objects
-		SET sha256=$4,status='replication_pending',updated_at=NOW()
+		SET sha256=CASE WHEN $4='' THEN sha256 ELSE $4 END,
+		    status=CASE WHEN status='protected' THEN 'protected' ELSE 'replication_pending' END,
+		    replica_state='pending',updated_at=NOW()
 		WHERE owner_id=$1 AND namespace=$2 AND object_key=$3`,
 		in.OwnerID, in.Namespace, in.Key, digest)
 	if err != nil {
@@ -251,12 +253,12 @@ func (s *Server) mediaVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO testagram_storage.media_replication_jobs
 		(owner_id,namespace,object_key,content_type,size_bytes,sha256,status)
-		VALUES($1,$2,$3,$4,$5,$6,'queued')
+		VALUES($1,$2,$3,$4,$5,NULLIF($6,''),'queued')
 		ON CONFLICT(owner_id,namespace,object_key) DO UPDATE
-		SET content_type=EXCLUDED.content_type,size_bytes=EXCLUDED.size_bytes,sha256=EXCLUDED.sha256,
+		SET content_type=EXCLUDED.content_type,size_bytes=EXCLUDED.size_bytes,sha256=coalesce(EXCLUDED.sha256,testagram_storage.media_replication_jobs.sha256),
 		    status='queued',attempts=0,available_at=NOW(),lease_until=NULL,lease_token=NULL,
 		    last_error_code=NULL,updated_at=NOW()
-		WHERE testagram_storage.media_replication_jobs.status IN ('queued','dead')`,
+		WHERE testagram_storage.media_replication_jobs.status IN ('queued','dead','completed')`,
 		in.OwnerID, in.Namespace, in.Key, in.ContentType, in.SizeBytes, digest)
 	if err != nil {
 		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "media replication job could not be queued"})
