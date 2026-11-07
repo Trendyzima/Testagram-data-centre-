@@ -34,7 +34,8 @@ function b64urlToBytes(value: string): Uint8Array {
 }
 
 function allowedOrigin(origin: string | null, env: Env): boolean {
-  if (!origin) return false;
+  // Missing origin configuration must fail closed rather than crash or allow.
+  if (!origin || !env.REALTIME_ALLOWED_ORIGINS) return false;
   return env.REALTIME_ALLOWED_ORIGINS.split(",").map((v) => v.trim()).filter(Boolean).includes(origin);
 }
 
