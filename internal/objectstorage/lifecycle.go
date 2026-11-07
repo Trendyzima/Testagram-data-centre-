@@ -248,8 +248,18 @@ func (l *Lifecycle) VerifyAndReplicate(ctx context.Context, tenantID, namespace,
 }
 
 func (l *Lifecycle) DownloadURL(ctx context.Context, requesterTenant, ownerTenant, namespace, key, sha256Hex string, size int64) (DownloadGrant, error) {
-	// Manager performs tenant ownership and private/public namespace checks.
+	// Direct callers must own private objects. Backend may use the authorized method after its own access check.
 	if _, err := l.manager.DownloadURL(ctx, requesterTenant, ownerTenant, namespace, key); err != nil {
+		return DownloadGrant{}, err
+	}
+	return l.DownloadURLAuthorized(ctx, ownerTenant, namespace, key, sha256Hex, size)
+}
+
+func (l *Lifecycle) DownloadURLAuthorized(ctx context.Context, ownerTenant, namespace, key, sha256Hex string, size int64) (DownloadGrant, error) {
+	if !tenantIDPattern.MatchString(ownerTenant) || !validKey(key) {
+		return DownloadGrant{}, ErrInvalidKey
+	}
+	if _, err := l.manager.namespace(namespace); err != nil {
 		return DownloadGrant{}, err
 	}
 	b2Bucket, r2Bucket, err := l.bucketPair(namespace)
