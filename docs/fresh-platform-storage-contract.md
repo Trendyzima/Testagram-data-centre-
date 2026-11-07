@@ -50,3 +50,19 @@ Start with B2 as the single durable origin. Add R2 dual-copy replication only af
 - The private-media Cloudflare Worker is the intended CDN hostname in front of the private R2 bucket. It validates short-lived HMAC URLs, enforces an exact frontend-origin allowlist, supports byte ranges, and sends `private, no-store` headers. It is not deployed until the bucket binding, route, origins and shared signing secret are configured.
 - The Android LocalMediaServer is loopback-only, rejects query-string bearer tokens, limits signed-token lifetime, validates object paths and MIME types, checks free SD-card space, and verifies SHA-256 before retaining an uploaded file. It is a device-local endpoint, not a remote storage transport endpoint.
 - Computer nodes currently report dedicated-volume capacity and compute capability; they do not yet accept media object transfers. Reported node bytes must not be included in verified logical capacity until an authenticated transfer protocol, object read-back, SHA-256 verification, replica ledger and recovery path are implemented.
+
+
+## Media retention, archive and node replica lifecycle
+
+Backend is the canonical retention authority. Data Centre supplies replica inventory and node operation contracts; it must never independently decide that a user's post or media has expired.
+
+- Each node replica record must include object ID, node ID, storage generation/mount identity, relative object key, byte count, SHA-256, verified timestamp, lease/heartbeat and replica state.
+- A node copy is eligible for cleanup only after Backend has recorded a verified archive or another required durable replica and issues an authenticated, scoped deletion command. A node must recheck object ID/key and generation before deleting; stale commands must not delete a replacement SD card's contents.
+- Android Node B remains removable-SD-only and storage-only. If the SD card is removed, replaced, unmounted, or its generation changes, the node reports the replica unavailable; it must never fall back to internal storage.
+- Offline nodes are not assumed deleted. Their replica remains charged/unverified until the node reconnects and confirms deletion or an operator reconciles the physical device. Do not release quota based on an HTTP timeout.
+- Node restore is a pull/stream operation initiated by Backend after authorization. Verify SHA-256 and size before promoting the restored copy to a verified replica.
+- Cloudflare R2 and CDN are not cold archive by themselves. A real archive destination must be configured and independently verified before hot-copy cleanup is allowed.
+- Node cleanup endpoints require authenticated mTLS/HMAC identity, short-lived command leases, idempotency keys, replay protection, and append-only operation results.
+- Retention kill switch must stop new deletion commands while allowing safe reads and reconciliation. No node may purge content based on its own local clock.
+
+No node cleanup or archive migration is enabled by this contract.
