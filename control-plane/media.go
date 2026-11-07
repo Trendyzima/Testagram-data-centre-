@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"io"
 	"regexp"
 	"strings"
@@ -82,6 +84,20 @@ func validMediaRequest(ownerID, namespace, key string) bool {
 		strings.HasPrefix(key, "users/"+ownerID+"/")
 }
 
+func (s *Server) mediaInternalOnly(w http.ResponseWriter, r *http.Request) bool {
+	expected := os.Getenv("FRESH_DATA_CENTRE_INTERNAL_TOKEN")
+	if len(expected) < 32 || strings.ContainsAny(expected, "\r\n") {
+		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "Data Centre private media authentication is not configured"})
+		return false
+	}
+	provided := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+		reply(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return false
+	}
+	return true
+}
+
 func (s *Server) mediaUnavailable(w http.ResponseWriter) bool {
 	if s.media == nil {
 		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "media storage control plane is disabled"})
@@ -95,7 +111,7 @@ func (s *Server) mediaUploadURL(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	if !s.internalOnly(w, r) || s.mediaUnavailable(w) {
+	if !s.mediaInternalOnly(w, r) || s.mediaUnavailable(w) {
 		return
 	}
 	var in mediaUploadURLRequest
