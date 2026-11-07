@@ -1,0 +1,118 @@
+name: testagram-fresh
+services:
+  algorithm:
+    image: ${TESTAGRAM_ALGORITHM_IMAGE:?Set TESTAGRAM_ALGORITHM_IMAGE to a reviewed immutable GHCR digest}
+    restart: unless-stopped
+    environment:
+      HTTP_ADDR: :8092
+      INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:?Set ALGORITHM_INTERNAL_TOKEN to a random value of at least 32 characters}
+    expose: ["8092"]
+    networks: [ranker]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8092/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+  api:
+    image: ${TESTAGRAM_FRESH_BACKEND_IMAGE:?Set TESTAGRAM_FRESH_BACKEND_IMAGE to the fresh Appwrite API image pinned by digest}
+    restart: unless-stopped
+    environment:
+      FRESH_API_ADDR: :8081
+      FRESH_API_ALLOWED_ORIGINS: ${FRESH_API_ALLOWED_ORIGINS:?Set exact HTTPS XClone origins}
+      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:?Set the fresh Appwrite endpoint}
+      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:?Set the fresh Appwrite project ID}
+      APPWRITE_DATABASE_ID: ${APPWRITE_DATABASE_ID:?Set the fresh Appwrite database ID}
+      APPWRITE_SERVER_API_KEY: ${APPWRITE_SERVER_API_KEY:?Set a least-privilege server API key}
+      ALGORITHM_ENDPOINT: http://algorithm:8092
+      ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:?Set ALGORITHM_INTERNAL_TOKEN}
+      FEED_RANKING_REQUIRED: "true"
+      FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}
+      TESTAGRAM_STORAGE_POOL_BYTES: ${TESTAGRAM_STORAGE_POOL_BYTES:-150000000000}
+      TESTAGRAM_STORAGE_PER_USER_BYTES: ${TESTAGRAM_STORAGE_PER_USER_BYTES:-2147483648}
+      B2_S3_ENDPOINT: ${B2_S3_ENDPOINT:-}
+      B2_S3_REGION: ${B2_S3_REGION:-us-west-004}
+      B2_S3_BUCKET: ${B2_S3_BUCKET:-}
+      B2_S3_ACCESS_KEY_ID: ${B2_S3_ACCESS_KEY_ID:-}
+      B2_S3_SECRET_ACCESS_KEY: ${B2_S3_SECRET_ACCESS_KEY:-}
+      CLOUDFLARE_R2_ENDPOINT: ${CLOUDFLARE_R2_ENDPOINT:-}
+      CLOUDFLARE_R2_REGION: ${CLOUDFLARE_R2_REGION:-auto}
+      CLOUDFLARE_R2_BUCKET: ${CLOUDFLARE_R2_BUCKET:-}
+      CLOUDFLARE_R2_ACCESS_KEY_ID: ${CLOUDFLARE_R2_ACCESS_KEY_ID:-}
+      CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}
+      ARCHIVE_S3_ENDPOINT: ${ARCHIVE_S3_ENDPOINT:-}
+      ARCHIVE_S3_REGION: ${ARCHIVE_S3_REGION:-us-east-1}
+      ARCHIVE_S3_BUCKET: ${ARCHIVE_S3_BUCKET:-}
+      ARCHIVE_S3_ACCESS_KEY_ID: ${ARCHIVE_S3_ACCESS_KEY_ID:-}
+      ARCHIVE_S3_SECRET_ACCESS_KEY: ${ARCHIVE_S3_SECRET_ACCESS_KEY:-}
+      TESTAGRAM_RETENTION_ENABLED: "false"
+      TESTAGRAM_RETENTION_DRY_RUN: "true"
+    expose: ["8081"]
+    networks: [services, ranker]
+    depends_on:
+      algorithm:
+        condition: service_healthy
+
+  migrate:
+    image: ${POSTGRES_CLIENT_IMAGE:?Set POSTGRES_CLIENT_IMAGE to a reviewed immutable PostgreSQL client image digest}
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: |
+      for migration in /migrations/*.sql; do
+        echo "Applying $migration"
+        psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$$migration"
+      done
+    environment:
+      DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:?Set a dedicated TLS PostgreSQL URL for Data Centre infrastructure state}
+    volumes:
+      - ../migrations:/migrations:ro
+    networks: [services]
+
+  control-plane:
+    build:
+      context: ..
+      dockerfile: control-plane/Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:?Set a dedicated TLS PostgreSQL URL for Data Centre infrastructure state}
+      VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN:?Set VPS_INTERNAL_TOKEN}
+      VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN:?Set VPS_NODE_BOOTSTRAP_TOKEN}
+      TESTAGRAM_BASE_DOMAIN: ${TESTAGRAM_BASE_DOMAIN:-}
+      TESTAGRAM_DOMAIN_TARGETS: ${TESTAGRAM_DOMAIN_TARGETS:-}
+      TESTAGRAM_PUBLIC_DNS_TARGET: ${TESTAGRAM_PUBLIC_DNS_TARGET:-}
+      TESTAGRAM_PUBLIC_ORIGIN_IP: ${TESTAGRAM_PUBLIC_ORIGIN_IP:-}
+      VPS_CONTROL_PLANE_ADDR: :8787
+    ports:
+      - "127.0.0.1:8787:8787"
+    networks: [services]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  edge:
+    image: ${CADDY_IMAGE:?Set CADDY_IMAGE to a reviewed immutable Caddy image digest}
+    restart: unless-stopped
+    environment:
+      TLS_ADMIN_EMAIL: ${TLS_ADMIN_EMAIL:?Set TLS_ADMIN_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./fresh/Caddyfile:/etc/caddy/Caddyfile:ro
+      - fresh_edge_data:/data
+      - fresh_edge_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [edge, services]
+
+networks:
+  edge: {}
+  services: {}
+  ranker:
+    internal: true
+
+volumes:
+  fresh_edge_data: {}
+  fresh_edge_config: {}
