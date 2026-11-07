@@ -15,7 +15,7 @@ func testClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
-	client, err := New(server.URL, "unit-test-secret", time.Second)
+	client, err := New(server.URL, strings.Repeat("u", 40), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,6 +29,15 @@ func TestNewRequiresValidURLAndToken(t *testing.T) {
 	if _, err := New("http://localhost", "", time.Second); err == nil {
 		t.Fatal("expected token validation error")
 	}
+	if _, err := New("http://example.com", strings.Repeat("u", 40), time.Second); err == nil {
+		t.Fatal("expected public plaintext HTTP to be rejected")
+	}
+	if _, err := New("https://user:pass@example.com", strings.Repeat("u", 40), time.Second); err == nil {
+		t.Fatal("expected URL credentials to be rejected")
+	}
+	if _, err := New("https://example.com/path", strings.Repeat("u", 40), time.Second); err == nil {
+		t.Fatal("expected non-origin base URL to be rejected")
+	}
 }
 
 func TestCacheSetSendsBearerAndTTL(t *testing.T) {
@@ -36,7 +45,7 @@ func TestCacheSetSendsBearerAndTTL(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/cache/set" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 		}
-		if r.Header.Get("Authorization") != "Bearer unit-test-secret" {
+		if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("u", 40) {
 			t.Errorf("missing internal bearer token")
 		}
 		if r.Header.Get("Content-Type") != "application/json" {
