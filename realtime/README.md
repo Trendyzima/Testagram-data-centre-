@@ -10,7 +10,8 @@ This Worker is a transport layer only. Appwrite remains the identity provider; B
 - The Worker accepts only exact configured browser origins.
 - Browser WebSockets are receive-only except for ping frames. Message creation/edit/delete must use Backend APIs, where membership, blocks, visibility, idempotency and durable Neon writes are enforced.
 - Backend publishes only after its Neon transaction commits, using an HMAC signature over the exact raw event body.
-- The Worker rejects unsigned publish requests and caps event bodies at 64 KiB.
+- The Worker rejects unsigned publish requests, streams request bodies with a 64 KiB cap, and limits each user to five concurrent sockets per conversation.
+- Events carry stable event_id values. Clients must deduplicate event IDs because Backend retries can result in repeated delivery.
 - Do not log tickets, signatures, private message payloads or secrets.
 
 ## Secrets
