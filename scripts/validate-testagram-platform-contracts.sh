@@ -17,6 +17,13 @@ grep -q 'FEED_RANKING_REQUIRED: "false"' <<< "$api_block"
 grep -q 'ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}' <<< "$api_block"
 grep -q 'FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}' <<< "$api_block"
 grep -q 'FEDERATION_DATABASE_URL: ${FEDERATION_DATABASE_URL:-}' vps/docker-compose.fresh.yml
+grep -q 'profiles: ["ranking"]' <(sed -n '/^  algorithm:/,/^  api:/p' vps/docker-compose.fresh.yml)
+grep -q 'profiles: ["federation"]' <(sed -n '/^  federation-api:/,/^  migrate:/p' vps/docker-compose.fresh.yml)
+grep -q 'profiles: ["nodes"]' <(sed -n '/^  migrate:/,/^  control-plane:/p' vps/docker-compose.fresh.yml)
+grep -q 'profiles: ["nodes"]' <(sed -n '/^  control-plane:/,/^  edge:/p' vps/docker-compose.fresh.yml)
+grep -q 'TESTAGRAM_ENABLE_RANKING' scripts/install-local-docker.sh
+grep -q 'TESTAGRAM_ENABLE_FEDERATION' scripts/install-local-docker.sh
+grep -q 'TESTAGRAM_ENABLE_NODES' scripts/install-local-docker.sh
 edge_block="$(sed -n '/^  edge:/,/^networks:/p' vps/docker-compose.fresh.yml)"
 grep -q 'api:' <<< "$edge_block"
 if grep -q 'federation-api' <<< "$edge_block"; then
