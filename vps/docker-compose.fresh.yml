@@ -96,6 +96,8 @@ services:
       FEDERATION_DATABASE_URL: ${FEDERATION_DATABASE_URL:?Set a dedicated Neon pooled TLS URL or a local-profile PostgreSQL URL}
       BACKEND_INTERNAL_URL: http://api:8081
       BACKEND_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:?Set the same private token in Backend and Federation}
+      FEDERATION_OUTBOX_POLLER_ENABLED: ${FEDERATION_OUTBOX_POLLER_ENABLED:-false}
+      FEDERATION_DELIVERY_WORKER_ENABLED: ${FEDERATION_DELIVERY_WORKER_ENABLED:-false}
     expose: ["8081"]
     networks: [services, federation]
     depends_on:
