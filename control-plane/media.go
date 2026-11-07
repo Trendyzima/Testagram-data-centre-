@@ -468,7 +468,7 @@ func (s *Server) processMediaReplicationBatch(ctx context.Context) {
 	rows, err := s.db.Query(batchCtx, `WITH picked AS (
 		SELECT j.id FROM testagram_storage.media_replication_jobs AS j
 		JOIN testagram_storage.media_objects AS o ON o.owner_id=j.owner_id AND o.namespace=j.namespace AND o.object_key=j.object_key
-		WHERE o.status='replication_pending' AND j.status IN ('queued','processing') AND j.available_at <= NOW()
+		WHERE o.status IN ('replication_pending','protected') AND o.replica_state='pending' AND j.status IN ('queued','processing') AND j.available_at <= NOW()
 		  AND (lease_until IS NULL OR lease_until < NOW())
 		ORDER BY j.created_at,j.id FOR UPDATE OF j SKIP LOCKED LIMIT 5
 	)
@@ -476,7 +476,7 @@ func (s *Server) processMediaReplicationBatch(ctx context.Context) {
 	SET status='processing',attempts=j.attempts+1,lease_until=NOW()+interval '60 minutes',
 	    lease_token=gen_random_uuid(),updated_at=NOW()
 	FROM picked WHERE j.id=picked.id
-	RETURNING j.id::text,j.owner_id,j.namespace,j.object_key,j.content_type,j.size_bytes,j.sha256,j.lease_token::text`)
+	RETURNING j.id::text,j.owner_id,j.namespace,j.object_key,j.content_type,j.size_bytes,coalesce(j.sha256,''),j.lease_token::text`)
 	if err != nil {
 		return
 	}
@@ -497,7 +497,7 @@ func (s *Server) processMediaReplicationBatch(ctx context.Context) {
 
 func (s *Server) processMediaReplicationJob(ctx context.Context, job mediaReplicationJob) {
 	jobCtx, cancel := context.WithTimeout(ctx, 60*time.Minute)
-	err := s.media.Replicate(jobCtx, job.OwnerID, job.Namespace, job.Key, job.ContentType, job.SHA256, job.SizeBytes)
+	replicaSHA, err := s.media.ReplicateAndChecksum(jobCtx, job.OwnerID, job.Namespace, job.Key, job.ContentType, job.SHA256, job.SizeBytes)
 	cancel()
 	if err == nil {
 		tx, txErr := s.db.Begin(ctx)
@@ -506,16 +506,16 @@ func (s *Server) processMediaReplicationJob(ctx context.Context, job mediaReplic
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
 		tag, updateErr := tx.Exec(ctx, `UPDATE testagram_storage.media_replication_jobs
-			SET status='completed',lease_until=NULL,lease_token=NULL,last_error_code=NULL,updated_at=NOW()
-			WHERE id=$1::uuid AND lease_token=$2::uuid AND status='processing'`, job.ID, job.LeaseToken)
+			SET status='completed',sha256=$3,lease_until=NULL,lease_token=NULL,last_error_code=NULL,updated_at=NOW()
+			WHERE id=$1::uuid AND lease_token=$2::uuid AND status='processing'`, job.ID, job.LeaseToken, replicaSHA)
 		if updateErr != nil || tag.RowsAffected() != 1 {
 			return
 		}
 		_, updateErr = tx.Exec(ctx, `UPDATE testagram_storage.media_objects
-			SET status='protected',primary_verified_at=coalesce(primary_verified_at,NOW()),
+			SET status='protected',sha256=$4,replica_state='verified',primary_verified_at=coalesce(primary_verified_at,NOW()),
 			    replica_verified_at=NOW(),updated_at=NOW()
-			WHERE owner_id=$1 AND namespace=$2 AND object_key=$3 AND status='replication_pending'`,
-			job.OwnerID, job.Namespace, job.Key)
+			WHERE owner_id=$1 AND namespace=$2 AND object_key=$3 AND status IN ('replication_pending','protected')`,
+			job.OwnerID, job.Namespace, job.Key, replicaSHA)
 		if updateErr != nil {
 			return
 		}
@@ -547,8 +547,9 @@ func (s *Server) processMediaReplicationJob(ctx context.Context, job mediaReplic
 	if txErr != nil {
 		return
 	}
-	_, txErr = tx.Exec(ctx, `UPDATE testagram_storage.media_objects SET status=$4,updated_at=NOW()
-		WHERE owner_id=$1 AND namespace=$2 AND object_key=$3 AND status='replication_pending'`, job.OwnerID, job.Namespace, job.Key, objectState)
+	_, txErr = tx.Exec(ctx, `UPDATE testagram_storage.media_objects SET status=CASE WHEN status='replication_pending' AND $4='replication_failed' THEN 'replication_failed' ELSE status END,
+		    replica_state=CASE WHEN $4='replication_failed' THEN 'degraded' ELSE 'pending' END,updated_at=NOW()
+		WHERE owner_id=$1 AND namespace=$2 AND object_key=$3 AND status IN ('replication_pending','protected')`, job.OwnerID, job.Namespace, job.Key, objectState)
 	if txErr != nil {
 		return
 	}
