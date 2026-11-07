@@ -4,11 +4,31 @@ import android.app.ActivityManager
 import android.content.Context
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 
 data class NodeConfig(val controlPlaneUrl: String, val bootstrapToken: String, val nodeName: String)
 
 class NodeClient(private val context: Context, private val config: NodeConfig) {
+    private fun endpoint(path: String): URL {
+        val uri = try { URI(config.controlPlaneUrl.trim()) } catch (_: Exception) {
+            throw IllegalArgumentException("control-plane URL is invalid")
+        }
+        val host = uri.host?.lowercase() ?: throw IllegalArgumentException("control-plane URL must include a hostname")
+        val normalizedHost = host.removePrefix("[").removeSuffix("]")
+        val loopback = normalizedHost == "localhost" || normalizedHost == "127.0.0.1" || normalizedHost == "::1"
+        require(uri.isAbsolute && uri.userInfo == null && uri.query == null && uri.fragment == null && (uri.path.isNullOrEmpty() || uri.path == "/")) {
+            "control-plane URL must be a plain origin without credentials, path, query or fragment"
+        }
+        require(uri.scheme.equals("https", true) || (uri.scheme.equals("http", true) && loopback)) {
+            "control-plane URL must use HTTPS; HTTP is allowed only for localhost"
+        }
+        require(uri.scheme.equals("http", true) || uri.port == -1 || uri.port == 443) {
+            "HTTPS control-plane URL must use port 443"
+        }
+        return URL(uri.toString().trimEnd('/') + path)
+    }
+
     private val authPrefs = context.getSharedPreferences("node-auth", Context.MODE_PRIVATE)
     private var nodeToken: String? = authPrefs.getString("node_token", null)
     private var registeredStorageIdentity: String? = authPrefs.getString("storage_identity", null)
@@ -21,13 +41,18 @@ class NodeClient(private val context: Context, private val config: NodeConfig) {
     }
 
     private fun post(path: String, body: JSONObject): JSONObject? {
-        val connection = (URL(config.controlPlaneUrl.trimEnd('/') + path).openConnection() as HttpURLConnection).apply {
+        val token = nodeToken ?: config.bootstrapToken
+        require(token.length >= 32 && token.trim() == token && !token.contains('\r') && !token.contains('\n')) {
+            "bootstrap/node token must be a single-line secret of at least 32 characters"
+        }
+        val connection = (endpoint(path).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
+            instanceFollowRedirects = false
             connectTimeout = 10000
             readTimeout = 10000
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Authorization", "Bearer " + (nodeToken ?: config.bootstrapToken))
+            setRequestProperty("Authorization", "Bearer " + token)
         }
         return try {
             connection.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
@@ -41,8 +66,9 @@ class NodeClient(private val context: Context, private val config: NodeConfig) {
     }
 
     fun ready(): Boolean {
-        val connection = (URL(config.controlPlaneUrl.trimEnd('/') + "/readyz").openConnection() as HttpURLConnection).apply {
+        val connection = (endpoint("/readyz").openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
+            instanceFollowRedirects = false
             connectTimeout = 5000
             readTimeout = 5000
         }

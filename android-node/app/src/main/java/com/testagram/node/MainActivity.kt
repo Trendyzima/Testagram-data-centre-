@@ -44,7 +44,7 @@ class MainActivity : Activity() {
         health = label("Backend health: checking")
         metrics = label("SD-card storage: checking")
 
-        cp = input("Control-plane URL", prefs.getString("control_plane_url", ""))
+        cp = input("Control-plane URL", prefs.getString("control_plane_url", "https://nodes.testagram.site"))
         boot = input("Bootstrap token", prefs.getString("bootstrap_token", ""))
         boot.inputType = 129
         name = input("Node name", prefs.getString("node_name", "android-node-b"))
