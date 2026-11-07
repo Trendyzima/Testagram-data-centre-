@@ -390,12 +390,16 @@ func validImageDigest(v string) bool {
 	return true
 }
 
+func validControlPlaneSecret(value string) bool {
+	return len(value) >= 32 && strings.TrimSpace(value) == value && !strings.ContainsAny(value, "\r\n")
+}
+
 func main() {
 	dsn := os.Getenv("DATABASE_URL")
 	internal := os.Getenv("VPS_INTERNAL_TOKEN")
 	bootstrap := os.Getenv("VPS_NODE_BOOTSTRAP_TOKEN")
-	if dsn == "" || internal == "" || bootstrap == "" {
-		log.Fatal("DATABASE_URL, VPS_INTERNAL_TOKEN and VPS_NODE_BOOTSTRAP_TOKEN are required")
+	if strings.TrimSpace(dsn) == "" || !validControlPlaneSecret(internal) || !validControlPlaneSecret(bootstrap) {
+		log.Fatal("DATABASE_URL and single-line VPS_INTERNAL_TOKEN/VPS_NODE_BOOTSTRAP_TOKEN values of at least 32 characters are required")
 	}
 
 	db, err := pgxpool.New(context.Background(), dsn)
