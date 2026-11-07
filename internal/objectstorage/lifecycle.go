@@ -230,7 +230,7 @@ func (l *Lifecycle) Replicate(ctx context.Context, tenantID, namespace, key, con
 	if err != nil {
 		return err
 	}
-	scopedKey := tenantPrefix(tenantID) + key
+	scopedKey := storageObjectKey(tenantID, key)
 	// CopyFrom reads and hashes the B2 source stream, uploads it to R2, then
 	// reads the destination back and verifies its checksum. One transfer pass
 	// therefore verifies both replicas without a redundant B2 download.
@@ -270,7 +270,7 @@ func (l *Lifecycle) DownloadURLAuthorized(ctx context.Context, ownerTenant, name
 	if err != nil {
 		return DownloadGrant{}, err
 	}
-	scopedKey := tenantPrefix(ownerTenant) + key
+	scopedKey := storageObjectKey(ownerTenant, key)
 	// The object is only eligible for this path after the durable ledger records
 	// successful SHA-256 read-back from both providers. Avoid re-streaming large
 	// videos on every view; reconciliation rechecks checksums asynchronously.
