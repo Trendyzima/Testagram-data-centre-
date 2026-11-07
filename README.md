@@ -58,52 +58,52 @@ After installation:
 6. Confirm heartbeats report the selected SD card's total/free bytes and removable-card identity.
 7. Node B runs in storage-only mode. On-device video transcoding is disabled; video processing must run on a separate server/worker.
 
-Android is the local media/storage node. The Linux Docker host runs Supabase and the backend/control-plane services.
+Android is the local media/storage node. The Linux Docker host runs the Testagram Backend and Data Centre control-plane services. Supabase is retired and is not part of the fresh runtime.
 
 ## Docker VPS quick install
 
-On a Linux host with Docker Engine, Docker Compose v2, Git and OpenSSL:
+On a Linux host with Docker Engine, Docker Compose v2 and Git:
 
 ```bash
 bash scripts/install-local-docker.sh
 ```
 
-The installer creates a local development configuration automatically when no `.env` exists. For production, provide your own domain and secrets.
+The installer copies the fresh Appwrite/Neon/B2/R2 template to `vps/fresh.env` when needed and stops. Fill in real secrets and immutable image digests before rerunning it.
 
 Check the stack:
 
 ```bash
-docker compose --env-file /opt/testagram/.env -f /opt/testagram/vps/docker-compose.yml ps
+docker compose --env-file /opt/testagram/vps/fresh.env -f /opt/testagram/vps/docker-compose.yml ps
 ```
 
 ## Encrypted off-host backups and restore drills
 
-The VPS now includes operator-run scripts for an encrypted database + storage backup and a non-production restore drill.
+The Data Centre includes operator-run scripts for an encrypted Data Centre infrastructure database backup, optional mounted node-storage backup, and an isolated non-production restore drill. This is not a backup of the Neon social database, Federation database or B2/R2 media objects.
 
 Before using them:
-- Install Docker Compose v2, `age`, `rsync`, `tar`, `flock`, and `sha256sum`.
+- Install `pg_dump` (PostgreSQL client), Docker Engine (for the isolated restore drill), `age`, `rsync`, `tar`, `flock`, `sha256sum` and Git.
 - Configure SSH key authentication and verify the backup host key in `known_hosts`; the script intentionally does not disable SSH host-key checking.
 - Set `TESTAGRAM_BACKUP_REMOTE=user@backup-host:/absolute/path` and `TESTAGRAM_BACKUP_AGE_RECIPIENT=age1...` in the operator's environment.
-- Ensure `TESTAGRAM_ENV_FILE` points to the deployment environment file and `TESTAGRAM_STORAGE_ROOT` points to the actual persistent storage root.
-- Schedule a maintenance window. The backup script stops application writers while capturing the database and files, then starts services before transferring the encrypted archive. Users may experience downtime during capture.
+- Set `TESTAGRAM_FRESH_ENV_FILE` to `vps/fresh.env` (the default) and optionally set `TESTAGRAM_STORAGE_ROOT` to a mounted local node-storage root.
+- The script takes a consistent PostgreSQL dump of the Data Centre infrastructure database. Coordinate a quiet period or filesystem snapshot if including a node-storage directory; the script does not stop node writers.
 - Store the age private identity separately from the VPS and backup host.
 
 Run the backup from the checked-out deployment repository:
 
 ```bash
-sudo --preserve-env=TESTAGRAM_BACKUP_REMOTE,TESTAGRAM_BACKUP_AGE_RECIPIENT,TESTAGRAM_ENV_FILE,TESTAGRAM_STORAGE_ROOT \
+sudo --preserve-env=TESTAGRAM_BACKUP_REMOTE,TESTAGRAM_BACKUP_AGE_RECIPIENT,TESTAGRAM_FRESH_ENV_FILE,TESTAGRAM_STORAGE_ROOT \
   bash vps/backup.sh
 ```
 
-For a restore drill, obtain the encrypted `.tar.gz.age` artifact and its `.sha256` sidecar, then use the separately held age identity and the exact approved Supabase Postgres image digest used by the deployment:
+For a restore drill, obtain the encrypted `.tar.gz.age` artifact and its `.sha256` sidecar, then use the separately held age identity and the exact approved PostgreSQL image digest used by the deployment:
 
 ```bash
 TESTAGRAM_BACKUP_AGE_IDENTITY_FILE=/secure/off-host-age-identity.txt \
-TESTAGRAM_RESTORE_POSTGRES_IMAGE='registry.example/supabase-postgres@sha256:REPLACE_WITH_APPROVED_DIGEST' \
+TESTAGRAM_RESTORE_POSTGRES_IMAGE='postgres:17-alpine@sha256:REPLACE_WITH_APPROVED_DIGEST' \
   bash vps/restore-drill.sh /secure/backup/testagram-YYYYMMDDTHHMMSSZ.tar.gz.age
 ```
 
-The restore drill verifies the ciphertext checksum, decrypts the archive, validates the storage tar, restores PostgreSQL into a network-isolated temporary container, and checks for expected Testagram tables. It does **not** prove full login, upload, private-media, or playback recovery, and it does not by itself measure RPO/RTO. Record the drill date, artifact ID, elapsed restore time, and application-level E2E results before declaring disaster recovery ready.
+The restore drill verifies the ciphertext checksum, decrypts the archive, optionally validates the local node-storage tar, restores the Data Centre PostgreSQL dump into a network-isolated temporary container, and checks for expected Data Centre tables. It does **not** prove full login, upload, private-media, or playback recovery, and it does not by itself measure RPO/RTO. Record the drill date, artifact ID, elapsed restore time, and application-level E2E results before declaring disaster recovery ready.
 
 ## Forensic E2E gate
 
@@ -119,11 +119,8 @@ That gate is not marked green until a physical device supplies evidence for ever
 - [Service catalogue, APIs, health checks, and migration gates](docs/platform/service-catalog.md)
 - [Self-sustaining domains, deployment, compute, performance, and recovery plan](docs/platform/self-sustaining-operations.md)
 - [Internal platform OpenAPI contract](docs/platform/openapi/internal-platform.yaml)
-- [Testagram-branded self-hosted runtime and safe preparation](testagram-platform/README.md)
-- [Read-only deployment preflight](testagram-platform/preflight.sh)
 - [Authenticated hosting control plane API](docs/platform/openapi/hosting-control-plane.yaml)
 - [Hosting control plane implementation boundaries](docs/platform/service-catalog.md#hosting-control-plane-implementation-boundary)
-- [Bounded deployment command with health gates](testagram-platform/deploy.sh)
 - [Provider-independent internal platform client](internal/platformclient/client.go)
 
 The platform rebrand preserves compatibility with the existing runtime paths and Compose identity. It does not itself migrate production authentication, database policies, media, or traffic.
@@ -134,8 +131,8 @@ The platform rebrand preserves compatibility with the existing runtime paths and
 The clean runtime is defined separately in `vps/docker-compose.fresh.yml` and
 `vps/FRESH-DEPLOYMENT.md`. It runs the dedicated fresh Backend API, private
 Algorithm ranker, private Federation service, Data Centre infrastructure
-control plane and Caddy edge without attaching the legacy Supabase network or
-starting the legacy Backend API.
+control plane and Caddy edge without attaching legacy services or starting the
+legacy Backend API. Supabase is retired and is not part of this architecture.
 
 The five-repository ownership boundary is:
 
@@ -143,7 +140,7 @@ The five-repository ownership boundary is:
 - [Testagram Backend](https://github.com/Trendyzima/Testagram-backend-): canonical Appwrite identity, accounts, posts, social graph, permissions, visibility and API orchestration.
 - [Federated Content](https://github.com/Trendyzima/federated-content): ActivityPub protocol state, signed ingress, actor discovery and asynchronous federation processing.
 - [the-algorithm](https://github.com/Trendyzima/the-algorithm): private ranking and recommendation scoring; Backend remains the authorization authority.
-- **Data Centre (this repository)**: deployment, private networking, B2/R2 media durability, storage nodes, backups and recovery.
+- **Data Centre (this repository)**: deployment, private networking, node-level storage, provider configuration, backups and recovery. Backend owns the actual B2/R2 media lifecycle and replica verification.
 
 Federation now has PostgreSQL-backed actor/inbox/outbox state, signed inbox verification,
 safe remote-key resolution and a private Backend identity/readiness contract. It is
@@ -152,8 +149,10 @@ polling, outbound delivery workers, follower fan-out and end-to-end interoperabi
 tests remain unfinished. Keep it private and do not enable public ActivityPub
 routing until those gates pass.
 
-Keep `FRESH_MEDIA_ENABLED=false` until B2/R2 and the Appwrite media collections
-are staged and independently verified. Retention remains disabled and dry-run.
+Keep `FRESH_MEDIA_ENABLED=false` until Backblaze B2 (durable primary),
+Cloudflare R2 (verified delivery/replica), Appwrite metadata collections and
+independent restore tests are staged and verified. See
+[Media storage architecture](docs/platform/media-storage-architecture.md). Retention remains disabled and dry-run.
 The fresh Compose file is a deployment foundation, not a production-readiness
 claim; media placement, replica recovery, federation workers and full
 cross-repository end-to-end tests remain release gates.
