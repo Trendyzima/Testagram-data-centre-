@@ -62,6 +62,32 @@ func decodeNodeCapabilities(raw []byte) NodeCapabilities {
 	return capabilities
 }
 
+type NodeCapacitySummary struct {
+	ComputeNodes                   int   `json:"computeNodes"`
+	ComputeCores                   int64 `json:"computeCores"`
+	StorageNodes                   int   `json:"storageNodes"`
+	ReportedMediaStorageTotalBytes int64 `json:"reportedMediaStorageTotalBytes"`
+	ReportedMediaStorageFreeBytes  int64 `json:"reportedMediaStorageFreeBytes"`
+}
+
+func addNodeCapacity(summary *NodeCapacitySummary, cpuCores int, capabilities NodeCapabilities) {
+	if capabilities.ComputeNode && capabilities.WorkloadExecution {
+		summary.ComputeNodes++
+		if cpuCores > 0 {
+			summary.ComputeCores += int64(cpuCores)
+		}
+	}
+	if capabilities.StorageNode {
+		summary.StorageNodes++
+		if capabilities.MediaStorageBytes > 0 {
+			summary.ReportedMediaStorageTotalBytes += capabilities.MediaStorageBytes
+		}
+		if capabilities.MediaStorageFreeBytes > 0 {
+			summary.ReportedMediaStorageFreeBytes += capabilities.MediaStorageFreeBytes
+		}
+	}
+}
+
 type BackupManifestRequest struct {
 	Kind       string `json:"kind"`
 	StorageURI string `json:"storageUri"`
@@ -167,8 +193,8 @@ func (s *Server) hostingNodes(w http.ResponseWriter, r *http.Request) {
 			"memoryBytes": memory, "storageBytes": storage, "freeBytes": free, "status": status, "lastSeenAt": lastSeen,
 			"activeWorkloads": active, "reservedCpuMillis": cpuReserved, "reservedMemoryBytes": memoryReserved,
 			"computeNode": capabilities.ComputeNode, "storageNode": capabilities.StorageNode, "storageOnly": capabilities.StorageOnly,
-			"workloadExecution": capabilities.WorkloadExecution, "mediaStorageBytes": capabilities.MediaStorageBytes,
-			"mediaStorageFreeBytes": capabilities.MediaStorageFreeBytes, "storageType": capabilities.StorageType,
+			"workloadExecution": capabilities.WorkloadExecution, "reportedMediaStorageBytes": capabilities.MediaStorageBytes,
+			"reportedMediaStorageFreeBytes": capabilities.MediaStorageFreeBytes, "storageType": capabilities.StorageType,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -203,9 +229,33 @@ func (s *Server) hostingUsage(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "usage query unavailable"})
 		return
 	}
+	capacityRows, err := s.db.Query(ctx, "select cpu_cores,capabilities from public.vps_nodes where status='online' and last_seen_at>now()-interval '45 seconds'")
+	if err != nil {
+		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "node capacity query unavailable"})
+		return
+	}
+	var capacity NodeCapacitySummary
+	for capacityRows.Next() {
+		var cores int
+		var raw []byte
+		if err := capacityRows.Scan(&cores, &raw); err != nil {
+			capacityRows.Close()
+			reply(w, http.StatusServiceUnavailable, map[string]string{"error": "node capacity decode failed"})
+			return
+		}
+		addNodeCapacity(&capacity, cores, decodeNodeCapabilities(raw))
+	}
+	if err := capacityRows.Err(); err != nil {
+		capacityRows.Close()
+		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "node capacity query failed"})
+		return
+	}
+	capacityRows.Close()
 	reply(w, http.StatusOK, map[string]any{"nodes": nodes, "freshNodes": freshNodes, "activeWorkloads": active,
 		"queuedWorkloads": queued, "failedWorkloads": failed, "reservedCpuMillis": cpuReserved,
-		"reservedMemoryBytes": memoryReserved, "sampledAt": time.Now().UTC()})
+		"reservedMemoryBytes": memoryReserved, "computeNodes": capacity.ComputeNodes, "computeCores": capacity.ComputeCores,
+		"storageNodes": capacity.StorageNodes, "reportedMediaStorageTotalBytes": capacity.ReportedMediaStorageTotalBytes,
+		"reportedMediaStorageFreeBytes": capacity.ReportedMediaStorageFreeBytes, "sampledAt": time.Now().UTC()})
 }
 
 func normalizedBaseDomain() (string, error) {
