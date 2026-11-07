@@ -43,6 +43,25 @@ type DeploymentRequest struct {
 	Volume       string            `json:"volume"`
 }
 
+type NodeCapabilities struct {
+	Containers            bool   `json:"containers"`
+	LocalVolumes          bool   `json:"localVolumes"`
+	ComputeNode           bool   `json:"computeNode"`
+	StorageNode           bool   `json:"storageNode"`
+	StorageOnly           bool   `json:"storageOnly"`
+	WorkloadExecution     bool   `json:"workloadExecution"`
+	StorageType           string `json:"storageType"`
+	StorageIdentity       string `json:"storageIdentity"`
+	MediaStorageBytes     int64  `json:"mediaStorageBytes"`
+	MediaStorageFreeBytes int64  `json:"mediaStorageFreeBytes"`
+}
+
+func decodeNodeCapabilities(raw []byte) NodeCapabilities {
+	var capabilities NodeCapabilities
+	_ = json.Unmarshal(raw, &capabilities)
+	return capabilities
+}
+
 type BackupManifestRequest struct {
 	Kind       string `json:"kind"`
 	StorageURI string `json:"storageUri"`
@@ -119,7 +138,7 @@ func (s *Server) hostingNodes(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
-	rows, err := s.db.Query(ctx, "select n.id::text,n.name,n.platform,n.arch,n.cpu_cores,n.memory_bytes,n.storage_bytes,n.free_bytes,"+
+	rows, err := s.db.Query(ctx, "select n.id::text,n.name,n.platform,n.arch,n.cpu_cores,n.memory_bytes,n.storage_bytes,n.free_bytes,n.capabilities,"+
 		"n.status,n.last_seen_at,coalesce(x.active_workloads,0),coalesce(x.cpu_reserved,0),coalesce(x.memory_reserved,0) "+
 		"from public.vps_nodes n left join lateral ("+
 		"select count(*) filter (where status in ('assigned','running'))::int active_workloads,"+
@@ -136,15 +155,21 @@ func (s *Server) hostingNodes(w http.ResponseWriter, r *http.Request) {
 		var id, name, platform, arch, status string
 		var cpu int
 		var memory, storage, free, cpuReserved, memoryReserved int64
+		var capabilitiesJSON []byte
 		var lastSeen time.Time
 		var active int
-		if err := rows.Scan(&id, &name, &platform, &arch, &cpu, &memory, &storage, &free, &status, &lastSeen, &active, &cpuReserved, &memoryReserved); err != nil {
+		if err := rows.Scan(&id, &name, &platform, &arch, &cpu, &memory, &storage, &free, &capabilitiesJSON, &status, &lastSeen, &active, &cpuReserved, &memoryReserved); err != nil {
 			reply(w, http.StatusInternalServerError, map[string]string{"error": "node inventory decode failed"})
 			return
 		}
+		capabilities := decodeNodeCapabilities(capabilitiesJSON)
 		items = append(items, map[string]any{"id": id, "name": name, "platform": platform, "arch": arch, "cpuCores": cpu,
 			"memoryBytes": memory, "storageBytes": storage, "freeBytes": free, "status": status, "lastSeenAt": lastSeen,
-			"activeWorkloads": active, "reservedCpuMillis": cpuReserved, "reservedMemoryBytes": memoryReserved})
+			"activeWorkloads": active, "reservedCpuMillis": cpuReserved, "reservedMemoryBytes": memoryReserved,
+			"computeNode": capabilities.ComputeNode, "storageNode": capabilities.StorageNode, "storageOnly": capabilities.StorageOnly,
+			"workloadExecution": capabilities.WorkloadExecution, "mediaStorageBytes": capabilities.MediaStorageBytes,
+			"mediaStorageFreeBytes": capabilities.MediaStorageFreeBytes, "storageType": capabilities.StorageType,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "node inventory unavailable"})
