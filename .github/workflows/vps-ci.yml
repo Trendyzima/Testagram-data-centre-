@@ -21,6 +21,7 @@ jobs:
       APPWRITE_PROJECT_ID: ci-project
       APPWRITE_DATABASE_ID: ci-database
       APPWRITE_SERVER_API_KEY: ci-appwrite-server-key
+      TESTAGRAM_AUTH_PROVIDER: appwrite
       FRESH_API_ALLOWED_ORIGINS: https://testagram.site,https://www.testagram.site
       FRESH_MEDIA_ENABLED: "false"
       # Non-production credentials used only to render/validate the fresh Compose model in CI.
