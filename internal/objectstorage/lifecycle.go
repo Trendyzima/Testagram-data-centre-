@@ -196,25 +196,55 @@ func (l *Lifecycle) UploadURL(ctx context.Context, tenantID, namespace, key, con
 	return UploadGrant{URL: url, ExpiresAt: time.Now().UTC().Add(l.uploadTTL), MaxBytes: size, Primary: "backblaze_b2"}, nil
 }
 
-func (l *Lifecycle) VerifyAndReplicate(ctx context.Context, tenantID, namespace, key, contentType, sha256Hex string, size int64) (VerifiedObject, error) {
+func (l *Lifecycle) VerifyPrimary(ctx context.Context, tenantID, namespace, key, contentType, sha256Hex string, size int64) (VerifiedObject, error) {
 	maxBytes, err := l.maxBytes(contentType)
-	if err != nil { return VerifiedObject{}, err }
-	if size > maxBytes { return VerifiedObject{}, ErrTooLarge }
-	b2Bucket, r2Bucket, err := l.bucketPair(namespace)
-	if err != nil { return VerifiedObject{}, err }
+	if err != nil {
+		return VerifiedObject{}, err
+	}
+	if size > maxBytes {
+		return VerifiedObject{}, ErrTooLarge
+	}
 	info, err := l.manager.VerifyUpload(ctx, tenantID, namespace, key, contentType, size)
-	if err != nil { return VerifiedObject{}, err }
+	if err != nil {
+		return VerifiedObject{}, err
+	}
 	if err := l.manager.VerifyUploadChecksum(ctx, tenantID, namespace, key, size, sha256Hex); err != nil {
 		return VerifiedObject{}, err
 	}
-	scopedKey := tenantPrefix(tenantID) + key
-	if err := l.replica.CopyFrom(ctx, l.primary, b2Bucket, scopedKey, r2Bucket, scopedKey, size, contentType, sha256Hex); err != nil {
-		return VerifiedObject{}, fmt.Errorf("verify B2 primary and replicate to R2: %w", err)
-	}
 	return VerifiedObject{
-		Key: key, Size: info.Size, ContentType: info.ContentType, SHA256: strings.ToLower(sha256Hex),
-		PrimaryVerified: true, ReplicaVerified: true, VerifiedAt: time.Now().UTC(),
+		Key: key, Size: info.Size, ContentType: info.ContentType,
+		SHA256: strings.ToLower(sha256Hex), PrimaryVerified: true,
+		ReplicaVerified: false, VerifiedAt: time.Now().UTC(),
 	}, nil
+}
+
+func (l *Lifecycle) Replicate(ctx context.Context, tenantID, namespace, key, contentType, sha256Hex string, size int64) error {
+	verified, err := l.VerifyPrimary(ctx, tenantID, namespace, key, contentType, sha256Hex, size)
+	if err != nil {
+		return err
+	}
+	b2Bucket, r2Bucket, err := l.bucketPair(namespace)
+	if err != nil {
+		return err
+	}
+	scopedKey := tenantPrefix(tenantID) + key
+	if err := l.replica.CopyFrom(ctx, l.primary, b2Bucket, scopedKey, r2Bucket, scopedKey, size, contentType, verified.SHA256); err != nil {
+		return fmt.Errorf("verify B2 primary and replicate to R2: %w", err)
+	}
+	return nil
+}
+
+func (l *Lifecycle) VerifyAndReplicate(ctx context.Context, tenantID, namespace, key, contentType, sha256Hex string, size int64) (VerifiedObject, error) {
+	verified, err := l.VerifyPrimary(ctx, tenantID, namespace, key, contentType, sha256Hex, size)
+	if err != nil {
+		return VerifiedObject{}, err
+	}
+	if err := l.Replicate(ctx, tenantID, namespace, key, contentType, sha256Hex, size); err != nil {
+		return VerifiedObject{}, err
+	}
+	verified.ReplicaVerified = true
+	verified.VerifiedAt = time.Now().UTC()
+	return verified, nil
 }
 
 func (l *Lifecycle) DownloadURL(ctx context.Context, requesterTenant, ownerTenant, namespace, key, sha256Hex string, size int64) (DownloadGrant, error) {
