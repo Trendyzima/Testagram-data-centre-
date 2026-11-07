@@ -1,9 +1,9 @@
 name: testagram-vps-ci
 on:
   push:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
   pull_request:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
   workflow_dispatch:
 jobs:
   go:
@@ -65,29 +65,23 @@ jobs:
       - name: Validate fresh platform boundary
         run: |
           set -euo pipefail
-          bash -n testagram-platform/bootstrap.sh
-          bash -n testagram-platform/prepare.sh
-          bash -n testagram-platform/status.sh
-          bash -n testagram-platform/healthcheck.sh
-          bash -n testagram-platform/storage.sh
           bash -n vps/backup.sh
           bash -n vps/restore-drill.sh
           bash scripts/validate-testagram-platform-contracts.sh
           python -m pip install --disable-pip-version-check PyYAML
           python scripts/validate-platform-openapi.py
-          tmp_storage="$(mktemp -d)"
-          TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash testagram-platform/storage.sh
-          test -d "$tmp_storage/platform"
-          test -d "$tmp_storage/media"
-          test -d "$tmp_storage/nodes"
-          rm -rf "$tmp_storage"
           bash -n vps/install.sh
           bash -n scripts/install-local-docker.sh
           bash -n android-node/install-apk.sh
           test -f vps/docker-compose.yml
           test -f backend/docker-compose.yml
           test -f backend/runtime/Caddyfile
-          echo "VPS local-storage root initialization: PASS"
+          grep -q "B2_S3_ENDPOINT" vps/docker-compose.fresh.yml
+          grep -q "CLOUDFLARE_R2_ENDPOINT" vps/docker-compose.fresh.yml
+          grep -q "FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}" vps/docker-compose.fresh.yml
+          grep -q "TESTAGRAM_RETENTION_ENABLED: \"false\"" vps/docker-compose.fresh.yml
+          grep -q "TESTAGRAM_RETENTION_DRY_RUN: \"true\"" vps/docker-compose.fresh.yml
+          echo "Fresh runtime, B2/R2 storage contract and disabled-retention gates: PASS"
 
       - name: Validate database migrations
         run: |
@@ -111,17 +105,24 @@ jobs:
           ! grep -qi 'supabase' vps/docker-compose.fresh.yml
           ! grep -Eq '/migrations/(002_video_platform|003_production_hardening|004_storage_buckets|005_platform|006_video_upload_safety|007_video_upload_safety)\.sql' vps/docker-compose.fresh.yml
           docker run --rm -e TLS_ADMIN_EMAIL=ci@example.invalid -v "$PWD/vps/fresh/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
-      - name: Validate VPS control plane Compose runtime
+      - name: Validate VPS control plane runtime
         run: |
           set -euo pipefail
-          docker network create testagram-platform 2>/dev/null || true
-          docker run -d --name vps-ci-db --network testagram-platform --network-alias db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
-          trap 'docker rm -f vps-ci-db >/dev/null 2>&1 || true; docker compose -f vps/docker-compose.yml down -v >/dev/null 2>&1 || true' EXIT
-          for i in $(seq 1 30); do docker exec vps-ci-db pg_isready -U postgres -d postgres >/dev/null 2>&1 && break; sleep 2; done
-          docker exec vps-ci-db pg_isready -U postgres -d postgres
-          docker run --rm --network testagram-platform -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'for f in /migrations/*.sql; do psql -h db -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
-          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres TESTAGRAM_NETWORK=testagram-platform ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough TLS_ADMIN_EMAIL=ci@example.invalid docker compose -f vps/docker-compose.yml build control-plane
-          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres TESTAGRAM_NETWORK=testagram-platform TESTAGRAM_BASE_DOMAIN=example.testagram.invalid TESTAGRAM_DOMAIN_TARGETS=web=http://web:3000 TESTAGRAM_PUBLIC_DNS_TARGET=edge.testagram.invalid ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough TLS_ADMIN_EMAIL=ci@example.invalid docker compose -f vps/docker-compose.yml up -d control-plane
+          docker network create testagram-control-plane-ci
+          docker run -d --name testagram-control-plane-db --network testagram-control-plane-ci --network-alias db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
+          trap 'docker rm -f testagram-control-plane >/dev/null 2>&1 || true; docker rm -f testagram-control-plane-db >/dev/null 2>&1 || true; docker network rm testagram-control-plane-ci >/dev/null 2>&1 || true' EXIT
+          for i in $(seq 1 30); do docker exec testagram-control-plane-db pg_isready -U postgres -d postgres >/dev/null 2>&1 && break; sleep 2; done
+          docker exec testagram-control-plane-db pg_isready -U postgres -d postgres
+          docker run --rm --network testagram-control-plane-ci -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'psql -h db -U postgres -d postgres -v ON_ERROR_STOP=1 -f /migrations/001_vps.sql && psql -h db -U postgres -d postgres -v ON_ERROR_STOP=1 -f /migrations/006_hosting_control_plane.sql'
+          docker build -f control-plane/Dockerfile -t testagram-control-plane-ci .
+          docker run -d --name testagram-control-plane --network testagram-control-plane-ci -p 127.0.0.1:8787:8787 \
+            -e DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres?sslmode=disable \
+            -e VPS_INTERNAL_TOKEN=ci-internal -e VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap \
+            -e TESTAGRAM_BASE_DOMAIN=example.testagram.invalid \
+            -e TESTAGRAM_DOMAIN_TARGETS=web=http://web:3000 \
+            -e TESTAGRAM_PUBLIC_DNS_TARGET=edge.testagram.invalid \
+            -e TESTAGRAM_PUBLIC_ORIGIN_IP=203.0.113.10 \
+            -e VPS_CONTROL_PLANE_ADDR=:8787 testagram-control-plane-ci
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/readyz >/dev/null 2>&1 && break; sleep 2; done
           curl -fsS http://127.0.0.1:8787/healthz
           # Storage-only Android nodes must never receive compute workloads.
