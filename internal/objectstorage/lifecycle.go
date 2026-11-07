@@ -112,7 +112,7 @@ func NewLifecycle(cfg LifecycleConfig) (*Lifecycle, error) {
 	if cfg.MaxImageBytes == 0 { cfg.MaxImageBytes = 25 << 20 }
 	if cfg.MaxVideoBytes == 0 { cfg.MaxVideoBytes = 500 << 20 }
 	if cfg.UploadTTL == 0 { cfg.UploadTTL = 15 * time.Minute }
-	if cfg.DownloadTTL == 0 { cfg.DownloadTTL = 10 * time.Minute }
+	if cfg.DownloadTTL == 0 { cfg.DownloadTTL = 5 * time.Minute }
 	if cfg.MaxImageBytes < 1 || cfg.MaxVideoBytes < 1 || cfg.MaxImageBytes > 5<<30 || cfg.MaxVideoBytes > 5<<30 {
 		return nil, errors.New("media size limits must be between 1 byte and 5 GiB")
 	}
