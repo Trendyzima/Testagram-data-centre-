@@ -67,6 +67,8 @@ func NewLifecycleFromEnv() (*Lifecycle, error) {
 		R2Region: envValue("CLOUDFLARE_R2_REGION"),
 		R2PrivateBucket: envValue("CLOUDFLARE_R2_PRIVATE_BUCKET"),
 		R2PublicBucket: envValue("CLOUDFLARE_R2_PUBLIC_BUCKET"),
+		CDNBaseURL: envValue("CLOUDFLARE_MEDIA_BASE_URL"),
+		CDNSigningSecret: envValue("CLOUDFLARE_MEDIA_SIGNING_SECRET"),
 		MaxImageBytes: maxImage,
 		MaxVideoBytes: maxVideo,
 		UploadTTL: uploadTTL,
