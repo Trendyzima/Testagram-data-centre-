@@ -146,7 +146,11 @@ class StorageVolumeManager(private val context: Context) {
     }
 
     private fun validateRelativePath(path: String) {
-        require(path.isNotBlank() && !path.startsWith("/") && !path.contains("..") && !path.contains('\\')) {
+        require(path.isNotBlank() && path.length <= 512 && !path.startsWith("/") && !path.contains('\\')) {
+            "invalid media path"
+        }
+        val segments = path.split('/')
+        require(segments.size in 1..8 && segments.all { it.isNotBlank() && it != "." && it != ".." && it.length <= 128 && it.matches(Regex("[A-Za-z0-9._-]+")) }) {
             "invalid media path"
         }
     }
