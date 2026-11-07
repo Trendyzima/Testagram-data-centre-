@@ -10,9 +10,10 @@ network, start the legacy cmd/api, or configure Supabase credentials.
 - algorithm: private stateless ranker on an internal-only Docker network. Only
   Backend can reach it; its bearer token is not exposed to XClone. Backend has
   a second egress-capable network for Appwrite and object-provider access.
-- migrate: applies the repository's idempotent SQL migrations to the dedicated
-  Data Centre PostgreSQL database before control-plane starts. The legacy
-  Supabase Storage migration detects the absent Storage schema and skips it.
+- migrate: applies only `001_vps.sql` and `006_hosting_control_plane.sql` to
+  the dedicated Data Centre PostgreSQL database before control-plane starts.
+  It deliberately does not apply product/video, notification, platform-event,
+  or Supabase Storage migrations to this infrastructure database.
 - control-plane: Data Centre infrastructure state only. Its PostgreSQL URL
   must point to a dedicated TLS database, not the legacy Supabase project.
 - edge: Caddy terminates TLS and forwards api.testagram.site to Backend.
