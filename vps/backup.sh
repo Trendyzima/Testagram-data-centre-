@@ -8,8 +8,9 @@ test -f "$ENV_FILE" || { echo "Fresh runtime env file not found: $ENV_FILE" >&2;
 read_env_value() {
   local key="$1" value
   value="$(sed -n "s/^${key}=//p" "$ENV_FILE" | head -n 1)"
-  value="${value%$'\\r'}"
-  if [[ "$value" == \"*\" ]]; then value="${value:1:${#value}-2}"; fi
+  case "$value" in
+    \"*\") value="${value:1:${#value}-2}" ;;
+  esac
   printf '%s' "$value"
 }
 STORAGE_ROOT="${TESTAGRAM_STORAGE_ROOT:-$(read_env_value TESTAGRAM_STORAGE_ROOT)}"
