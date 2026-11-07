@@ -103,6 +103,7 @@ if [ "$(env_value TESTAGRAM_ENABLE_NODES)" = "true" ]; then
   require_secret VPS_INTERNAL_TOKEN
   require_secret VPS_NODE_BOOTSTRAP_TOKEN
   profiles+=(--profile nodes)
+  cp "$ROOT/vps/fresh/Caddyfile.nodes" "$ROOT/vps/fresh/Caddyfile"
 fi
 
 compose=(docker compose --env-file "$ENV_FILE" -f "$ROOT/vps/docker-compose.fresh.yml")
