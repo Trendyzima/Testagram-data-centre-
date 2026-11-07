@@ -25,7 +25,7 @@ networks, start the legacy cmd/api, or configure retired database credentials.
 - **migrate and control-plane (nodes profile):** Data Centre infrastructure
   migrations and Android/Linux node management. They use a separate TLS database
   and independent service/bootstrap tokens. They are not required for login.
-- **federation-db (local profile):** local-development-only PostgreSQL for
+- **federation-db (local-federation profile):** local-development-only PostgreSQL for
   Federation protocol state. Production Federation uses its own dedicated Neon
   database and least-privilege role.
 
