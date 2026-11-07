@@ -91,8 +91,15 @@ func newRequestID() string {
 }
 
 func validateKey(key string) error {
-	if strings.TrimSpace(key) == "" || len(key) > 512 || strings.ContainsAny(key, "\r\n\x00") {
-		return errors.New("platform key must be non-empty, at most 512 bytes, and contain no control delimiters")
+	if len(key) < 1 || len(key) > 160 {
+		return errors.New("platform key must contain between 1 and 160 ASCII characters")
+	}
+	for _, char := range key {
+		if !(char == '-' || char == '_' || char == '.' || char == ':' ||
+			(char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9')) {
+			return errors.New("platform key contains a character not supported by the API")
+		}
 	}
 	return nil
 }
