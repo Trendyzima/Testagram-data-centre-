@@ -3,6 +3,7 @@ package objectstorage
 import (
 	"context"
 	"errors"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -219,32 +220,57 @@ func (l *Lifecycle) VerifyPrimary(ctx context.Context, tenantID, namespace, key,
 }
 
 func (l *Lifecycle) Replicate(ctx context.Context, tenantID, namespace, key, contentType, sha256Hex string, size int64) error {
+	_, err := l.ReplicateAndChecksum(ctx, tenantID, namespace, key, contentType, sha256Hex, size)
+	return err
+}
+
+func (l *Lifecycle) ReplicateAndChecksum(ctx context.Context, tenantID, namespace, key, contentType, sha256Hex string, size int64) (string, error) {
 	maxBytes, err := l.maxBytes(contentType)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if size > maxBytes {
-		return ErrTooLarge
+		return "", ErrTooLarge
 	}
 	b2Bucket, r2Bucket, err := l.bucketPair(namespace)
 	if err != nil {
-		return err
+		return "", err
 	}
 	scopedKey := storageObjectKey(tenantID, key)
-	// CopyFrom reads and hashes the B2 source stream, uploads it to R2, then
-	// reads the destination back and verifies its checksum. One transfer pass
-	// therefore verifies both replicas without a redundant B2 download.
-	if err := l.replica.CopyFrom(ctx, l.primary, b2Bucket, scopedKey, r2Bucket, scopedKey, size, contentType, strings.ToLower(sha256Hex)); err != nil {
-		return fmt.Errorf("verify B2 primary and replicate to R2: %w", err)
+	digest := strings.ToLower(strings.TrimSpace(sha256Hex))
+	if digest == "" {
+		info, headErr := l.primary.Head(ctx, b2Bucket, scopedKey)
+		if headErr != nil {
+			return "", fmt.Errorf("read B2 primary metadata: %w", headErr)
+		}
+		if info.Size != size || !strings.EqualFold(info.ContentType, contentType) {
+			return "", ErrObjectMismatch
+		}
+		digest, err = l.primary.SHA256(ctx, b2Bucket, scopedKey, size)
+		if err != nil {
+			return "", fmt.Errorf("calculate B2 primary SHA-256: %w", err)
+		}
 	}
-	return nil
+	if len(digest) != 64 {
+		return "", ErrChecksumMismatch
+	}
+	if _, err := hex.DecodeString(digest); err != nil {
+		return "", ErrChecksumMismatch
+	}
+	// CopyFrom verifies source metadata/hash and destination read-back. The
+	// caller may omit a client checksum; this method calculates it from B2.
+	if err := l.replica.CopyFrom(ctx, l.primary, b2Bucket, scopedKey, r2Bucket, scopedKey, size, contentType, digest); err != nil {
+		return "", fmt.Errorf("verify B2 primary and replicate to R2: %w", err)
+	}
+	return digest, nil
 }
 func (l *Lifecycle) VerifyAndReplicate(ctx context.Context, tenantID, namespace, key, contentType, sha256Hex string, size int64) (VerifiedObject, error) {
-	if err := l.Replicate(ctx, tenantID, namespace, key, contentType, sha256Hex, size); err != nil {
+	digest, err := l.ReplicateAndChecksum(ctx, tenantID, namespace, key, contentType, sha256Hex, size)
+	if err != nil {
 		return VerifiedObject{}, err
 	}
 	return VerifiedObject{
-		Key: key, Size: size, ContentType: contentType, SHA256: strings.ToLower(sha256Hex),
+		Key: key, Size: size, ContentType: contentType, SHA256: digest,
 		PrimaryVerified: true, ReplicaVerified: true, VerifiedAt: time.Now().UTC(),
 	}, nil
 }
