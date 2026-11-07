@@ -23,4 +23,12 @@ grep -q 'TESTAGRAM_RETENTION_DRY_RUN: "true"' vps/docker-compose.fresh.yml
 grep -q '/readyz' docs/platform/openapi/internal-platform.yaml
 grep -q '/v1/hosting/backups' docs/platform/openapi/hosting-control-plane.yaml
 
+# Data Centre-owned media lifecycle API and migration.
+grep -q '008_media_storage_control_plane.sql' vps/docker-compose.fresh.yml
+grep -q 'MEDIA_STORAGE_ENABLED' vps/docker-compose.fresh.yml
+grep -q 'FRESH_DATA_CENTRE_INTERNAL_TOKEN' vps/docker-compose.fresh.yml
+grep -q '/internal/v1/media/upload-url' control-plane/main.go
+grep -q '/internal/v1/media/verify' control-plane/main.go
+grep -q 'media_replication_jobs' migrations/008_media_storage_control_plane.sql
+grep -q 'DownloadURLAuthorized' control-plane/media.go
 echo "Fresh Appwrite runtime, B2/R2 storage contract and retired-provider exit checks: PASS"
