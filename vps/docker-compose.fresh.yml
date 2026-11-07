@@ -81,7 +81,7 @@ services:
     environment:
       HTTP_ADDR: :8081
       APP_ENV: production
-      PUBLIC_BASE_URL: https://testagram.site
+      PUBLIC_BASE_URL: https://federation.testagram.site
       INSTANCE_DOMAIN: testagram.site
       SERVICE_ACTOR_USERNAME: testagram
       SERVICE_ACTOR_NAME: Testagram
@@ -94,8 +94,10 @@ services:
     depends_on:
       federation-db:
         condition: service_healthy
+      # Federation has its own authenticated Backend readiness probe. Do not
+      # gate it on the public API's full readiness, which also requires Algorithm.
       api:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "/federation-api", "--healthcheck"]
       interval: 10s

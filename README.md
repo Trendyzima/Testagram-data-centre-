@@ -131,15 +131,29 @@ The platform rebrand preserves compatibility with the existing runtime paths and
 
 ## Fresh Appwrite runtime
 
-The clean runtime is defined separately in vps/docker-compose.fresh.yml and
-vps/FRESH-DEPLOYMENT.md. It runs the dedicated Backend testagram-backend-fresh
-image, private Algorithm ranker, Data Centre infrastructure control plane and
-Caddy edge without attaching the legacy Supabase network or starting the legacy
-Backend API. Federation remains disabled until its private Backend integration,
-signature verification and durable inbox/outbox are implemented.
+The clean runtime is defined separately in `vps/docker-compose.fresh.yml` and
+`vps/FRESH-DEPLOYMENT.md`. It runs the dedicated fresh Backend API, private
+Algorithm ranker, private Federation service, Data Centre infrastructure
+control plane and Caddy edge without attaching the legacy Supabase network or
+starting the legacy Backend API.
 
-Keep FRESH_MEDIA_ENABLED=false until B2/R2 and the Appwrite media collections
+The five-repository ownership boundary is:
+
+- [XClone](https://github.com/Trendyzima/XClone-9b4dz1-9b4dz1-8936-20260809tr): web/mobile UI and presentation only.
+- [Testagram Backend](https://github.com/Trendyzima/Testagram-backend-): canonical Appwrite identity, accounts, posts, social graph, permissions, visibility and API orchestration.
+- [Federated Content](https://github.com/Trendyzima/federated-content): ActivityPub protocol state, signed ingress, actor discovery and asynchronous federation processing.
+- [the-algorithm](https://github.com/Trendyzima/the-algorithm): private ranking and recommendation scoring; Backend remains the authorization authority.
+- **Data Centre (this repository)**: deployment, private networking, B2/R2 media durability, storage nodes, backups and recovery.
+
+Federation now has PostgreSQL-backed actor/inbox/outbox state, signed inbox verification,
+safe remote-key resolution and a private Backend identity/readiness contract. It is
+still not a complete federation product: inbox activity application, Backend outbox
+polling, outbound delivery workers, follower fan-out and end-to-end interoperability
+tests remain unfinished. Keep it private and do not enable public ActivityPub
+routing until those gates pass.
+
+Keep `FRESH_MEDIA_ENABLED=false` until B2/R2 and the Appwrite media collections
 are staged and independently verified. Retention remains disabled and dry-run.
-The fresh compose file is a deployment foundation, not a production-readiness
-claim; Backend-to-Data-Centre media placement and Backend-to-Federation APIs
-remain release blockers.
+The fresh Compose file is a deployment foundation, not a production-readiness
+claim; media placement, replica recovery, federation workers and full
+cross-repository end-to-end tests remain release gates.

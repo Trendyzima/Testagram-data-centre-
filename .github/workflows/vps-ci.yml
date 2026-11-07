@@ -164,6 +164,10 @@ jobs:
 
       - name: Validate Caddy syntax
         run: |
+          if grep -Eq '^[[:space:]]*federation[.]testagram[.]site[[:space:]]*[{]' vps/fresh/Caddyfile; then
+            echo "Public Federation routing is blocked until inbox/outbox workers and end-to-end gates are complete."
+            exit 1
+          fi
           docker run --rm \
             -e TESTAGRAM_DOMAIN=video.testagram.local \
             -e TESTAGRAM_ORIGIN=http://control-plane:8787 \

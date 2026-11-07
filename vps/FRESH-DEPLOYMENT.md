@@ -16,34 +16,44 @@ network, start the legacy cmd/api, or configure Supabase credentials.
   or Supabase Storage migrations to this infrastructure database.
 - control-plane: Data Centre infrastructure state only. Its PostgreSQL URL
   must point to a dedicated TLS database, not the legacy Supabase project.
-- edge: Caddy terminates TLS and forwards api.testagram.site to Backend.
-- Federation is intentionally not started or exposed. Its private Backend
-  integration, signature verification and durable inbox/outbox are not ready.
+- edge: Caddy terminates TLS and forwards only api.testagram.site to Backend.
+  The Federation hostname is deliberately absent from the public Caddy config.
+- federation-api: a private ActivityPub preview service on the internal
+  services/federation networks, backed by its dedicated PostgreSQL database.
+  It resolves opted-in actors through Backend and verifies/persists signed inbox
+  deliveries, but it does not yet process inbox activities or execute outbound
+  delivery/follower-fanout workers. Its canonical actor origin is
+  https://federation.testagram.site; that hostname must not receive public DNS
+  or Caddy routing until the remaining federation release gates pass.
 
 ## Before deployment
 
 1. Publish the fresh Backend image using Backend container-release.yml and pin
    the resulting GHCR digest in TESTAGRAM_FRESH_BACKEND_IMAGE.
 2. Publish Algorithm and pin its digest in TESTAGRAM_ALGORITHM_IMAGE.
-3. Pin Caddy to a reviewed immutable image digest.
-4. Provision a new Appwrite project and database. Create all documented
+3. Publish the private Federation preview image and pin its digest in TESTAGRAM_FEDERATION_IMAGE.
+4. Pin Caddy to a reviewed immutable image digest.
+5. Provision a new Appwrite project and database. Create all documented
    collections, attributes and indexes; wait for asynchronous provisioning
    before starting the API.
-5. Create a least-privilege Appwrite server key. Keep it only in the runtime
+6. Create a least-privilege Appwrite server key. Keep it only in the runtime
    secret store. Never put it in XClone build variables.
-6. Configure exact frontend HTTPS origins, Appwrite endpoint/project/database,
+7. Configure exact frontend HTTPS origins, Appwrite endpoint/project/database,
    independent Algorithm token and a separate TLS PostgreSQL database for the
    Data Centre control plane.
-7. Run docker compose --env-file vps/fresh.env -f vps/docker-compose.fresh.yml config
+8. Run docker compose --env-file vps/fresh.env -f vps/docker-compose.fresh.yml config
    and inspect the rendered configuration for secrets and unexpected services.
-8. Keep FRESH_MEDIA_ENABLED=false until B2/R2 credentials, Appwrite storage
+9. Keep FRESH_MEDIA_ENABLED=false until B2/R2 credentials, Appwrite storage
    schema, upload read-back verification and independent archive are staged.
-9. Keep retention disabled and dry-run true. Do not enable destructive jobs
+10. Keep retention disabled and dry-run true. Do not enable destructive jobs
    during initial deployment.
-10. Run staging auth, feed authorization, ranker outage, media, backup/restore,
+11. Run staging auth, feed authorization, ranker outage, media, backup/restore,
     load and security tests before production DNS cutover.
 
 This compose file is a deployment foundation, not proof of production readiness.
-It does not implement the missing Backend-to-Federation or Backend-to-Data-Centre
-media placement/replica APIs. Do not expose or enable those paths until their
-contracts and integration tests are complete.
+The private Backend-to-Federation actor and readiness contracts exist, but inbox
+activity application, Backend outbox polling, outbound delivery, follower fan-out
+and cross-repository end-to-end tests remain unfinished. Backend-to-Data-Centre
+media placement, verified B2/R2 replica recovery and operational restore drills
+also remain release gates. Do not add public Federation routing until those
+contracts and tests are complete.
