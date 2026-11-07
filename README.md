@@ -81,7 +81,7 @@ docker compose --env-file /opt/testagram/vps/fresh.env -f /opt/testagram/vps/doc
 The Data Centre includes operator-run scripts for an encrypted Data Centre infrastructure database backup, optional mounted node-storage backup, and an isolated non-production restore drill. This is not a backup of the Neon social database, Federation database or B2/R2 media objects.
 
 Before using them:
-- Install Docker Compose v2, `age`, `rsync`, `tar`, `flock`, and `sha256sum`.
+- Install `pg_dump` (PostgreSQL client), Docker Engine (for the isolated restore drill), `age`, `rsync`, `tar`, `flock`, `sha256sum` and Git.
 - Configure SSH key authentication and verify the backup host key in `known_hosts`; the script intentionally does not disable SSH host-key checking.
 - Set `TESTAGRAM_BACKUP_REMOTE=user@backup-host:/absolute/path` and `TESTAGRAM_BACKUP_AGE_RECIPIENT=age1...` in the operator's environment.
 - Set `TESTAGRAM_FRESH_ENV_FILE` to `vps/fresh.env` (the default) and optionally set `TESTAGRAM_STORAGE_ROOT` to a mounted local node-storage root.
