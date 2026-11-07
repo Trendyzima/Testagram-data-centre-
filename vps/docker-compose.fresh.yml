@@ -59,10 +59,11 @@ services:
     restart: "no"
     entrypoint: ["/bin/sh", "-ec"]
     command: |
-      for migration in /migrations/*.sql; do
-        echo "Applying $migration"
-        psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$$migration"
-      done
+      # Only Data Centre-owned infrastructure state belongs in this database.
+      # Never apply the product/video, notification, Supabase Storage, or
+      # platform migrations from this deployment path.
+      psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_vps.sql
+      psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/006_hosting_control_plane.sql
     environment:
       DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:?Set a dedicated TLS PostgreSQL URL for Data Centre infrastructure state}
     volumes:
