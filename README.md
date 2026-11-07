@@ -68,12 +68,12 @@ On a Linux host with Docker Engine, Docker Compose v2, Git and OpenSSL:
 bash scripts/install-local-docker.sh
 ```
 
-The installer creates a local development configuration automatically when no `.env` exists. For production, provide your own domain and secrets.
+The installer copies the fresh Appwrite/Neon/B2/R2 template to `vps/fresh.env` when needed and stops. Fill in real secrets and immutable image digests before rerunning it.
 
 Check the stack:
 
 ```bash
-docker compose --env-file /opt/testagram/.env -f /opt/testagram/vps/docker-compose.yml ps
+docker compose --env-file /opt/testagram/vps/fresh.env -f /opt/testagram/vps/docker-compose.yml ps
 ```
 
 ## Encrypted off-host backups and restore drills
