@@ -9,9 +9,14 @@ cmp -s vps/docker-compose.yml vps/docker-compose.fresh.yml
 
 # Login must not be blocked by optional ranking or federation services.
 api_block="$(sed -n '/^  api:/,/^  federation-db:/p' vps/docker-compose.fresh.yml)"
-grep -q 'algorithm:' <<< "$api_block"
-grep -q 'condition: service_started' <<< "$api_block"
+if grep -q 'algorithm:' <<< "$api_block"; then
+  echo "The public login API must not have an Algorithm startup dependency." >&2
+  exit 1
+fi
 grep -q 'FEED_RANKING_REQUIRED: "false"' <<< "$api_block"
+grep -q 'ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}' <<< "$api_block"
+grep -q 'FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}' <<< "$api_block"
+grep -q 'FEDERATION_DATABASE_URL: ${FEDERATION_DATABASE_URL:-}' vps/docker-compose.fresh.yml
 edge_block="$(sed -n '/^  edge:/,/^networks:/p' vps/docker-compose.fresh.yml)"
 grep -q 'api:' <<< "$edge_block"
 if grep -q 'federation-api' <<< "$edge_block"; then
