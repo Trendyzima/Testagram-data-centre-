@@ -58,7 +58,7 @@ After installation:
 6. Confirm heartbeats report the selected SD card's total/free bytes and removable-card identity.
 7. Node B runs in storage-only mode. On-device video transcoding is disabled; video processing must run on a separate server/worker.
 
-Android is the local media/storage node. The Linux Docker host runs the Testagram Backend and Data Centre control-plane services. Supabase is retired and is not part of the fresh runtime.
+Android is the local media/storage node. The public Backend API and Caddy edge are the default runtime. The Data Centre node control-plane is an opt-in nodes profile, enabled only after its separate database and secrets are provisioned. Supabase is retired and is not part of the fresh runtime.
 
 ## Docker VPS quick install
 
@@ -68,7 +68,15 @@ On a Linux host with Docker Engine, Docker Compose v2 and Git:
 bash scripts/install-local-docker.sh
 ```
 
-The installer copies the fresh Appwrite/Neon/B2/R2 template to `vps/fresh.env` when needed and stops. Fill in real secrets and immutable image digests before rerunning it.
+The installer copies the fresh Appwrite/Neon/B2/R2 template to vps/fresh.env when needed and stops. Configure the Appwrite project, allowed frontend origins, Backend image digest and Caddy image digest. By default it starts only the public API and TLS edge; ranking, Federation and node control-plane are independently opt-in.
+
+Enable an optional service by setting its flag and supplying its dependencies in vps/fresh.env, then rerun the installer:
+
+- TESTAGRAM_ENABLE_RANKING=true requires a pinned Algorithm image, ALGORITHM_ENDPOINT and a 32+ character ALGORITHM_INTERNAL_TOKEN.
+- TESTAGRAM_ENABLE_FEDERATION=true requires a pinned Federation image, dedicated FEDERATION_DATABASE_URL, FEDERATION_BACKEND_INTERNAL_URL and a shared 32+ character Backend/Federation token.
+- TESTAGRAM_ENABLE_NODES=true requires a pinned PostgreSQL client image, dedicated DATA_CENTRE_DATABASE_URL and separate 32+ character node/control-plane tokens.
+
+The API uses a safe chronological feed fallback when ranking is disabled. Federation and node services never gate Appwrite login.
 
 Check the stack:
 
@@ -128,11 +136,7 @@ The platform rebrand preserves compatibility with the existing runtime paths and
 
 ## Fresh Appwrite runtime
 
-The clean runtime is defined separately in `vps/docker-compose.fresh.yml` and
-`vps/FRESH-DEPLOYMENT.md`. It runs the dedicated fresh Backend API, private
-Algorithm ranker, private Federation service, Data Centre infrastructure
-control plane and Caddy edge without attaching legacy services or starting the
-legacy Backend API. Supabase is retired and is not part of this architecture.
+The clean runtime is defined in vps/docker-compose.fresh.yml and vps/FRESH-DEPLOYMENT.md. The default profile runs the dedicated fresh Backend API and Caddy edge without attaching legacy services or starting the legacy Backend API. Private Algorithm ranking, Federation and the Data Centre node control-plane are opt-in profiles; none is a login dependency. Supabase is retired and is not part of this architecture.
 
 The five-repository ownership boundary is:
 
