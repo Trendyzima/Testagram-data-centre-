@@ -112,7 +112,7 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command: |
       # Only Data Centre-owned infrastructure state belongs in this database.
-      # Never apply the product/video, notification, Supabase Storage, or
+      # Never apply the product/video, notification, retired object-storage, or
       # platform migrations from this deployment path.
       psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_vps.sql
       psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/006_hosting_control_plane.sql
