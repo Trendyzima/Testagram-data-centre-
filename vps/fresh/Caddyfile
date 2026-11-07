@@ -1,0 +1,9 @@
+{
+	email {$TLS_ADMIN_EMAIL}
+	admin off
+}
+
+api.testagram.site {
+	encode zstd gzip
+	reverse_proxy api:8081
+}
