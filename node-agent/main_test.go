@@ -143,7 +143,11 @@ func TestMediaDiskUsesExplicitQuotaAndDirectoryUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("VPS_STORAGE_QUOTA_BYTES", "8192")
-	a := &Agent{storageEnabled: true, storageRoot: root}
+	device, err := filesystemDevice(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{storageEnabled: true, storageRoot: root, storageDevice: device, storageDeviceSet: true}
 	total, free := a.mediaDisk()
 	if total <= 0 || total > 8192 {
 		t.Fatalf("unexpected total quota: %d", total)
@@ -179,5 +183,28 @@ func TestComputeExecutionDisabledByDefault(t *testing.T) {
 	a := &Agent{}
 	if err := a.execute(Workload{}); err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("expected disabled compute guard, got %v", err)
+	}
+}
+
+func TestValidateStorageDeviceRejectsSystemDiskUnlessExplicitlyAllowed(t *testing.T) {
+	root := t.TempDir()
+	if _, err := validateStorageDevice(root, false); err == nil {
+		t.Fatal("storage on the operating-system filesystem must be rejected by default")
+	}
+	device, err := validateStorageDevice(root, true)
+	if err != nil || device == 0 {
+		t.Fatalf("explicit system-disk override should be accepted for development: device=%d err=%v", device, err)
+	}
+}
+
+func TestMediaDiskDoesNotReportCapacityAfterMountedVolumeChanges(t *testing.T) {
+	root := t.TempDir()
+	device, err := filesystemDevice(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{storageEnabled: true, storageRoot: root, storageDevice: device + 1, storageDeviceSet: true}
+	if total, free := a.mediaDisk(); total != 0 || free != 0 {
+		t.Fatalf("detached or replaced volume must report zero capacity, got total=%d free=%d", total, free)
 	}
 }
