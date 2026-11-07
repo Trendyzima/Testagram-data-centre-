@@ -38,7 +38,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN}
       PLATFORM_ADDR: :8095
-    networks: [internal, supabase]
+    networks: [internal, platform]
     depends_on:
       redis:
         condition: service_healthy
@@ -63,7 +63,7 @@ services:
       VIDEO_MIN_FREE_BYTES: ${VIDEO_MIN_FREE_BYTES:-2147483648}
     volumes:
       - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/media:/media
-    networks: [internal, supabase]
+    networks: [internal, platform]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8790/readyz"]
       interval: 10s
@@ -81,7 +81,7 @@ services:
       VIDEO_MEDIA_ROOT: /media
     volumes:
       - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/media:/media
-    networks: [internal, supabase]
+    networks: [internal, platform]
 
   notification:
     build:
@@ -93,7 +93,7 @@ services:
       NOTIFICATION_JWT_SECRET: ${NOTIFICATION_JWT_SECRET}
       NOTIFICATION_INTERNAL_TOKEN: ${NOTIFICATION_INTERNAL_TOKEN}
       NOTIFICATION_ADDR: :8090
-    networks: [internal, supabase]
+    networks: [internal, platform]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8090/readyz"]
       interval: 10s
@@ -108,7 +108,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       WORKER_ADDR: :8091
-    networks: [internal, supabase]
+    networks: [internal, platform]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8091/readyz"]
       interval: 10s
@@ -119,9 +119,9 @@ networks:
   edge:
   internal:
     internal: true
-  supabase:
+  platform:
     external: true
-    name: ${SUPABASE_NETWORK:-testagram-supabase}
+    name: ${TESTAGRAM_NETWORK:-testagram-platform}
 
 volumes:
   edge_data:

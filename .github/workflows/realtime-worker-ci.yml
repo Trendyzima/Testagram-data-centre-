@@ -1,0 +1,32 @@
+name: Realtime Worker CI
+
+on:
+  pull_request:
+    paths:
+      - "realtime/**"
+      - ".github/workflows/realtime-worker-ci.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "realtime/**"
+      - ".github/workflows/realtime-worker-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: realtime
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build Worker without deploying
+        run: npx --yes wrangler@4 deploy --dry-run --outdir /tmp/testagram-realtime-worker

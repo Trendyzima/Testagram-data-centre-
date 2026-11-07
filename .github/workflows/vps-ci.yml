@@ -1,9 +1,9 @@
 name: testagram-vps-ci
 on:
   push:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**","vps/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
   pull_request:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","supabase/**","backend/**","vps/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","testagram-platform/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
   workflow_dispatch:
 jobs:
   go:
@@ -21,6 +21,7 @@ jobs:
       APPWRITE_PROJECT_ID: ci-project
       APPWRITE_DATABASE_ID: ci-database
       APPWRITE_SERVER_API_KEY: ci-appwrite-server-key
+      TESTAGRAM_AUTH_PROVIDER: appwrite
       FRESH_API_ALLOWED_ORIGINS: https://testagram.site,https://www.testagram.site
       FRESH_MEDIA_ENABLED: "false"
       # Non-production credentials used only to render/validate the fresh Compose model in CI.
@@ -28,11 +29,12 @@ jobs:
       FRESH_FEDERATION_INTERNAL_TOKEN: ci-federation-internal-token-long-enough
       FEDERATION_POSTGRES_IMAGE: postgres:17-alpine
       FEDERATION_DB_PASSWORD: ci-federation-db-password-only
+      # Compose interpolation fixture only; CI does not connect Federation to this local URL.
+      FEDERATION_DATABASE_URL: postgresql://testagram_federation:ci-federation-db-password-only@localhost:5432/testagram_federation?sslmode=disable
       VPS_INTERNAL_TOKEN: ci-internal
       VPS_NODE_BOOTSTRAP_TOKEN: ci-bootstrap
       ALGORITHM_INTERNAL_TOKEN: ci-algorithm-internal-token-long-enough
       TLS_ADMIN_EMAIL: ci@example.invalid
-      TESTAGRAM_AUTH_PROVIDER: supabase
       # Local Postgres service for CI only; production uses Neon with TLS.
       TESTAGRAM_DATABASE_URL: postgresql://postgres:testagram@db:5432/postgres?sslmode=disable
     services:
@@ -60,27 +62,22 @@ jobs:
       - run: go test -race ./...
       - run: go vet ./...
       - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker ./backend/services/platform
-      - name: Validate VPS/Supabase boundary
+      - name: Validate fresh platform boundary
         run: |
           set -euo pipefail
-          bash -n supabase/bootstrap.sh
-          bash -n supabase/prepare.sh
-          bash -n supabase/status.sh
-          bash -n supabase/healthcheck.sh
-          bash -n supabase/storage.sh
-          bash -n vps/backup.sh
-          bash -n vps/restore-drill.sh
-          bash scripts/validate-testagram-platform-contracts.sh
-          python -m pip install --disable-pip-version-check PyYAML
-          python scripts/validate-platform-openapi.py
           bash -n testagram-platform/bootstrap.sh
           bash -n testagram-platform/prepare.sh
           bash -n testagram-platform/status.sh
           bash -n testagram-platform/healthcheck.sh
           bash -n testagram-platform/storage.sh
+          bash -n vps/backup.sh
+          bash -n vps/restore-drill.sh
+          bash scripts/validate-testagram-platform-contracts.sh
+          python -m pip install --disable-pip-version-check PyYAML
+          python scripts/validate-platform-openapi.py
           tmp_storage="$(mktemp -d)"
-          TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash supabase/storage.sh
-          test -d "$tmp_storage/supabase"
+          TESTAGRAM_STORAGE_ROOT="$tmp_storage" bash testagram-platform/storage.sh
+          test -d "$tmp_storage/platform"
           test -d "$tmp_storage/media"
           test -d "$tmp_storage/nodes"
           rm -rf "$tmp_storage"
@@ -114,14 +111,14 @@ jobs:
       - name: Validate VPS control plane Compose runtime
         run: |
           set -euo pipefail
-          docker network create testagram-supabase 2>/dev/null || true
-          docker run -d --name vps-ci-db --network testagram-supabase --network-alias db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
+          docker network create testagram-platform 2>/dev/null || true
+          docker run -d --name vps-ci-db --network testagram-platform --network-alias db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
           trap 'docker rm -f vps-ci-db >/dev/null 2>&1 || true; docker compose -f vps/docker-compose.yml down -v >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 30); do docker exec vps-ci-db pg_isready -U postgres -d postgres >/dev/null 2>&1 && break; sleep 2; done
           docker exec vps-ci-db pg_isready -U postgres -d postgres
-          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'for f in /migrations/*.sql; do psql -h db -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
-          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough TLS_ADMIN_EMAIL=ci@example.invalid docker compose -f vps/docker-compose.yml build control-plane
-          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres SUPABASE_NETWORK=testagram-supabase TESTAGRAM_BASE_DOMAIN=example.testagram.invalid TESTAGRAM_DOMAIN_TARGETS=web=http://web:3000 TESTAGRAM_PUBLIC_DNS_TARGET=edge.testagram.invalid ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough TLS_ADMIN_EMAIL=ci@example.invalid docker compose -f vps/docker-compose.yml up -d control-plane
+          docker run --rm --network testagram-platform -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'for f in /migrations/*.sql; do psql -h db -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
+          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres TESTAGRAM_NETWORK=testagram-platform ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough TLS_ADMIN_EMAIL=ci@example.invalid docker compose -f vps/docker-compose.yml build control-plane
+          POSTGRES_PASSWORD=testagram JWT_SECRET=ci-jwt ANON_KEY=ci-anon SERVICE_ROLE_KEY=ci-service DASHBOARD_PASSWORD=ci-dashboard VPS_INTERNAL_TOKEN=ci-internal VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap VIDEO_JWT_SECRET=ci-jwt VIDEO_SIGNING_SECRET=ci-signing NOTIFICATION_JWT_SECRET=ci-jwt NOTIFICATION_INTERNAL_TOKEN=ci-notify DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres TESTAGRAM_NETWORK=testagram-platform TESTAGRAM_BASE_DOMAIN=example.testagram.invalid TESTAGRAM_DOMAIN_TARGETS=web=http://web:3000 TESTAGRAM_PUBLIC_DNS_TARGET=edge.testagram.invalid ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough TLS_ADMIN_EMAIL=ci@example.invalid docker compose -f vps/docker-compose.yml up -d control-plane
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/readyz >/dev/null 2>&1 && break; sleep 2; done
           curl -fsS http://127.0.0.1:8787/healthz
           # Storage-only Android nodes must never receive compute workloads.
@@ -181,22 +178,22 @@ jobs:
       - name: Backend runtime smoke test
         run: |
           set -euo pipefail
-          docker network create testagram-supabase 2>/dev/null || true
-          docker run -d --name testagram-postgres --network testagram-supabase -e POSTGRES_PASSWORD=testagram postgres:17-alpine
+          docker network create testagram-platform 2>/dev/null || true
+          docker run -d --name testagram-postgres --network testagram-platform -e POSTGRES_PASSWORD=testagram postgres:17-alpine
           trap 'docker rm -f testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 30); do
             docker exec testagram-postgres pg_isready -U postgres -d postgres >/dev/null 2>&1 && break
             sleep 2
           done
           docker exec testagram-postgres pg_isready -U postgres -d postgres
-          docker run --rm --network testagram-supabase -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'for f in /migrations/*.sql; do psql -h testagram-postgres -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
+          docker run --rm --network testagram-platform -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'for f in /migrations/*.sql; do psql -h testagram-postgres -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
           export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/postgres
           export VIDEO_JWT_SECRET=ci-test-jwt-secret
           export VIDEO_SIGNING_SECRET=ci-test-signing-secret-at-least-32-bytes
           export NOTIFICATION_JWT_SECRET=ci-test-jwt-secret
           export NOTIFICATION_INTERNAL_TOKEN=ci-test-internal-token
           export PLATFORM_INTERNAL_TOKEN=ci-platform-internal-token
-          export SUPABASE_NETWORK=testagram-supabase
+          export TESTAGRAM_NETWORK=testagram-platform
           docker compose -f backend/docker-compose.yml up -d platform video notification worker
           for i in $(seq 1 30); do
             docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz >/dev/null 2>&1 && break

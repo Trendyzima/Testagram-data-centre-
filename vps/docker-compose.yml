@@ -14,7 +14,7 @@ services:
       VPS_CONTROL_PLANE_ADDR: :8787
     ports:
       - "127.0.0.1:8787:8787"
-    networks: [supabase, internal]
+    networks: [platform, internal]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8787/healthz"]
       interval: 10s
@@ -44,9 +44,6 @@ services:
       TESTAGRAM_AUTH_PROVIDER: ${TESTAGRAM_AUTH_PROVIDER:?Set TESTAGRAM_AUTH_PROVIDER explicitly}
       APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-}
       APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:-}
-      SUPABASE_URL: ${SUPABASE_PUBLIC_URL}
-      SUPABASE_PUBLISHABLE_KEY: ${ANON_KEY}
-      SUPABASE_SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:-}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://testagram.site,https://www.testagram.site}
       ALGORITHM_URL: http://algorithm:8092
       ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN}
@@ -61,7 +58,7 @@ services:
       MEDIA_PUBLIC_BASE_URL: ${MEDIA_PUBLIC_BASE_URL:-https://media.testagram.site/v1}
       VIRTUAL_STORAGE_ENABLED: "false"
     expose: ["8080"]
-    networks: [internal, supabase]
+    networks: [internal, platform]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/readyz"]
       interval: 10s
@@ -83,20 +80,20 @@ services:
     profiles: ["federation-preview"]
   platform:
     extends: {file: ../backend/docker-compose.yml, service: platform}
-    networks: [internal, supabase]
+    networks: [internal, platform]
   video:
     extends: {file: ../backend/docker-compose.yml, service: video}
-    networks: [internal, supabase]
+    networks: [internal, platform]
     extra_hosts: ["host.docker.internal:host-gateway"]
   video-worker:
     extends: {file: ../backend/docker-compose.yml, service: video-worker}
-    networks: [internal, supabase]
+    networks: [internal, platform]
   notification:
     extends: {file: ../backend/docker-compose.yml, service: notification}
-    networks: [internal, supabase]
+    networks: [internal, platform]
   worker:
     extends: {file: ../backend/docker-compose.yml, service: worker}
-    networks: [internal, supabase]
+    networks: [internal, platform]
   redis:
     extends: {file: ../backend/docker-compose.yml, service: redis}
   edge:
@@ -111,13 +108,13 @@ services:
       api:
         condition: service_healthy
     ports: ["80:80", "443:443"]
-    networks: [edge, internal, supabase]
+    networks: [edge, internal, platform]
 networks:
   edge:
   internal: {internal: true}
-  supabase:
+  platform:
     external: true
-    name: ${SUPABASE_NETWORK:-testagram-supabase}
+    name: ${TESTAGRAM_NETWORK:-testagram-platform}
 
 volumes:
   edge_data:
