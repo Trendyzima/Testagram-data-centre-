@@ -164,7 +164,7 @@ jobs:
 
       - name: Validate Caddy syntax
         run: |
-          if grep -Eq '^[[:space:]]*federation\\.testagram\\.site[[:space:]]*\\{' vps/fresh/Caddyfile; then
+          if grep -Eq '^[[:space:]]*federation[.]testagram[.]site[[:space:]]*[{]' vps/fresh/Caddyfile; then
             echo "Public Federation routing is blocked until inbox/outbox workers and end-to-end gates are complete."
             exit 1
           fi
