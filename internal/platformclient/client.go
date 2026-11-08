@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -55,17 +56,24 @@ type Client struct {
 }
 
 func New(baseURL, token string, timeout time.Duration) (*Client, error) {
-	u, err := url.Parse(strings.TrimRight(baseURL, "/"))
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return nil, errors.New("platform base URL must be an absolute HTTP(S) URL")
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	token = strings.TrimSpace(token)
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
+		(u.Path != "" && u.Path != "/") ||
+		(u.Scheme != "https" && !(u.Scheme == "http" && isPrivatePlatformHost(u.Hostname()))) {
+		return nil, errors.New("platform base URL must be HTTPS (HTTP only for private service hosts)")
 	}
-	if strings.TrimSpace(token) == "" {
-		return nil, errors.New("platform internal token is required")
+	if len(token) < 32 || strings.ContainsAny(token, "\r\n") {
+		return nil, errors.New("platform internal token must contain at least 32 characters")
 	}
-	if timeout <= 0 {
+	if timeout <= 0 || timeout > 5*time.Second {
 		timeout = 2 * time.Second
 	}
-	return &Client{baseURL: strings.TrimRight(baseURL, "/"), token: token, http: &http.Client{Timeout: timeout}}, nil
+	return &Client{baseURL: baseURL, token: token, http: &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}, nil
 }
 
 func (c *Client) Get(ctx context.Context, key string) (string, error) {
@@ -162,4 +170,19 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return fmt.Errorf("decode Testagram platform response: %w", err)
 	}
 	return nil
+}
+
+
+func isPrivatePlatformHost(host string) bool {
+	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	if host == "" { return false }
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsPrivate() || ip.IsLoopback()
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") ||
+		strings.HasSuffix(host, ".internal") || strings.HasSuffix(host, ".local") {
+		return true
+	}
+	// Docker Compose service names are single-label hostnames.
+	return !strings.Contains(host, ".")
 }
