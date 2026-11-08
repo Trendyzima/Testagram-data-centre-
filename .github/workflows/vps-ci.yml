@@ -31,8 +31,8 @@ jobs:
       FEDERATION_DB_PASSWORD: ci-federation-db-password-only
       # Compose interpolation fixture only; CI does not connect Federation to this local URL.
       FEDERATION_DATABASE_URL: postgresql://testagram_federation:ci-federation-db-password-only@localhost:5432/testagram_federation?sslmode=disable
-      VPS_INTERNAL_TOKEN: ci-internal
-      VPS_NODE_BOOTSTRAP_TOKEN: ci-bootstrap
+      VPS_INTERNAL_TOKEN: ci-internal-token-which-is-long-enough-001
+      VPS_NODE_BOOTSTRAP_TOKEN: ci-bootstrap-token-which-is-long-enough-002
       ALGORITHM_INTERNAL_TOKEN: ci-algorithm-internal-token-long-enough
       TLS_ADMIN_EMAIL: ci@example.invalid
       # Local Postgres service for CI only; production uses Neon with TLS.
@@ -117,7 +117,7 @@ jobs:
           docker build -f control-plane/Dockerfile -t testagram-control-plane-ci .
           docker run -d --name testagram-control-plane --network testagram-control-plane-ci -p 127.0.0.1:8787:8787 \
             -e DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres?sslmode=disable \
-            -e VPS_INTERNAL_TOKEN=ci-internal -e VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap \
+            -e VPS_INTERNAL_TOKEN=ci-internal-token-which-is-long-enough-001 -e VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap-token-which-is-long-enough-002 \
             -e TESTAGRAM_BASE_DOMAIN=example.testagram.invalid \
             -e TESTAGRAM_DOMAIN_TARGETS=web=http://web:3000 \
             -e TESTAGRAM_PUBLIC_DNS_TARGET=edge.testagram.invalid \
@@ -127,19 +127,19 @@ jobs:
           curl -fsS http://127.0.0.1:8787/healthz
           # Storage-only Android nodes must never receive compute workloads.
           curl -fsS -o /tmp/android-node-registration.json \
-            -H "Authorization: Bearer ci-bootstrap" -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ci-bootstrap-token-which-is-long-enough-002" -H "Content-Type: application/json" \
             -d '{"name":"android-storage-only","platform":"android","arch":"arm64","cpuCores":8,"memoryBytes":8589934592,"storageBytes":1000000000000,"freeBytes":1000000000000,"endpoint":"android-storage-only","capabilities":{"storageOnly":true,"storageNode":true,"computeNode":false,"workloadExecution":false,"mediaStorageBytes":1000000000000,"mediaStorageFreeBytes":1000000000000,"microSD":true}}' \
             http://127.0.0.1:8787/v1/nodes/register
           curl -fsS -o /tmp/linux-node-registration.json \
-            -H "Authorization: Bearer ci-bootstrap" -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ci-bootstrap-token-which-is-long-enough-002" -H "Content-Type: application/json" \
             -d '{"name":"linux-compute","platform":"linux","arch":"amd64","cpuCores":2,"memoryBytes":8589934592,"storageBytes":10000000000,"freeBytes":5000000000,"endpoint":"linux-compute","capabilities":{"computeNode":true,"storageNode":false,"workloadExecution":true,"mediaStorageBytes":0,"mediaStorageFreeBytes":0}}' \
             http://127.0.0.1:8787/v1/nodes/register
           curl -fsS -o /tmp/scheduled-workload.json \
-            -H "Authorization: Bearer ci-internal" -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ci-internal-token-which-is-long-enough-001" -H "Content-Type: application/json" \
             -d '{"image":"ghcr.io/example/test","imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","command":["true"],"cpuMillis":100,"memoryBytes":67108864}' \
             http://127.0.0.1:8787/v1/workloads
           grep -q '"endpoint":"linux-compute"' /tmp/scheduled-workload.json
-          auth_header="Authorization: Bearer ci-internal"
+          auth_header="Authorization: Bearer ci-internal-token-which-is-long-enough-001"
           curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/health | grep -q '"status":"ok"'
           domain_code="$(curl -sS -o /tmp/testagram-domain.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d '{"slug":"demo-app","targetService":"web"}' http://127.0.0.1:8787/v1/hosting/domains)"
           test "$domain_code" = "201"
@@ -147,7 +147,7 @@ jobs:
           curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/dns/records | grep -q 'demo-app.example.testagram.invalid'
           curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/nodes >/dev/null
           curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/usage >/dev/null
-          register_code="$(curl -sS -o /tmp/testagram-node.json -w '%{http_code}' -H 'Authorization: Bearer ci-bootstrap' -H 'Content-Type: application/json' -d '{"name":"ci-node","platform":"linux","arch":"amd64","cpuCores":2,"memoryBytes":2147483648,"storageBytes":10737418240,"freeBytes":8589934592,"endpoint":"ci-node","capabilities":{}}' http://127.0.0.1:8787/v1/nodes/register)"
+          register_code="$(curl -sS -o /tmp/testagram-node.json -w '%{http_code}' -H 'Authorization: Bearer ci-bootstrap-token-which-is-long-enough-002' -H 'Content-Type: application/json' -d '{"name":"ci-node","platform":"linux","arch":"amd64","cpuCores":2,"memoryBytes":2147483648,"storageBytes":10737418240,"freeBytes":8589934592,"endpoint":"ci-node","capabilities":{}}' http://127.0.0.1:8787/v1/nodes/register)"
           test "$register_code" = "201"
           deploy_code="$(curl -sS -o /tmp/testagram-deployment.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d '{"appName":"ci-demo","image":"registry.example/testagram-demo","imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","arch":"amd64","cpuMillis":100,"memoryBytes":134217728,"storageBytes":134217728,"publicEnv":{"APP_MODE":"ci"},"command":["/bin/true"],"volume":"ci-volume"}' http://127.0.0.1:8787/v1/hosting/deployments)"
           test "$deploy_code" = "201"
