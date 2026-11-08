@@ -1,9 +1,12 @@
 # Fresh Appwrite deployment (separate from the legacy VPS stack)
 
-This stack is the clean Appwrite runtime. It does not attach the legacy Supabase
-network, start the legacy cmd/api, or configure Supabase credentials.
+The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Federation and the Data Centre node control-plane are independent opt-in profiles; none is allowed to gate Appwrite login. This stack does not attach retired provider networks, start the legacy cmd/api, or configure retired database credentials.
 
 ## Services and trust boundaries
+
+- Enable the private Algorithm ranker only with `docker compose --profile ranking ...`; login remains available when ranking is stopped.
+- Enable ActivityPub delivery only after provisioning Federation's dedicated Neon database and service token, using `--profile federation`.
+- Enable Android/Linux node control-plane only after provisioning its separate infrastructure database and tokens, using `--profile nodes`.
 
 - api: Backend's dedicated Dockerfile.fresh image. Verifies Appwrite JWTs,
   serves the public /v1 API, owns authorization and calls private services.

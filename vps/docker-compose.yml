@@ -1,11 +1,12 @@
 name: testagram-fresh
 services:
   algorithm:
-    image: ${TESTAGRAM_ALGORITHM_IMAGE:?Set TESTAGRAM_ALGORITHM_IMAGE to a reviewed immutable GHCR digest}
+    profiles: ["ranking"]
+    image: ${TESTAGRAM_ALGORITHM_IMAGE:-scratch}
     restart: unless-stopped
     environment:
       HTTP_ADDR: :8092
-      INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:?Set ALGORITHM_INTERNAL_TOKEN to a random value of at least 32 characters}
+      INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
     expose: ["8092"]
     networks: [ranker]
     healthcheck:
@@ -27,10 +28,10 @@ services:
       APPWRITE_SERVER_API_KEY: ${APPWRITE_SERVER_API_KEY:?Set a least-privilege server API key}
       NEON_DATABASE_URL: ${NEON_DATABASE_URL:-}
       NEON_REQUIRED: ${NEON_REQUIRED:-true}
-      ALGORITHM_ENDPOINT: http://algorithm:8092
-      ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:?Set ALGORITHM_INTERNAL_TOKEN}
-      FEED_RANKING_REQUIRED: "true"
-      FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:?Set the same private token in Backend and Federation}
+      ALGORITHM_ENDPOINT: ${ALGORITHM_ENDPOINT:-}
+      ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
+      FEED_RANKING_REQUIRED: "false"
+      FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}
       ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
       ONSPACE_AI_API_KEY: ${ONSPACE_AI_API_KEY:-}
       # B2 and R2 are independent full-copy stores; choose the direct-upload origin per reservation.
@@ -60,9 +61,6 @@ services:
       TESTAGRAM_RETENTION_DRY_RUN: "true"
     expose: ["8081"]
     networks: [services, ranker]
-    depends_on:
-      algorithm:
-        condition: service_healthy
 
   federation-db:
     profiles: ["local"]
@@ -84,7 +82,8 @@ services:
       start_period: 10s
 
   federation-api:
-    image: ${TESTAGRAM_FEDERATION_IMAGE:?Set TESTAGRAM_FEDERATION_IMAGE to a reviewed immutable GHCR digest}
+    profiles: ["federation"]
+    image: ${TESTAGRAM_FEDERATION_IMAGE:-scratch}
     restart: unless-stopped
     environment:
       HTTP_ADDR: :8081
@@ -94,9 +93,9 @@ services:
       SERVICE_ACTOR_USERNAME: testagram
       SERVICE_ACTOR_NAME: Testagram
       SERVICE_ACTOR_SUMMARY: Testagram federated social network
-      FEDERATION_DATABASE_URL: ${FEDERATION_DATABASE_URL:?Set a dedicated Neon pooled TLS URL or a local-profile PostgreSQL URL}
+      FEDERATION_DATABASE_URL: ${FEDERATION_DATABASE_URL:-}
       BACKEND_INTERNAL_URL: http://api:8081
-      BACKEND_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:?Set the same private token in Backend and Federation}
+      BACKEND_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}
       FEDERATION_DELIVERY_WORKER_ENABLED: ${FEDERATION_DELIVERY_WORKER_ENABLED:-false}
       FEDERATION_OUTBOX_POLLER_ENABLED: ${FEDERATION_OUTBOX_POLLER_ENABLED:-false}
       FEDERATION_INBOX_WORKER_ENABLED: ${FEDERATION_INBOX_WORKER_ENABLED:-false}
@@ -115,7 +114,8 @@ services:
       start_period: 15s
 
   migrate:
-    image: ${POSTGRES_CLIENT_IMAGE:?Set POSTGRES_CLIENT_IMAGE to a reviewed immutable PostgreSQL client image digest}
+    profiles: ["nodes"]
+    image: ${POSTGRES_CLIENT_IMAGE:-postgres:17-alpine}
     restart: "no"
     entrypoint: ["/bin/sh", "-ec"]
     command: |
@@ -125,20 +125,21 @@ services:
       psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_vps.sql
       psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/006_hosting_control_plane.sql
     environment:
-      DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:?Set a dedicated TLS PostgreSQL URL for Data Centre infrastructure state}
+      DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:-}
     volumes:
       - ../migrations:/migrations:ro
     networks: [services]
 
   control-plane:
+    profiles: ["nodes"]
     build:
       context: ..
       dockerfile: control-plane/Dockerfile
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:?Set a dedicated TLS PostgreSQL URL for Data Centre infrastructure state}
-      VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN:?Set VPS_INTERNAL_TOKEN}
-      VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN:?Set VPS_NODE_BOOTSTRAP_TOKEN}
+      VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN:-}
+      VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN:-}
       TESTAGRAM_BASE_DOMAIN: ${TESTAGRAM_BASE_DOMAIN:-}
       TESTAGRAM_DOMAIN_TARGETS: ${TESTAGRAM_DOMAIN_TARGETS:-}
       TESTAGRAM_PUBLIC_DNS_TARGET: ${TESTAGRAM_PUBLIC_DNS_TARGET:-}
