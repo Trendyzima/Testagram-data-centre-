@@ -87,7 +87,15 @@ export default {
     const expiry = Number(url.searchParams.get('e'));
     const signature = url.searchParams.get('s') || '';
     if (!await verifySignature(key, expiry, signature, env.MEDIA_URL_SECRET)) return response('invalid or expired media signature', 403, headers);
-    const metadata = await env.MEDIA_BUCKET.head(key);
+    let metadata: R2Object | null;
+    try {
+      metadata = await env.MEDIA_BUCKET.head(key);
+    } catch {
+      // Do not turn an R2 outage into an unhandled Worker exception. The caller
+      // can retry or ask Backend for the verified B2 replica.
+      headers.set('Retry-After', '5');
+      return response('media storage temporarily unavailable', 503, headers);
+    }
     if (!metadata) return response('media not found', 404, headers);
     const range = parseRange(request.headers.get('Range'), metadata.size);
     if (range === false) {
@@ -95,7 +103,13 @@ export default {
       return response(null, 416, headers);
     }
     if (range) {
-      const ranged = await env.MEDIA_BUCKET.get(key, { range: { offset: range.offset, length: range.length } });
+      let ranged: R2ObjectBody | null;
+      try {
+        ranged = await env.MEDIA_BUCKET.get(key, { range: { offset: range.offset, length: range.length } });
+      } catch {
+        headers.set('Retry-After', '5');
+        return response('media storage temporarily unavailable', 503, headers);
+      }
       if (!ranged) return response('media not found', 404, headers);
       metadata.writeHttpMetadata(headers);
       headers.set('ETag', metadata.httpEtag);
@@ -105,7 +119,13 @@ export default {
       headers.set('Content-Disposition', 'inline');
       return response(ranged.body, 206, headers);
     }
-    const object = await env.MEDIA_BUCKET.get(key);
+    let object: R2ObjectBody | null;
+    try {
+      object = await env.MEDIA_BUCKET.get(key);
+    } catch {
+      headers.set('Retry-After', '5');
+      return response('media storage temporarily unavailable', 503, headers);
+    }
     if (!object) return response('media not found', 404, headers);
     metadata.writeHttpMetadata(headers);
     headers.set('ETag', metadata.httpEtag);
