@@ -58,7 +58,7 @@ async function verifyTicket(secret: string, token: string, conversationID: strin
     if (
       claims.iss !== "testagram-backend" ||
       claims.aud !== "testagram-realtime" ||
-      claims.scope !== "conversation:read" ||
+      !["conversation:read", "media:signal"].includes(claims.scope) ||
       !claims.sub || !claims.jti ||
       claims.conversation_id !== conversationID ||
       !Number.isSafeInteger(claims.iat) || !Number.isSafeInteger(claims.exp) ||
@@ -145,10 +145,12 @@ export default {
       return json({ error: "realtime protocol and ticket are required" }, 401);
     }
     const ticket = ticketProtocols[0].slice("ticket.".length);
-    const claims = await verifyTicket(env.REALTIME_TICKET_SECRET, ticket, match[1]);
-    if (!claims) return json({ error: "invalid or expired realtime ticket" }, 401);
+    const roomID = match[2];
+    const expectedScope = match[1] === "rooms" ? "media:signal" : "conversation:read";
+    const claims = await verifyTicket(env.REALTIME_TICKET_SECRET, ticket, roomID);
+    if (!claims || claims.scope !== expectedScope) return json({ error: "invalid or expired realtime ticket" }, 401);
 
-    const id = env.REALTIME.idFromName(match[1]);
+    const id = env.REALTIME.idFromName(roomID);
     return env.REALTIME.get(id).fetch("https://realtime.internal/connect", {
       method: "GET",
       headers: {
@@ -156,6 +158,7 @@ export default {
         "Sec-WebSocket-Protocol": protocol,
         "x-testagram-conversation-id": claims.conversation_id,
         "x-testagram-subject": claims.sub,
+        "x-testagram-scope": claims.scope,
       },
     });
   },
@@ -174,7 +177,8 @@ export class ConversationRoom {
       if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return json({ error: "websocket required" }, 426);
       const conversationID = request.headers.get("x-testagram-conversation-id") ?? "";
       const subject = request.headers.get("x-testagram-subject") ?? "";
-      if (!conversationID || !subject) return json({ error: "missing verified identity" }, 401);
+      const scope = request.headers.get("x-testagram-scope") ?? "";
+      if (!conversationID || !subject || !["conversation:read", "media:signal"].includes(scope)) return json({ error: "missing verified identity" }, 401);
       let userConnections = 0;
       for (const socket of this.state.getWebSockets(conversationID)) {
         const attachment = socket.deserializeAttachment() as { subject?: string } | null;
@@ -185,7 +189,8 @@ export class ConversationRoom {
       const client = pair[0];
       const server = pair[1];
       this.state.acceptWebSocket(server, [conversationID]);
-      server.serializeAttachment({ conversationID, subject });
+      server.serializeAttachment({ conversationID, subject, scope });
+      if (scope === "media:signal") this.broadcastRoomPresence(conversationID);
       return new Response(null, { status: 101, webSocket: client, headers: { "Sec-WebSocket-Protocol": "testagram.realtime.v1" } });
     }
 
@@ -209,20 +214,57 @@ export class ConversationRoom {
     return json({ error: "not found" }, 404);
   }
 
-  webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): void {
-    // Client sockets are receive-only for application events. All durable writes
-    // must go through Backend/Neon before Backend signs a publish event.
-    if (typeof message === "string" && message.length <= 128) {
-      try {
-        const value = JSON.parse(message) as { type?: string };
-        if (value.type === "ping") { socket.send(JSON.stringify({ type: "pong", at: new Date().toISOString() })); return; }
-      } catch { /* invalid client frame */ }
+  private broadcastRoomPresence(roomID: string): void {
+    const sockets = this.state.getWebSockets(roomID);
+    const envelope = JSON.stringify({ type: "presence", participant_count: sockets.length });
+    for (const peer of sockets) {
+      try { peer.send(envelope); }
+      catch { try { peer.close(1011, "presence delivery failed"); } catch { /* closed */ } }
     }
-    try { socket.close(1008, "client frames are not accepted"); } catch { /* closed socket */ }
+  }
+
+  webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): void {
+    const attachment = socket.deserializeAttachment() as { conversationID?: string; subject?: string; scope?: string } | null;
+    if (typeof message !== "string" || message.length > 64 * 1024) {
+      try { socket.close(1009, "signal frame too large"); } catch { /* closed */ }
+      return;
+    }
+    let value: Record<string, unknown>;
+    try { value = JSON.parse(message) as Record<string, unknown>; }
+    catch { try { socket.close(1008, "invalid frame"); } catch { /* closed */ } return; }
+    if (value.type === "ping" && attachment?.scope === "conversation:read") {
+      try { socket.send(JSON.stringify({ type: "pong", at: new Date().toISOString() })); } catch { /* closed */ }
+      return;
+    }
+    if (attachment?.scope !== "media:signal" || !attachment.conversationID || !attachment.subject) {
+      try { socket.close(1008, "client frames are not accepted"); } catch { /* closed */ }
+      return;
+    }
+    const type = value.type;
+    let payload: Record<string, unknown> | null = null;
+    if ((type === "offer" || type === "answer") && typeof value.sdp === "string" && value.sdp.length > 0 && value.sdp.length <= 32000) {
+      payload = { type, sdp: value.sdp, sender_id: attachment.subject };
+    } else if (type === "candidate" && typeof value.candidate === "object" && value.candidate !== null) {
+      const candidate = value.candidate as Record<string, unknown>;
+      if (typeof candidate.candidate === "string" && candidate.candidate.length <= 4096 &&
+          (candidate.sdpMid === undefined || candidate.sdpMid === null || typeof candidate.sdpMid === "string") &&
+          (candidate.sdpMLineIndex === undefined || candidate.sdpMLineIndex === null || Number.isInteger(candidate.sdpMLineIndex))) {
+        payload = { type, candidate, sender_id: attachment.subject };
+      }
+    }
+    if (!payload) { try { socket.close(1008, "unsupported signaling frame"); } catch { /* closed */ } return; }
+    const envelope = JSON.stringify(payload);
+    for (const peer of this.state.getWebSockets(attachment.conversationID)) {
+      if (peer === socket) continue;
+      try { peer.send(envelope); }
+      catch { try { peer.close(1011, "signal delivery failed"); } catch { /* closed */ } }
+    }
   }
 
   webSocketClose(socket: WebSocket, code: number, reason: string, wasClean: boolean): void {
+    const attachment = socket.deserializeAttachment() as { conversationID?: string; scope?: string } | null;
     try { socket.close(code, reason); } catch { /* already closed */ }
+    if (attachment?.scope === "media:signal" && attachment.conversationID) this.broadcastRoomPresence(attachment.conversationID);
   }
 
   webSocketError(socket: WebSocket): void {
