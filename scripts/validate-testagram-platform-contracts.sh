@@ -16,9 +16,9 @@ if grep -q 'algorithm:' <<< "$api_block"; then
 fi
 grep -q 'FEED_RANKING_REQUIRED: "false"' <<< "$api_block"
 grep -q 'ALGORITHM_ENDPOINT: ${ALGORITHM_ENDPOINT:-}' <<< "$api_block"
-grep -q 'profiles: ["ranking"]' <(sed -n '/^  algorithm:/,/^  api:/p' vps/docker-compose.fresh.yml)
-grep -q 'profiles: ["federation"]' <(sed -n '/^  federation-api:/,/^  migrate:/p' vps/docker-compose.fresh.yml)
-grep -q 'profiles: ["nodes"]' <(sed -n '/^  migrate:/,/^  edge:/p' vps/docker-compose.fresh.yml)
+grep -q 'profiles: ["ranking"]' vps/docker-compose.fresh.yml
+grep -q 'profiles: ["federation"]' vps/docker-compose.fresh.yml
+grep -q 'profiles: ["nodes"]' vps/docker-compose.fresh.yml
 for file in vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml; do
   if grep -Eqi 'supabase' "$file"; then
     echo "Retired provider reference remains in active runtime path: $file" >&2
