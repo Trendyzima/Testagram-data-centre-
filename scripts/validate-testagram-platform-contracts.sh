@@ -2,9 +2,11 @@
 set -euo pipefail
 
 for script in vps/backup.sh vps/restore-drill.sh vps/install.sh scripts/install-local-docker.sh; do
+  printf "checking shell syntax: %s\\n" "$script"
   bash -n "$script"
 done
 
+echo "checking active/fresh compose parity"
 cmp -s vps/docker-compose.yml vps/docker-compose.fresh.yml
 for file in vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml; do
   if grep -Eqi 'supabase' "$file"; then
