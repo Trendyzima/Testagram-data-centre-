@@ -25,3 +25,17 @@ Set REALTIME_ALLOWED_ORIGINS to the exact production XClone origins. The committ
 ## Deployment status
 
 This Worker is not deployed or routed publicly by this branch. It requires Backend endpoints for ticket issuance, conversation membership authorization, durable message writes and signed event publication. It also requires Cloudflare account binding, secrets, custom-domain routing, abuse controls, metrics and load tests. Do not expose the Worker or claim production realtime readiness until those dependencies are implemented and tested.
+
+
+## Authenticated call signaling rooms
+
+The same Durable Object service also provides a short-lived, Backend-authorized signaling room for one-to-one calls:
+
+- GET /v1/realtime/rooms/{call_id} upgrades to WebSocket only when the ticket subprotocol is present.
+- Backend issues the media:signal ticket only after verifying an active call participant in Neon. Tickets are short-lived, bound to the call ID and authenticated Appwrite identity, and are never accepted from a browser-supplied user ID.
+- The room accepts only bounded offer, answer, and ICE candidate frames. The Worker stamps the sender identity from the verified ticket and relays to other sockets in the same room.
+- The Worker rejects oversized, malformed, unsupported, cross-scope and unauthenticated frames. It never persists SDP, ICE candidates, chat plaintext, or application records.
+- Call creation is currently constrained by Backend to exactly two active conversation members because this transport is peer-to-peer, not an SFU. Group audio Spaces still require a dedicated multi-party media transport; this signaling room must not be used as a substitute for an SFU.
+- Durable messages and call state remain in Backend/Neon. This Worker is ephemeral signaling only; clients cannot write messages through it.
+
+Conversation subscriptions continue to use the separate conversation:read scope and remain receive-only. A media ticket cannot access the conversation event route, and a conversation ticket cannot open a media signaling room.
