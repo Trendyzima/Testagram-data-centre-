@@ -20,27 +20,16 @@ test -f "$CHECKSUM_FILE" || { echo "Checksum sidecar missing: $CHECKSUM_FILE" >&
 STAGE="$(mktemp -d)"
 CONTAINER="testagram-restore-drill-$(date -u +%s)-$$"
 PASS="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
-cleanup() {
-  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-  rm -rf "$STAGE"
-}
+cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; rm -rf "$STAGE"; }
 trap cleanup EXIT INT TERM
 
 age -d -i "$IDENTITY_FILE" -o "$STAGE/backup.tar.gz" "$BACKUP_FILE"
 tar -tzf "$STAGE/backup.tar.gz" >/dev/null
 tar -xzf "$STAGE/backup.tar.gz" -C "$STAGE"
-test -s "$STAGE/database.dump"
-test -s "$STAGE/storage.tar.gz"
-tar -tzf "$STAGE/storage.tar.gz" >/dev/null
-mkdir "$STAGE/storage-restored"
-tar -xzf "$STAGE/storage.tar.gz" -C "$STAGE/storage-restored"
-find "$STAGE/storage-restored" -name .testagram-storage-root -print -quit | grep -q . || {
-  echo "Restored storage archive is missing the Testagram storage marker" >&2
-  exit 1
-}
+test -s "$STAGE/data-centre.dump"
+test -s "$STAGE/neon-social.dump"
 
-# The container is deliberately network-isolated and never publishes a port.
-# Use the exact approved Supabase Postgres image digest from the deployment.
+# Restore into a network-isolated disposable database. No public port is bound.
 docker run -d --name "$CONTAINER" --network none -e "POSTGRES_PASSWORD=$PASS" "$RESTORE_IMAGE" >/dev/null
 ready=0
 for _ in $(seq 1 60); do
@@ -48,13 +37,16 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 test "$ready" -eq 1 || { echo "Isolated restore database did not become ready" >&2; exit 1; }
-docker cp "$STAGE/database.dump" "$CONTAINER:/tmp/database.dump" >/dev/null
-docker exec "$CONTAINER" pg_restore -U postgres -d postgres --no-owner --no-acl --exit-on-error /tmp/database.dump
-EXPECTED="$(docker exec "$CONTAINER" psql -U postgres -d postgres -Atqc "SELECT (to_regclass('public.vps_nodes') IS NOT NULL AND to_regclass('testagram_video.videos') IS NOT NULL AND to_regclass('testagram_platform.feature_flags') IS NOT NULL)::text")"
-test "$EXPECTED" = "true" || { echo "Restored database is missing expected Testagram schemas/tables" >&2; exit 1; }
+docker exec "$CONTAINER" createdb -U postgres neon_restore
+docker cp "$STAGE/data-centre.dump" "$CONTAINER:/tmp/data-centre.dump" >/dev/null
+docker cp "$STAGE/neon-social.dump" "$CONTAINER:/tmp/neon-social.dump" >/dev/null
+docker exec "$CONTAINER" pg_restore -U postgres -d postgres --no-owner --no-acl --exit-on-error /tmp/data-centre.dump
+docker exec "$CONTAINER" pg_restore -U postgres -d neon_restore --no-owner --no-acl --exit-on-error /tmp/neon-social.dump
+for database in postgres neon_restore; do
+  count="$(docker exec "$CONTAINER" psql -U postgres -d "$database" -Atqc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p') AND n.nspname NOT IN ('pg_catalog','information_schema')")"
+  test "$count" -gt 0 || { echo "Restore contains no user tables in $database" >&2; exit 1; }
+done
 
 echo "RESTORE DRILL PASSED"
-echo "Database: pg_restore completed and expected Testagram tables are present."
-echo "Storage: archive integrity passed and the storage marker was restored."
-echo "Isolation: temporary PostgreSQL container had no network and no published ports."
-echo "This validates archive readability, not full application login/upload/playback or a measured production RTO."
+echo "Both Data Centre and Neon PostgreSQL archives restored in an isolated, network-disabled container."
+echo "This validates database archive integrity only; Appwrite documents and B2/R2 media need separate recovery drills."
