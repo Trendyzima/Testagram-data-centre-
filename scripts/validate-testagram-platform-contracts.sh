@@ -7,7 +7,7 @@ for script in vps/backup.sh vps/restore-drill.sh vps/install.sh scripts/install-
 done
 
 echo "checking active/fresh compose parity"
-cmp -s vps/docker-compose.yml vps/docker-compose.fresh.yml
+diff -u <(sed 's/\r$//' vps/docker-compose.yml) <(sed 's/\r$//' vps/docker-compose.fresh.yml)
 
 # Appwrite login must not depend on optional ranking, Federation or node services.
 api_block="$(sed -n '/^  api:/,/^  federation-db:/p' vps/docker-compose.fresh.yml)"
