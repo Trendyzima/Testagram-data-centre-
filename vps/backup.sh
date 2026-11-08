@@ -16,6 +16,7 @@ test -f "$ENV_FILE" || { echo "Fresh environment file not found: $ENV_FILE" >&2;
 set -a
 . "$ENV_FILE"
 set +a
+POSTGRES_IMAGE="${POSTGRES_CLIENT_IMAGE:-postgres:17-alpine}"
 test -n "${DATA_CENTRE_DATABASE_URL:-}" || { echo "DATA_CENTRE_DATABASE_URL is required" >&2; exit 1; }
 test -n "${NEON_DATABASE_URL:-}" || { echo "NEON_DATABASE_URL is required" >&2; exit 1; }
 test -n "$BACKUP_REMOTE" || { echo "TESTAGRAM_BACKUP_REMOTE must be user@host:/absolute/path" >&2; exit 1; }
