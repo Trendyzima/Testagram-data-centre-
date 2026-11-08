@@ -8,6 +8,18 @@ done
 
 echo "checking active/fresh compose parity"
 cmp -s vps/docker-compose.yml vps/docker-compose.fresh.yml
+
+# Appwrite login must not depend on optional ranking, Federation or node services.
+api_block="$(sed -n '/^  api:/,/^  federation-db:/p' vps/docker-compose.fresh.yml)"
+if grep -q 'algorithm:' <<< "$api_block"; then
+  echo "The public Backend API must not have an Algorithm startup dependency." >&2
+  exit 1
+fi
+grep -q 'FEED_RANKING_REQUIRED: "false"' <<< "$api_block"
+grep -q 'ALGORITHM_ENDPOINT: ${ALGORITHM_ENDPOINT:-}' <<< "$api_block"
+grep -q 'profiles: ["ranking"]' <(sed -n '/^  algorithm:/,/^  api:/p' vps/docker-compose.fresh.yml)
+grep -q 'profiles: ["federation"]' <(sed -n '/^  federation-api:/,/^  migrate:/p' vps/docker-compose.fresh.yml)
+grep -q 'profiles: ["nodes"]' <(sed -n '/^  migrate:/,/^  edge:/p' vps/docker-compose.fresh.yml)
 for file in vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml; do
   if grep -Eqi 'supabase' "$file"; then
     echo "Retired provider reference remains in active runtime path: $file" >&2
