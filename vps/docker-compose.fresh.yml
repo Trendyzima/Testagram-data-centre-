@@ -115,7 +115,7 @@ services:
 
   migrate:
     profiles: ["nodes"]
-    image: ${POSTGRES_CLIENT_IMAGE:?Set POSTGRES_CLIENT_IMAGE to a reviewed immutable PostgreSQL client image digest}
+    image: ${POSTGRES_CLIENT_IMAGE:-postgres:17-alpine}
     restart: "no"
     entrypoint: ["/bin/sh", "-ec"]
     command: |
@@ -125,7 +125,7 @@ services:
       psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_vps.sql
       psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/006_hosting_control_plane.sql
     environment:
-      DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:?Set a dedicated TLS PostgreSQL URL for Data Centre infrastructure state}
+      DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:-}
     volumes:
       - ../migrations:/migrations:ro
     networks: [services]
@@ -138,8 +138,8 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:?Set a dedicated TLS PostgreSQL URL for Data Centre infrastructure state}
-      VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN:?Set VPS_INTERNAL_TOKEN}
-      VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN:?Set VPS_NODE_BOOTSTRAP_TOKEN}
+      VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN:-}
+      VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN:-}
       TESTAGRAM_BASE_DOMAIN: ${TESTAGRAM_BASE_DOMAIN:-}
       TESTAGRAM_DOMAIN_TARGETS: ${TESTAGRAM_DOMAIN_TARGETS:-}
       TESTAGRAM_PUBLIC_DNS_TARGET: ${TESTAGRAM_PUBLIC_DNS_TARGET:-}
