@@ -111,6 +111,7 @@ jobs:
           docker network create testagram-control-plane-ci
           docker run -d --name testagram-control-plane-db --network testagram-control-plane-ci --network-alias db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
           trap 'docker rm -f testagram-control-plane >/dev/null 2>&1 || true; docker rm -f testagram-control-plane-db >/dev/null 2>&1 || true; docker network rm testagram-control-plane-ci >/dev/null 2>&1 || true' EXIT
+          trap 'status=$?; echo "Control-plane runtime failed; container state and logs follow"; docker inspect testagram-control-plane --format "{{json .State}}" 2>/dev/null || true; docker logs testagram-control-plane 2>&1 || true; exit "$status"' ERR
           for i in $(seq 1 30); do docker exec testagram-control-plane-db pg_isready -U postgres -d postgres >/dev/null 2>&1 && break; sleep 2; done
           docker exec testagram-control-plane-db pg_isready -U postgres -d postgres
           docker run --rm --network testagram-control-plane-ci -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'psql -h db -U postgres -d postgres -v ON_ERROR_STOP=1 -f /migrations/001_vps.sql && psql -h db -U postgres -d postgres -v ON_ERROR_STOP=1 -f /migrations/006_hosting_control_plane.sql'
