@@ -1,0 +1,40 @@
+name: Cloudflare Workers CI
+
+on:
+  pull_request:
+    paths:
+      - "cloudflare/media-worker/**"
+      - "realtime/**"
+      - ".github/workflows/cloudflare-workers-ci.yml"
+  push:
+    branches: [main]
+    paths:
+      - "cloudflare/media-worker/**"
+      - "realtime/**"
+      - ".github/workflows/cloudflare-workers-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  worker-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        worker:
+          - directory: cloudflare/media-worker
+            name: testagram-private-media
+          - directory: realtime
+            name: testagram-realtime
+    defaults:
+      run:
+        working-directory: ${{ matrix.worker.directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate Worker bundle (no production deployment)
+        run: npx --yes wrangler@4 deploy --dry-run --outdir /tmp/${{ matrix.worker.name }}
