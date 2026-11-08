@@ -1,4 +1,5 @@
 name = "testagram-realtime"
+account_id = "77dbe7a859196105dc84fbb6b7094019"
 main = "src/index.ts"
 compatibility_date = "2026-11-07"
 workers_dev = false
