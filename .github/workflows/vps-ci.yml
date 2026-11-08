@@ -31,8 +31,8 @@ jobs:
       FEDERATION_DB_PASSWORD: ci-federation-db-password-only
       # Compose interpolation fixture only; CI does not connect Federation to this local URL.
       FEDERATION_DATABASE_URL: postgresql://testagram_federation:ci-federation-db-password-only@localhost:5432/testagram_federation?sslmode=disable
-      VPS_INTERNAL_TOKEN: ci-internal
-      VPS_NODE_BOOTSTRAP_TOKEN: ci-bootstrap
+      VPS_INTERNAL_TOKEN: ci-internal-token-for-ci-tests-32chars
+      VPS_NODE_BOOTSTRAP_TOKEN: ci-bootstrap-token-for-ci-tests-32chars
       ALGORITHM_INTERNAL_TOKEN: ci-algorithm-internal-token-long-enough
       TLS_ADMIN_EMAIL: ci@example.invalid
       # Local Postgres service for CI only; production uses Neon with TLS.
