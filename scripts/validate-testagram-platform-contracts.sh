@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-set -x
 
 for script in vps/backup.sh vps/restore-drill.sh vps/install.sh scripts/install-local-docker.sh; do
   printf "checking shell syntax: %s\\n" "$script"
@@ -16,9 +15,9 @@ if grep -q 'algorithm:' <<< "$api_block"; then
 fi
 grep -q 'FEED_RANKING_REQUIRED: "false"' <<< "$api_block"
 grep -q 'ALGORITHM_ENDPOINT: ${ALGORITHM_ENDPOINT:-}' <<< "$api_block"
-grep -q 'profiles: ["ranking"]' vps/docker-compose.fresh.yml
-grep -q 'profiles: ["federation"]' vps/docker-compose.fresh.yml
-grep -q 'profiles: ["nodes"]' vps/docker-compose.fresh.yml
+grep -Fq 'profiles: ["ranking"]' vps/docker-compose.fresh.yml
+grep -Fq 'profiles: ["federation"]' vps/docker-compose.fresh.yml
+grep -Fq 'profiles: ["nodes"]' vps/docker-compose.fresh.yml
 for file in vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml; do
   if grep -Eqi 'supabase' "$file"; then
     echo "Retired provider reference remains in active runtime path: $file" >&2
