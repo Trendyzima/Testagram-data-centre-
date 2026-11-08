@@ -128,7 +128,7 @@ export default {
       });
     }
 
-    const match = url.pathname.match(/^\/v1\/realtime\/conversations\/([A-Za-z0-9_-]{1,128})$/);
+    const match = url.pathname.match(/^\/v1\/realtime\/(conversations|rooms)\/([A-Za-z0-9_-]{1,128})$/);
     if (!match) return json({ error: "not found" }, 404);
     if (request.method !== "GET" || request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return json({ error: "websocket upgrade required" }, 426);
