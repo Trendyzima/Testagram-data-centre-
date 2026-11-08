@@ -40,8 +40,8 @@ for key in APPWRITE_PROJECT_ID APPWRITE_DATABASE_ID APPWRITE_SERVER_API_KEY NEON
     exit 2
   fi
 done
-if [ "${#FRESH_FEDERATION_INTERNAL_TOKEN}" -lt 32 ] || [ "${#ALGORITHM_INTERNAL_TOKEN}" -lt 32 ]; then
-  echo "Private service tokens must contain at least 32 characters." >&2
+if [ "${#FRESH_FEDERATION_INTERNAL_TOKEN}" -lt 32 ] || [ "${#ALGORITHM_INTERNAL_TOKEN}" -lt 32 ] || [ "${#VPS_INTERNAL_TOKEN}" -lt 32 ] || [ "${#VPS_NODE_BOOTSTRAP_TOKEN}" -lt 32 ]; then
+  echo "Federation, Algorithm, control-plane and node bootstrap tokens must contain at least 32 characters." >&2
   exit 2
 fi
 if [[ "$VPS_NODE_BOOTSTRAP_TOKEN" == *$'\n'* || "$VPS_NODE_BOOTSTRAP_TOKEN" == *$'\r'* ]]; then
