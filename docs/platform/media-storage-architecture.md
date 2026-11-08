@@ -23,9 +23,9 @@ B2 and R2 are independent object stores. Keep endpoints, regions, credentials an
 ## Upload and replication contract
 
 1. XClone requests an upload reservation from Backend. Backend authenticates the Appwrite session, authorizes owner and visibility, enforces quotas, and records a pending object plus quota reservation in Appwrite.
-2. Backend issues a short-lived, object-scoped upload authorization for B2. Provider credentials remain server-side.
-3. The client uploads bytes directly to B2. Backend verifies object existence, content type, byte length and the actual SHA-256 of the stored bytes.
-4. Backend copies the complete object from B2 into the Cloudflare R2 bucket using a bounded streaming transfer. It independently reads the R2 object back and verifies size, content type and SHA-256.
+2. Backend selects the configured upload origin (b2 or r2) and persists that choice in the reservation. It issues a short-lived, object-scoped upload authorization for that provider; provider credentials remain server-side.
+3. The client uploads bytes directly to the selected provider. Backend verifies object existence, content type, byte length and the actual SHA-256 of the stored bytes.
+4. Backend copies the complete object from the selected origin into the peer provider using a bounded streaming transfer. It independently reads the replica back and verifies size, content type and SHA-256.
 5. Only after both storage providers are verified does Backend commit the protected media and two-provider replica ledger. An object is not ready merely because one upload succeeded.
 6. Delivery prefers R2 through the Cloudflare private-media Worker. If R2 is unavailable or fails integrity checks, Backend can use the independently verified B2 copy while repair reconciles the degraded R2 replica.
 7. Repair can copy in either direction from the surviving verified provider. It must never overwrite a good copy with an unverified source.
