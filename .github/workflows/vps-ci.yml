@@ -153,11 +153,11 @@ jobs:
             -d '{"name":"linux-compute","platform":"linux","arch":"amd64","cpuCores":2,"memoryBytes":8589934592,"storageBytes":10000000000,"freeBytes":5000000000,"endpoint":"linux-compute","capabilities":{"computeNode":true,"storageNode":false,"workloadExecution":true,"mediaStorageBytes":0,"mediaStorageFreeBytes":0}}' \
             http://127.0.0.1:8787/v1/nodes/register
           curl -fsS -o /tmp/scheduled-workload.json \
-            -H "Authorization: Bearer ci-internal" -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ci-vps-internal-token-0123456789abcdef" -H "Content-Type: application/json" \
             -d '{"image":"ghcr.io/example/test","imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","command":["true"],"cpuMillis":100,"memoryBytes":67108864}' \
             http://127.0.0.1:8787/v1/workloads
           grep -q '"endpoint":"linux-compute"' /tmp/scheduled-workload.json
-          auth_header="Authorization: Bearer ci-internal"
+          auth_header="Authorization: Bearer ci-vps-internal-token-0123456789abcdef"
           curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/health | grep -q '"status":"ok"'
           domain_code="$(curl -sS -o /tmp/testagram-domain.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d '{"slug":"demo-app","targetService":"web"}' http://127.0.0.1:8787/v1/hosting/domains)"
           test "$domain_code" = "201"
