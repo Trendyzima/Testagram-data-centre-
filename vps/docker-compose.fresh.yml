@@ -28,14 +28,11 @@ services:
       APPWRITE_SERVER_API_KEY: ${APPWRITE_SERVER_API_KEY:?Set a least-privilege server API key}
       NEON_DATABASE_URL: ${NEON_DATABASE_URL:-}
       NEON_REQUIRED: ${NEON_REQUIRED:-true}
-      # Backend consumes these exact private-service client variables.
-      ALGORITHM_URL: ${ALGORITHM_URL:-http://algorithm:8092}
+      # Fresh API consumes these exact private-service variables.
+      ALGORITHM_ENDPOINT: ${ALGORITHM_ENDPOINT:-http://algorithm:8092}
       ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
       FEED_RANKING_REQUIRED: "false"
-      FEDERATION_INTERNAL_URL: ${FEDERATION_INTERNAL_URL:-}
-      FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}
-      PLATFORM_URL: ${PLATFORM_URL:-}
-      PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:-}
+      FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}
       ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
       ONSPACE_AI_API_KEY: ${ONSPACE_AI_API_KEY:-}
       # B2 and R2 are independent full-copy stores; choose the direct-upload origin per reservation.
