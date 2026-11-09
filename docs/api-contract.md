@@ -28,12 +28,12 @@ The full authenticated Backend <-> Data Centre media placement/replica API is no
 - Keep node credentials, provider keys and storage secrets out of XClone and logs.
 
 
-## Backend private-service wiring
+## Fresh API private-service wiring
 
-The Backend is the only product-facing API. Private service clients use the exact environment names consumed by the Backend Go service:
+The deployed Fresh Backend image is built from `Dockerfile.fresh` and runs `cmd/fresh-api`. Its service contract is different from the legacy `cmd/api` binary:
 
-- Algorithm: `ALGORITHM_URL=http://algorithm:8092` and `ALGORITHM_INTERNAL_TOKEN`. The Algorithm service is optional under the `ranking` Compose profile; Backend must keep chronological fallback available when ranking is unavailable.
-- Federation: `FEDERATION_INTERNAL_URL=http://federation-api:8081` and `FEDERATION_INTERNAL_TOKEN`. Data Centre maps the shared `FRESH_FEDERATION_INTERNAL_TOKEN` into Backend's `FEDERATION_INTERNAL_TOKEN` and Federation's `BACKEND_INTERNAL_TOKEN`. Both values must be identical and independently generated with at least 32 random characters. The Federation profile controls whether the service is running; Backend owns its local outbox and retries unavailable private ingress.
-- Data Centre platform API: `PLATFORM_URL` and `PLATFORM_INTERNAL_TOKEN` are optional together. They enable Backend's typed cache, rate-limit and queue client. Never expose this credential to XClone.
+- Algorithm ranking: `ALGORITHM_ENDPOINT=http://algorithm:8092` plus `ALGORITHM_INTERNAL_TOKEN`. The Algorithm service is optional under the `ranking` Compose profile; Fresh API must retain chronological fallback when ranking is unavailable.
+- Federation ingress/outbox: Data Centre passes the same high-entropy `FRESH_FEDERATION_INTERNAL_TOKEN` to Fresh API and Federation's `BACKEND_INTERNAL_TOKEN`. Fresh API exposes only private `/internal/v1/federation/*` routes with this token; Federation polls the Backend outbox and resolves actors through these routes. There is no public browser-to-Federation API.
+- Data Centre platform cache/rate-limit/queue API is a separate infrastructure service. It is not currently a Fresh API dependency and its private token must never be exposed to XClone.
 
-These are service-to-service settings, not browser API URLs. XClone calls only the public Backend API; it must never call Algorithm, Federation or Data Centre private platform endpoints directly.
+These are service-to-service settings, not browser API URLs. XClone calls only the public Fresh Backend API; it must never call Algorithm, Federation or Data Centre private platform endpoints directly.
