@@ -82,6 +82,7 @@ services:
       start_period: 10s
 
   federation-api:
+    profiles: ["federation"]
     image: ${TESTAGRAM_FEDERATION_IMAGE:-scratch}
     restart: unless-stopped
     environment:
@@ -165,8 +166,6 @@ services:
       - fresh_edge_config:/config
     depends_on:
       api:
-        condition: service_healthy
-      federation-api:
         condition: service_healthy
     networks: [edge, services]
 
