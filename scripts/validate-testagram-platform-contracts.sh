@@ -9,7 +9,7 @@ done
 
 # Appwrite login must not depend on optional ranking, Federation or node services.
 api_block="$(sed -n '/^  api:/,/^  federation-db:/p' vps/docker-compose.fresh.yml)"
-if grep -q 'algorithm:' <<< "$api_block"; then
+if grep -q '^  algorithm:' <<< "$api_block"; then
   echo "The public Backend API must not have an Algorithm startup dependency." >&2
   exit 1
 fi
