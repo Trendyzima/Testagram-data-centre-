@@ -26,3 +26,14 @@ The full authenticated Backend <-> Data Centre media placement/replica API is no
 - Never interpret missing heartbeat as proof of deletion.
 - Never delete media or reclaim quota without Backend-authorized lifecycle command and independent replica checks.
 - Keep node credentials, provider keys and storage secrets out of XClone and logs.
+
+
+## Backend private-service wiring
+
+The Backend is the only product-facing API. Private service clients use the exact environment names consumed by the Backend Go service:
+
+- Algorithm: `ALGORITHM_URL=http://algorithm:8092` and `ALGORITHM_INTERNAL_TOKEN`. The Algorithm service is optional under the `ranking` Compose profile; Backend must keep chronological fallback available when ranking is unavailable.
+- Federation: `FEDERATION_INTERNAL_URL=http://federation-api:8081` and `FEDERATION_INTERNAL_TOKEN`. Data Centre maps the shared `FRESH_FEDERATION_INTERNAL_TOKEN` into Backend's `FEDERATION_INTERNAL_TOKEN` and Federation's `BACKEND_INTERNAL_TOKEN`. Both values must be identical and independently generated with at least 32 random characters. The Federation profile controls whether the service is running; Backend owns its local outbox and retries unavailable private ingress.
+- Data Centre platform API: `PLATFORM_URL` and `PLATFORM_INTERNAL_TOKEN` are optional together. They enable Backend's typed cache, rate-limit and queue client. Never expose this credential to XClone.
+
+These are service-to-service settings, not browser API URLs. XClone calls only the public Backend API; it must never call Algorithm, Federation or Data Centre private platform endpoints directly.
