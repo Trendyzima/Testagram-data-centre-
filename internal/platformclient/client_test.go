@@ -45,7 +45,7 @@ func TestCacheSetSendsBearerAndTTL(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/cache/set" {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 		}
-		if r.Header.Get("Authorization") != "Bearer unit-test-secret" {
+		if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("u", 40) {
 			t.Errorf("missing internal bearer token")
 		}
 		if r.Header.Get("Content-Type") != "application/json" {
@@ -97,7 +97,7 @@ func TestCacheGetAndMiss(t *testing.T) {
 
 func TestRateLimitAndEnqueue(t *testing.T) {
 	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer unit-test-secret" {
+		if r.Header.Get("Authorization") != "Bearer "+strings.Repeat("u", 40) {
 			t.Errorf("missing authorization")
 		}
 		switch r.URL.Path {

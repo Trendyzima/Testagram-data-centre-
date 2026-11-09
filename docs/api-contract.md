@@ -26,3 +26,14 @@ The full authenticated Backend <-> Data Centre media placement/replica API is no
 - Never interpret missing heartbeat as proof of deletion.
 - Never delete media or reclaim quota without Backend-authorized lifecycle command and independent replica checks.
 - Keep node credentials, provider keys and storage secrets out of XClone and logs.
+
+
+## Fresh API private-service wiring
+
+The deployed Fresh Backend image is built from `Dockerfile.fresh` and runs `cmd/fresh-api`. Its service contract is different from the legacy `cmd/api` binary:
+
+- Algorithm ranking: `ALGORITHM_ENDPOINT=http://algorithm:8092` plus `ALGORITHM_INTERNAL_TOKEN`. The Algorithm service is optional under the `ranking` Compose profile; Fresh API must retain chronological fallback when ranking is unavailable.
+- Federation ingress/outbox: Data Centre passes the same high-entropy `FRESH_FEDERATION_INTERNAL_TOKEN` to Fresh API and Federation's `BACKEND_INTERNAL_TOKEN`. Fresh API exposes only private `/internal/v1/federation/*` routes with this token; Federation polls the Backend outbox and resolves actors through these routes. There is no public browser-to-Federation API.
+- Data Centre platform cache/rate-limit/queue API is a separate infrastructure service. It is not currently a Fresh API dependency and its private token must never be exposed to XClone.
+
+These are service-to-service settings, not browser API URLs. XClone calls only the public Fresh Backend API; it must never call Algorithm, Federation or Data Centre private platform endpoints directly.
