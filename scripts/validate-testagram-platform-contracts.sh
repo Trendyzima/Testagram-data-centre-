@@ -14,7 +14,11 @@ if grep -q 'algorithm:' <<< "$api_block"; then
   exit 1
 fi
 grep -q 'FEED_RANKING_REQUIRED: "false"' <<< "$api_block"
-grep -q 'ALGORITHM_ENDPOINT: ${ALGORITHM_ENDPOINT:-}' <<< "$api_block"
+grep -q 'ALGORITHM_URL: ${ALGORITHM_URL:-http://algorithm:8092}' <<< "$api_block"
+grep -q 'FEDERATION_INTERNAL_URL: ${FEDERATION_INTERNAL_URL:-}' <<< "$api_block"
+grep -q 'FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}' <<< "$api_block"
+grep -q 'PLATFORM_URL: ${PLATFORM_URL:-}' <<< "$api_block"
+grep -q 'PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:-}' <<< "$api_block"
 grep -Fq 'profiles: ["ranking"]' vps/docker-compose.fresh.yml
 grep -Fq 'profiles: ["federation"]' vps/docker-compose.fresh.yml
 grep -Fq 'profiles: ["nodes"]' vps/docker-compose.fresh.yml
