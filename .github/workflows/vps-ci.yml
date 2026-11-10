@@ -61,6 +61,13 @@ jobs:
           --health-interval=5s --health-timeout=5s --health-retries=20
     steps:
       - uses: actions/checkout@v7
+      - name: Check out canonical Backend source
+        uses: actions/checkout@v7
+        with:
+          repository: Trendyzima/Testagram-backend-
+          ref: main
+          path: backend-source
+          persist-credentials: false
       - uses: actions/setup-go@v7
         with:
           go-version: "1.23"
@@ -199,12 +206,17 @@ jobs:
           docker network create testagram-platform 2>/dev/null || true
           docker network create testagram-egress 2>/dev/null || true
           docker run -d --name testagram-postgres --network testagram-platform --network-alias federation-db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
-          trap 'docker rm -f testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true; docker network rm testagram-egress testagram-platform >/dev/null 2>&1 || true' EXIT
+          trap 'docker rm -f testagram-api testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true; docker network rm testagram-egress testagram-platform >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 30); do
             docker exec testagram-postgres pg_isready -U postgres -d postgres >/dev/null 2>&1 && break
             sleep 2
           done
           docker exec testagram-postgres pg_isready -U postgres -d postgres
+          docker exec testagram-postgres createdb -U postgres testagram
+          for migration in backend-source/migrations/*.sql; do
+            docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < "$migration"
+          done
+          docker build -f backend-source/Dockerfile -t testagram-backend-ci backend-source
           docker run --rm --network testagram-platform -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'for f in /migrations/*.sql; do psql -h testagram-postgres -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
           export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/postgres
           export VIDEO_JWT_SECRET=ci-test-jwt-secret
@@ -213,6 +225,18 @@ jobs:
           export NOTIFICATION_INTERNAL_TOKEN=ci-test-internal-token
           export PLATFORM_INTERNAL_TOKEN=ci-platform-internal-token
           export TESTAGRAM_NETWORK=testagram-platform
+          docker run -d --name testagram-api --network testagram-platform --network-alias api \
+            -e LISTEN_ADDR=:8080 \
+            -e DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram?sslmode=disable \
+            -e APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1 -e APPWRITE_PROJECT_ID=ci-project \
+            -e ALGORITHM_URL=http://algorithm:8092 -e ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough \
+            -e FEDERATION_INTERNAL_URL=http://federation-api:8081 -e FEDERATION_INTERNAL_TOKEN=ci-federation-internal-token-long-enough \
+            testagram-backend-ci
+          for i in $(seq 1 30); do
+            docker exec testagram-api wget -q -O - http://127.0.0.1:8080/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker exec testagram-api wget -q -O - http://127.0.0.1:8080/readyz
           docker compose -f backend/docker-compose.yml pull algorithm federation-api
           docker compose -f backend/docker-compose.yml up -d platform video notification worker algorithm federation-api
           docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine sh -c 'count="$(psql -h testagram-postgres -U postgres -d postgres -Atqc "SELECT count(*) FROM public.testagram_data_centre_schema_migrations")"; test "$count" = "8"'
