@@ -19,6 +19,8 @@ import (
 
 var ErrNotFound = errors.New("platform value not found")
 
+const maxPlatformAPIBody = 1 << 20
+
 type Cache interface {
 	Get(context.Context, string) (string, error)
 	Set(context.Context, string, string, time.Duration) error
@@ -138,6 +140,9 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		if err != nil {
 			return err
 		}
+		if len(raw) > maxPlatformAPIBody {
+			return errors.New("platform request body exceeds 1 MiB")
+		}
 		reader = bytes.NewReader(raw)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
@@ -153,9 +158,12 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return fmt.Errorf("call Testagram platform API: %w", err)
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxPlatformAPIBody+1))
 	if err != nil {
 		return err
+	}
+	if len(raw) > maxPlatformAPIBody {
+		return errors.New("platform response body exceeds 1 MiB")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if resp.StatusCode == http.StatusNotFound {
