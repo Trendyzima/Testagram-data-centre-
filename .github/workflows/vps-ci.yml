@@ -75,7 +75,7 @@ jobs:
           bash -n android-node/install-apk.sh
           test -f vps/docker-compose.yml
           test -f backend/docker-compose.yml
-          test -f backend/runtime/Caddyfile
+          test -f vps/fresh/Caddyfile
           grep -q "B2_S3_ENDPOINT" vps/docker-compose.fresh.yml
           grep -q "CLOUDFLARE_R2_ENDPOINT" vps/docker-compose.fresh.yml
           grep -q 'FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}' vps/docker-compose.fresh.yml
@@ -175,7 +175,7 @@ jobs:
             -e TESTAGRAM_ORIGIN=http://control-plane:8787 \
             -e TLS_ADMIN_EMAIL=admin@testagram.local \
             -e TESTAGRAM_API_DOMAIN=api.testagram.local \
-            -v "$PWD/backend/runtime/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -v "$PWD/vps/fresh/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2.10 caddy validate --config /etc/caddy/Caddyfile
       - name: Build backend containers
         run: |
