@@ -7,8 +7,8 @@ services:
       dockerfile: backend/services/platform/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-      PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
+      PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:?Set PLATFORM_INTERNAL_TOKEN in backend/.env}
       PLATFORM_ADDR: :8095
     networks: [internal, platform]
     healthcheck:
@@ -23,10 +23,10 @@ services:
       dockerfile: backend/services/video/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT}
-      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID}
-      VIDEO_SIGNING_SECRET: ${VIDEO_SIGNING_SECRET}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
+      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:?Set APPWRITE_ENDPOINT in backend/.env}
+      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:?Set APPWRITE_PROJECT_ID in backend/.env}
+      VIDEO_SIGNING_SECRET: ${VIDEO_SIGNING_SECRET:?Set VIDEO_SIGNING_SECRET in backend/.env}
       VIDEO_MEDIA_ROOT: /media
       VIDEO_ADDR: :8790
       VIDEO_ACCOUNT_QUOTA_BYTES: ${VIDEO_ACCOUNT_QUOTA_BYTES:-21474836480}
@@ -47,7 +47,7 @@ services:
       dockerfile: backend/services/video-worker/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
       VIDEO_MEDIA_ROOT: /media
     volumes:
       - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/media:/media
@@ -59,10 +59,10 @@ services:
       dockerfile: backend/services/notification/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT}
-      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID}
-      NOTIFICATION_INTERNAL_TOKEN: ${NOTIFICATION_INTERNAL_TOKEN}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
+      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:?Set APPWRITE_ENDPOINT in backend/.env}
+      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:?Set APPWRITE_PROJECT_ID in backend/.env}
+      NOTIFICATION_INTERNAL_TOKEN: ${NOTIFICATION_INTERNAL_TOKEN:?Set NOTIFICATION_INTERNAL_TOKEN in backend/.env}
       NOTIFICATION_ADDR: :8090
     networks: [internal, platform, egress]
     healthcheck:
@@ -77,7 +77,7 @@ services:
       dockerfile: backend/services/worker/Dockerfile
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
       WORKER_ADDR: :8091
     networks: [internal, platform]
     healthcheck:
