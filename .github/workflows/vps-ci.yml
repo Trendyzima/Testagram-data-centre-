@@ -1,7 +1,7 @@
 name: testagram-vps-ci
 on:
   push:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh",".github/workflows/vps-ci.yml"]
   pull_request:
     paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py",".github/workflows/vps-ci.yml"]
   workflow_dispatch:
@@ -191,7 +191,7 @@ jobs:
           docker network create testagram-platform 2>/dev/null || true
           docker network create testagram-egress 2>/dev/null || true
           docker run -d --name testagram-postgres --network testagram-platform -e POSTGRES_PASSWORD=testagram postgres:17-alpine
-          trap 'docker rm -f testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true' EXIT
+          trap 'docker rm -f testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true; docker network rm testagram-egress testagram-platform >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 30); do
             docker exec testagram-postgres pg_isready -U postgres -d postgres >/dev/null 2>&1 && break
             sleep 2
