@@ -1,39 +1,36 @@
-# Testagram locally owned backend
+# Testagram Data Centre
 
-This layer is the ownership boundary around the official self-hosted Supabase
-core. It does not modify Supabase internals.
+This repository owns Testagram's self-hosted data, media and infrastructure
+services. It is not a Supabase distribution and does not require Supabase,
+Redis/Valkey, Upstash, or a generic cache/queue service.
 
-## Provider-free core
+## Ownership and runtime boundaries
 
-The following capabilities are implemented as Testagram-owned infrastructure,
-not as calls to managed media, push, CDN, cache, KYC, GIF, news, notification,
-or hosted AI platforms:
-
-- creator video channels, uploads, local storage, FFmpeg processing, HLS playback and signed delivery
-- notification broker with device registration, preferences, retries and an internal delivery protocol
-- local object/media storage with processing workers and signed asset URLs
-- Redis-compatible cache/rate-limit primitives backed by a local service
-- local edge gateway policy for TLS, routing, request limits and caching
-- RSS/GIF/news ingestion and normalization
-- federation through ActivityPub and Matrix protocols
-- transactional email queue and provider-independent SMTP delivery interface
-- local geospatial/distance primitives and cache
-- local AI gateway contracts for moderation, transcription, embeddings and support agents
-- payment ledger, idempotency, reconciliation and provider adapters
-- KYC orchestration and evidence/audit state
+- Appwrite owns client authentication. Video and notification services verify
+  Appwrite session JWTs with the Appwrite Account API, then resolve the
+  canonical Testagram UUID through the protected identity bridge.
+- PostgreSQL is the only relational persistence dependency. Point
+  `DATABASE_URL` at the Testagram-owned PostgreSQL deployment; do not use a
+  Supabase database URL.
+- Video API and FFmpeg worker own video upload, quota, processing and playback.
+- Notification API owns device registration, notification preferences and
+  delivery state.
+- Platform API owns PostgreSQL-backed feature configuration, event telemetry
+  and audit records only. It does not expose cache, Redis, Valkey or queue APIs.
+- Storage and node agents own object placement, checksums, replica inventory,
+  removable-SD safety and capacity reporting.
+- Control plane owns node/workload inventory and hosting operations.
+- Durable asynchronous work remains in the owning service's PostgreSQL
+  outbox/lease tables and is processed idempotently.
 
 ## External networks
 
-Some capabilities inherently terminate at a third-party network. Testagram
-owns the integration, credentials, ledger, retries and audit trail, but cannot
-turn those external networks into local infrastructure:
+Some capabilities inherently terminate at third-party networks. Testagram owns
+the integration, credentials, ledger, retries and audit trail:
 
 - Safaricom M-Pesa
-- PayPal
-- Pesapal
+- PayPal and Pesapal
 - remote federation peers
 - email recipient domains
 
-These are adapters, not dependencies of the core business logic.
-
-Firebase/FCM is deliberately not part of this architecture.
+These are explicit adapters, not dependencies of the core business logic.
