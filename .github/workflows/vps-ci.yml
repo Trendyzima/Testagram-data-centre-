@@ -8,11 +8,21 @@ on:
 jobs:
   go:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     env:
       # Test-only immutable-looking references allow Compose model rendering; CI never pulls these API/ranker placeholders.
       TESTAGRAM_BACKEND_IMAGE: ghcr.io/trendyzima/testagram-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       TESTAGRAM_ALGORITHM_IMAGE: ghcr.io/trendyzima/testagram-feed@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-      TESTAGRAM_FEDERATION_IMAGE: ghcr.io/trendyzima/testagram-federation@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+      TESTAGRAM_ALGORITHM_IMAGE: ghcr.io/trendyzima/testagram-feed:sha-ca585b7fe40cb423d1c5d2f32eb8930ee9558949
+      TESTAGRAM_FEDERATION_IMAGE: ghcr.io/trendyzima/testagram-federation:sha-8aa46c04532eab99d533709109c7f86d716cff36
+      ALGORITHM_INTERNAL_TOKEN: ci-algorithm-internal-token-long-enough
+      FEDERATION_INTERNAL_TOKEN: ci-federation-internal-token-long-enough
+      FEDERATION_DATABASE_NAME: testagram_federation
+      FEDERATION_DATABASE_URL: postgresql://postgres:testagram@federation-db:5432/testagram_federation?sslmode=disable
+      FEDERATION_PUBLIC_BASE_URL: https://federation.testagram.site
+      FEDERATION_INSTANCE_DOMAIN: testagram.site
       TESTAGRAM_FRESH_BACKEND_IMAGE: ghcr.io/trendyzima/testagram-backend-fresh@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
       CADDY_IMAGE: caddy:2.10-alpine
       POSTGRES_CLIENT_IMAGE: postgres:17-alpine
@@ -191,7 +201,7 @@ jobs:
           set -euo pipefail
           docker network create testagram-platform 2>/dev/null || true
           docker network create testagram-egress 2>/dev/null || true
-          docker run -d --name testagram-postgres --network testagram-platform -e POSTGRES_PASSWORD=testagram postgres:17-alpine
+          docker run -d --name testagram-postgres --network testagram-platform --network-alias federation-db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
           trap 'docker rm -f testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true; docker network rm testagram-egress testagram-platform >/dev/null 2>&1 || true' EXIT
           for i in $(seq 1 30); do
             docker exec testagram-postgres pg_isready -U postgres -d postgres >/dev/null 2>&1 && break
@@ -206,12 +216,14 @@ jobs:
           export NOTIFICATION_INTERNAL_TOKEN=ci-test-internal-token
           export PLATFORM_INTERNAL_TOKEN=ci-platform-internal-token
           export TESTAGRAM_NETWORK=testagram-platform
-          docker compose -f backend/docker-compose.yml up -d platform video notification worker
+          docker compose -f backend/docker-compose.yml pull algorithm federation-api
+          docker compose -f backend/docker-compose.yml up -d platform video notification worker algorithm
           docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine sh -c 'count="$(psql -h testagram-postgres -U postgres -d postgres -Atqc "SELECT count(*) FROM public.testagram_data_centre_schema_migrations")"; test "$count" = "8"'
           for i in $(seq 1 30); do
             docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz >/dev/null 2>&1 && break
             sleep 2
           done
+          docker compose -f backend/docker-compose.yml exec -T algorithm wget -q -O - http://127.0.0.1:8092/readyz
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - http://127.0.0.1:8095/readyz
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"key":"ci:cache","value":"green","ttl_seconds":60}' http://127.0.0.1:8095/v1/cache/set
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" "http://127.0.0.1:8095/v1/cache/get?key=ci:cache" | grep -Eq '"value"[[:space:]]*:[[:space:]]*"green"'
