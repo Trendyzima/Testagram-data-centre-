@@ -3,6 +3,7 @@ WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY backend/services/notification ./backend/services/notification
+COPY backend/internal/appwriteauth ./backend/internal/appwriteauth
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /notification ./backend/services/notification
 FROM alpine:3.22
 COPY --from=build /notification /notification
