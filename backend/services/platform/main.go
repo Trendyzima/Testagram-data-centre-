@@ -9,45 +9,23 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 )
 
 type server struct {
-	db         *pgxpool.Pool
-	redis      *redis.Client
-	internal   string
-	ready      atomic.Bool
-	cacheHits  atomic.Uint64
-	cacheMiss  atomic.Uint64
-	queueAdds  atomic.Uint64
-	queueAcks  atomic.Uint64
-	rateChecks atomic.Uint64
+	db            *pgxpool.Pool
+	internal      string
+	ready         atomic.Bool
+	configWrites  atomic.Uint64
+	eventsStored  atomic.Uint64
+	auditWrites   atomic.Uint64
 }
 
-type cacheRequest struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-	TTL   int    `json:"ttl_seconds"`
-}
-type queueRequest struct {
-	Queue    string            `json:"queue"`
-	Payload  map[string]string `json:"payload"`
-	Group    string            `json:"group"`
-	Consumer string            `json:"consumer"`
-	Count    int64             `json:"count"`
-}
-type rateRequest struct {
-	Key    string `json:"key"`
-	Limit  int64  `json:"limit"`
-	Window int64  `json:"window_seconds"`
-}
 type flagRequest struct {
 	Key     string          `json:"key"`
 	Enabled bool            `json:"enabled"`
@@ -71,34 +49,22 @@ type auditRequest struct {
 func main() {
 	ctx := context.Background()
 	dbURL := required("DATABASE_URL")
-	redisURL := env("REDIS_URL", "redis://redis:6379/0")
 	internal := required("PLATFORM_INTERNAL_TOKEN")
 	db, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	opts, err := redis.ParseURL(redisURL)
-	if err != nil {
-		log.Fatal(err)
+	if err := db.Ping(ctx); err != nil {
+		log.Fatalf("platform PostgreSQL is unavailable: %v", err)
 	}
-	rdb := redis.NewClient(opts)
-	defer rdb.Close()
-	s := &server{db: db, redis: rdb, internal: internal}
+	s := &server{db: db, internal: internal}
 	s.ready.Store(true)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/readyz", s.readyz)
 	mux.HandleFunc("/metrics", s.metrics)
-	mux.HandleFunc("/v1/cache/get", s.cacheGet)
-	mux.HandleFunc("/v1/cache/set", s.cacheSet)
-	mux.HandleFunc("/v1/cache/delete", s.cacheDelete)
-	mux.HandleFunc("/v1/rate-limit/check", s.rateLimit)
-	mux.HandleFunc("/v1/queue/enqueue", s.queueEnqueue)
-	mux.HandleFunc("/v1/queue/claim", s.queueClaim)
-	mux.HandleFunc("/v1/queue/ack", s.queueAck)
-	mux.HandleFunc("/v1/queue/reclaim", s.queueReclaim)
 	mux.HandleFunc("/v1/config/set", s.configSet)
 	mux.HandleFunc("/v1/events", s.events)
 	mux.HandleFunc("/v1/audit", s.audit)
@@ -121,19 +87,13 @@ func (s *server) readyz(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "database unavailable", 503)
 		return
 	}
-	if err := s.redis.Ping(r.Context()).Err(); err != nil {
-		http.Error(w, "redis unavailable", 503)
-		return
-	}
 	_, _ = w.Write([]byte("ready\n"))
 }
 func (s *server) metrics(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	fmt.Fprintf(w, "testagram_platform_cache_hits_total %d\n", s.cacheHits.Load())
-	fmt.Fprintf(w, "testagram_platform_cache_misses_total %d\n", s.cacheMiss.Load())
-	fmt.Fprintf(w, "testagram_platform_queue_enqueued_total %d\n", s.queueAdds.Load())
-	fmt.Fprintf(w, "testagram_platform_queue_acked_total %d\n", s.queueAcks.Load())
-	fmt.Fprintf(w, "testagram_platform_rate_limit_checks_total %d\n", s.rateChecks.Load())
+	fmt.Fprintf(w, "testagram_platform_config_writes_total %d\n", s.configWrites.Load())
+	fmt.Fprintf(w, "testagram_platform_events_stored_total %d\n", s.eventsStored.Load())
+	fmt.Fprintf(w, "testagram_platform_audit_writes_total %d\n", s.auditWrites.Load())
 }
 func (s *server) authorize(w http.ResponseWriter, r *http.Request) bool {
 	got := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
@@ -143,192 +103,6 @@ func (s *server) authorize(w http.ResponseWriter, r *http.Request) bool {
 	}
 	return true
 }
-func (s *server) cacheGet(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r) {
-		return
-	}
-	key := r.URL.Query().Get("key")
-	if !validKey(key) {
-		http.Error(w, "invalid key", 400)
-		return
-	}
-	v, err := s.redis.Get(r.Context(), key).Result()
-	if errors.Is(err, redis.Nil) {
-		s.cacheMiss.Add(1)
-		http.Error(w, "not found", 404)
-		return
-	}
-	if err != nil {
-		http.Error(w, "cache unavailable", 503)
-		return
-	}
-	s.cacheHits.Add(1)
-	writeJSON(w, map[string]string{"value": v})
-}
-func (s *server) cacheSet(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r) {
-		return
-	}
-	var in cacheRequest
-	if !decodeJSON(w, r, &in) || !validKey(in.Key) || in.TTL < 1 || in.TTL > 86400 {
-		http.Error(w, "invalid request", 400)
-		return
-	}
-	if err := s.redis.Set(r.Context(), in.Key, in.Value, time.Duration(in.TTL)*time.Second).Err(); err != nil {
-		http.Error(w, "cache unavailable", 503)
-		return
-	}
-	w.WriteHeader(204)
-}
-func (s *server) cacheDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r) {
-		return
-	}
-	key := r.URL.Query().Get("key")
-	if !validKey(key) {
-		http.Error(w, "invalid key", 400)
-		return
-	}
-	if err := s.redis.Del(r.Context(), key).Err(); err != nil {
-		http.Error(w, "cache unavailable", 503)
-		return
-	}
-	w.WriteHeader(204)
-}
-
-var rateScript = redis.NewScript(`
-local current = redis.call("INCR", KEYS[1])
-if current == 1 then redis.call("EXPIRE", KEYS[1], ARGV[1]) end
-if current > tonumber(ARGV[2]) then return {0, current, redis.call("TTL", KEYS[1])} end
-return {1, current, redis.call("TTL", KEYS[1])}
-`)
-
-func (s *server) rateLimit(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r) {
-		return
-	}
-	var in rateRequest
-	if !decodeJSON(w, r, &in) || !validKey(in.Key) || in.Limit < 1 || in.Limit > 100000 || in.Window < 1 || in.Window > 86400 {
-		http.Error(w, "invalid request", 400)
-		return
-	}
-	s.rateChecks.Add(1)
-	v, err := rateScript.Run(r.Context(), s.redis, []string{"testagram:rl:" + in.Key}, in.Window, in.Limit).Result()
-	if err != nil {
-		http.Error(w, "rate limiter unavailable", 503)
-		return
-	}
-	a, ok := v.([]interface{})
-	if !ok || len(a) != 3 {
-		http.Error(w, "invalid limiter response", 500)
-		return
-	}
-	allowed, _ := strconv.ParseInt(fmt.Sprint(a[0]), 10, 64)
-	count, _ := strconv.ParseInt(fmt.Sprint(a[1]), 10, 64)
-	ttl, _ := strconv.ParseInt(fmt.Sprint(a[2]), 10, 64)
-	writeJSON(w, map[string]any{"allowed": allowed == 1, "count": count, "remaining": max64(in.Limit-count, 0), "retry_after_seconds": max64(ttl, 0)})
-}
-
-func (s *server) queueEnqueue(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r) {
-		return
-	}
-	var in queueRequest
-	if !decodeJSON(w, r, &in) || !validKey(in.Queue) || len(in.Payload) == 0 {
-		http.Error(w, "invalid request", 400)
-		return
-	}
-	fields := make([]any, 0, len(in.Payload)*2)
-	for k, v := range in.Payload {
-		if !validKey(k) {
-			http.Error(w, "invalid payload key", 400)
-			return
-		}
-		fields = append(fields, k, v)
-	}
-	id, err := s.redis.XAdd(r.Context(), &redis.XAddArgs{Stream: "testagram:queue:" + in.Queue, MaxLen: 100000, Approx: true, Values: fields}).Result()
-	if err != nil {
-		http.Error(w, "queue unavailable", 503)
-		return
-	}
-	s.queueAdds.Add(1)
-	writeJSON(w, map[string]string{"id": id})
-}
-func (s *server) queueClaim(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r) {
-		return
-	}
-	var in queueRequest
-	if !decodeJSON(w, r, &in) || !validKey(in.Queue) || !validKey(in.Group) || !validKey(in.Consumer) {
-		http.Error(w, "invalid request", 400)
-		return
-	}
-	if in.Count < 1 || in.Count > 100 {
-		in.Count = 10
-	}
-	stream := "testagram:queue:" + in.Queue
-	if err := s.redis.XGroupCreateMkStream(r.Context(), stream, in.Group, "$").Err(); err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
-		http.Error(w, "queue unavailable", 503)
-		return
-	}
-	entries, err := s.redis.XReadGroup(r.Context(), &redis.XReadGroupArgs{Group: in.Group, Consumer: in.Consumer, Streams: []string{stream, ">"}, Count: in.Count, Block: time.Second}).Result()
-	if errors.Is(err, redis.Nil) {
-		writeJSON(w, map[string]any{"messages": []any{}})
-		return
-	}
-	if err != nil {
-		http.Error(w, "queue unavailable", 503)
-		return
-	}
-	writeJSON(w, entries)
-}
-func (s *server) queueAck(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r) {
-		return
-	}
-	queue := r.URL.Query().Get("queue")
-	group := r.URL.Query().Get("group")
-	id := r.URL.Query().Get("id")
-	if !validKey(queue) || !validKey(group) || id == "" {
-		http.Error(w, "invalid request", 400)
-		return
-	}
-	n, err := s.redis.XAck(r.Context(), "testagram:queue:"+queue, group, id).Result()
-	if err != nil {
-		http.Error(w, "queue unavailable", 503)
-		return
-	}
-	s.queueAcks.Add(uint64(n))
-	writeJSON(w, map[string]int64{"acked": n})
-}
-
-func (s *server) queueReclaim(w http.ResponseWriter, r *http.Request) {
-	if !s.authorize(w, r) {
-		return
-	}
-	queue := r.URL.Query().Get("queue")
-	group := r.URL.Query().Get("group")
-	consumer := r.URL.Query().Get("consumer")
-	if !validKey(queue) || !validKey(group) || !validKey(consumer) {
-		http.Error(w, "invalid request", 400)
-		return
-	}
-	idleMS, _ := strconv.ParseInt(r.URL.Query().Get("min_idle_ms"), 10, 64)
-	if idleMS < 1 || idleMS > 86400000 {
-		idleMS = 30000
-	}
-	count, _ := strconv.ParseInt(r.URL.Query().Get("count"), 10, 64)
-	if count < 1 || count > 100 {
-		count = 10
-	}
-	messages, start, err := s.redis.XAutoClaim(r.Context(), &redis.XAutoClaimArgs{Stream: "testagram:queue:" + queue, Group: group, Consumer: consumer, MinIdle: time.Duration(idleMS) * time.Millisecond, Start: "0-0", Count: count}).Result()
-	if err != nil {
-		http.Error(w, "queue unavailable", 503)
-		return
-	}
-	writeJSON(w, map[string]any{"messages": messages, "next_start": start})
-}
-
 func (s *server) configSet(w http.ResponseWriter, r *http.Request) {
 	if !s.authorize(w, r) {
 		return
@@ -343,6 +117,7 @@ func (s *server) configSet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "database unavailable", 503)
 		return
 	}
+	s.configWrites.Add(1)
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -364,6 +139,7 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "database unavailable", 503)
 		return
 	}
+	s.eventsStored.Add(1)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -385,6 +161,7 @@ func (s *server) audit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "database unavailable", 503)
 		return
 	}
+	s.auditWrites.Add(1)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -430,12 +207,6 @@ func validKey(s string) bool {
 		}
 	}
 	return true
-}
-func max64(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
 }
 func required(k string) string {
 	v := strings.TrimSpace(os.Getenv(k))
