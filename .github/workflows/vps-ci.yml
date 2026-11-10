@@ -77,6 +77,7 @@ jobs:
           python scripts/validate-platform-openapi.py
           bash -n vps/install.sh
           bash -n scripts/install-local-docker.sh
+          sh -n scripts/migrate-data-centre.sh
           bash -n android-node/install-apk.sh
           test -f vps/docker-compose.yml
           test -f backend/docker-compose.yml
@@ -206,6 +207,7 @@ jobs:
           export PLATFORM_INTERNAL_TOKEN=ci-platform-internal-token
           export TESTAGRAM_NETWORK=testagram-platform
           docker compose -f backend/docker-compose.yml up -d platform video notification worker
+          docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine sh -c 'count="$(psql -h testagram-postgres -U postgres -d postgres -Atqc "SELECT count(*) FROM public.testagram_data_centre_schema_migrations")"; test "$count" = "8"'
           for i in $(seq 1 30); do
             docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz >/dev/null 2>&1 && break
             sleep 2
