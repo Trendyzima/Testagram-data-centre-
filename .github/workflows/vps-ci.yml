@@ -220,7 +220,7 @@ jobs:
           for migration in backend-source/migrations/*.sql; do
             docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < "$migration"
           done
-          docker exec testagram-postgres psql -U postgres -d testagram -Atqc "SELECT to_regclass('testagram_local.federation_outbox') IS NOT NULL" -d testagram | grep -qx t
+          docker exec testagram-postgres psql -U postgres -d testagram -Atqc "SELECT to_regclass('testagram_local.federation_outbox') IS NOT NULL AND to_regclass('testagram_local.communication_outbox') IS NOT NULL" | grep -qx t
           docker build -f backend-source/Dockerfile -t testagram-backend-ci backend-source
           export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram
           export VIDEO_JWT_SECRET=ci-test-jwt-secret
