@@ -43,8 +43,20 @@ outboxes and idempotent workers.
   on the stable private `testagram-platform` and `testagram-egress` networks.
 - Start the Backend repository's self-hosted Compose stack first. It owns local
   PostgreSQL, MinIO, the public Caddy edge and creates the shared networks.
-  The Data Centre overlay connects to the same PostgreSQL identity bridge and
-  canonical database; it does not start a second database or reverse proxy.
+  The Data Centre overlay connects to that same PostgreSQL database; it does
+  not start a second database or reverse proxy.
+- Before starting Data Centre services, run its checksummed, forward-only
+  migration runner against the Backend-owned database. It records each applied
+  SQL file and refuses to silently reuse a migration whose contents changed.
+- From the Data Centre repository root, with `backend/.env` configured:
+
+```sh
+docker compose --env-file backend/.env -f backend/docker-compose.yml config
+docker compose --env-file backend/.env -f backend/docker-compose.yml run --rm migrate
+docker compose --env-file backend/.env -f backend/docker-compose.yml up -d --build
+docker compose --env-file backend/.env -f backend/docker-compose.yml ps
+```
+
 - `vps/docker-compose.fresh.yml` remains a separate Appwrite/Neon/B2/R2
   preview and is not the portable deployment path. Use the Backend base stack
   plus this repository's `backend/docker-compose.yml` overlay for the
