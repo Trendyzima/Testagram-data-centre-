@@ -68,6 +68,10 @@ jobs:
           ref: main
           path: backend-source
           persist-credentials: false
+      - name: Verify canonical Backend Federation schema contract
+        run: |
+          test -f backend-source/migrations/20261110_federation_outbox.sql
+          grep -q 'testagram_local.federation_outbox' backend-source/internal/federationoutbox/store.go
       - uses: actions/setup-go@v7
         with:
           go-version: "1.23"
@@ -216,6 +220,7 @@ jobs:
           for migration in backend-source/migrations/*.sql; do
             docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < "$migration"
           done
+          docker exec testagram-postgres psql -U postgres -d testagram -Atqc "SELECT to_regclass('testagram_local.federation_outbox') IS NOT NULL" -d testagram | grep -qx t
           docker build -f backend-source/Dockerfile -t testagram-backend-ci backend-source
           export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram
           export VIDEO_JWT_SECRET=ci-test-jwt-secret
