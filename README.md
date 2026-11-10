@@ -1,158 +1,77 @@
-# Testagram-data-centre-
+# Testagram Data Centre
 
-## Android APK — build, verify, download
+The Data Centre owns Testagram's storage nodes, media processing, notification
+delivery, VPS/control-plane operations, backups and infrastructure services.
 
-GitHub Actions builds the Android node on every relevant push/PR and stores the APK as the **testagram-android-node** artifact.
+## Android storage node
 
-**Download the latest APK:**  
+GitHub Actions builds the Android node on relevant pushes and pull requests.
+Download the latest successful `testagram-android-node` artifact from:
+
 https://github.com/Trendyzima/Testagram-data-centre-/actions/workflows/vps-ci.yml
 
-Open the latest successful run, scroll to **Artifacts**, and download **testagram-android-node**. GitHub requires read access to the repository to download workflow artifacts.
+The artifact contains debug/release APKs when signing secrets are configured,
+SHA-256 checksums and an optional ADB installer. A stable release signing key
+must be retained for updates; Play Protect behavior cannot be guaranteed.
 
-The package contains:
-- `TestagramNode-debug.apk` — CI/debug build for development and physical-device testing.
-- `TestagramNode-release.apk` — signed release build when the repository's Android signing secrets are configured.
-- SHA-256 checksum files for APK integrity verification.
-- `install-apk.sh` — optional USB/ADB installer.
+The Android node is storage-only. It uses a user-selected removable SD card,
+reports capacity/health, and does not transcode video on-device. FFmpeg runs on
+a separate Linux worker.
 
-### Play Protect / Android security hardening
+## Runtime ownership
 
-The Android node is built as a normal Android application with a stable package ID, current target SDK, minimal permissions, non-exported background services, no backup of app data, and cleartext network traffic disabled.
+- Appwrite issues client sessions. Video and notification APIs validate
+  Appwrite JWTs with the Appwrite Account API and resolve canonical Testagram
+  UUIDs through the shared PostgreSQL identity bridge.
+- PostgreSQL stores Data Centre platform configuration, audit/telemetry,
+  storage metadata and infrastructure control-plane state.
+- Object storage and node agents own byte placement, checksums, replicas and
+  capacity reporting.
+- Video API/worker own upload validation, FFmpeg processing and playback.
+- Notification API owns device registrations, preferences and delivery state.
+- The Backend remains the authority for product accounts, posts, privacy and
+  media-to-post authorization.
 
-The release pipeline supports a **stable release signing key** through GitHub Actions secrets:
+No Supabase, Redis/Valkey or Upstash runtime is required. Rate limits use
+PostgreSQL counters; durable asynchronous work uses service-owned PostgreSQL
+outboxes and idempotent workers.
 
-- `ANDROID_KEYSTORE_BASE64`
-- `ANDROID_KEYSTORE_PASSWORD`
-- `ANDROID_KEY_ALIAS`
-- `ANDROID_KEY_PASSWORD`
+## Deployment status
 
-Do **not** commit the keystore or passwords to the repository. The same signing key must be retained for future updates so Android can verify that updates come from the same signer.
+- `backend/docker-compose.yml` contains Data Centre platform, video,
+  notification and worker services. It expects the canonical Testagram
+  PostgreSQL database and Appwrite project configuration.
+- `vps/docker-compose.fresh.yml` is a separate Appwrite/Neon/B2/R2 deployment
+  preview. It is **not yet the portable self-hosted production stack** because
+  it still relies on external managed database/object-storage providers.
+- The Backend repository's self-hosted Compose stack provides local PostgreSQL
+  and MinIO. Consolidating the Data Centre services into that same portable
+  deployment, with one shared database and object-storage contract, remains a
+  release gate. Do not treat the two Compose stacks as one production system
+  until cross-repository deployment tests pass.
 
-A signed APK reduces distribution/integrity problems, but **no APK can truthfully be guaranteed to bypass Google Play Protect**. Play Protect independently scans apps from outside Google Play and can block apps it considers harmful. For official distribution, complete Google's developer verification and, where appropriate, distribute through Google Play/Play App Signing.
+## Backups and restore
 
-### Verify an APK before installing
+The VPS backup scripts currently cover the Data Centre infrastructure database
+and optional node-storage archive. They do not by themselves back up the
+Backend product database, all media objects, Federation state or Appwrite
+configuration. A full restore drill must include those systems before
+production recovery is declared ready.
 
-After downloading the artifact, verify its SHA-256 checksum against the included `.sha256` file.
-
-For an ADB installation:
-
-```bash
-adb install -r TestagramNode-release.apk
-```
-
-Or use the bundled installer:
-
-```bash
-bash install-apk.sh TestagramNode-release.apk
-```
-
-### Android phone setup
-
-After installation:
-
-1. Open **Testagram Node**.
-2. Select a mounted **removable SD card** in the Android folder picker. Internal phone storage and cloud-provider folders are rejected.
-3. Confirm the card's detected capacity and complete the write/read/delete verification test.
-4. Configure the Testagram control-plane URL, bootstrap token, node name and media signing secret.
-5. Turn Node B **ON**.
-6. Confirm heartbeats report the selected SD card's total/free bytes and removable-card identity.
-7. Node B runs in storage-only mode. On-device video transcoding is disabled; video processing must run on a separate server/worker.
-
-Android is the local media/storage node. The Linux Docker host runs the Testagram Backend and Data Centre control-plane services. Supabase is retired and is not part of the fresh runtime.
-
-## Docker VPS quick install
-
-On a Linux host with Docker Engine, Docker Compose v2 and Git:
-
-```bash
-bash scripts/install-local-docker.sh
-```
-
-The installer copies the fresh Appwrite/Neon/B2/R2 template to `vps/fresh.env` when needed and stops. Fill in real secrets and immutable image digests before rerunning it.
-
-Check the stack:
-
-```bash
-docker compose --env-file /opt/testagram/vps/fresh.env -f /opt/testagram/vps/docker-compose.yml ps
-```
-
-## Encrypted off-host backups and restore drills
-
-The Data Centre includes operator-run scripts for an encrypted Data Centre infrastructure database backup, optional mounted node-storage backup, and an isolated non-production restore drill. This is not a backup of the Neon social database, Federation database or B2/R2 media objects.
-
-Before using them:
-- Install `pg_dump` (PostgreSQL client), Docker Engine (for the isolated restore drill), `age`, `rsync`, `tar`, `flock`, `sha256sum` and Git.
-- Configure SSH key authentication and verify the backup host key in `known_hosts`; the script intentionally does not disable SSH host-key checking.
-- Set `TESTAGRAM_BACKUP_REMOTE=user@backup-host:/absolute/path` and `TESTAGRAM_BACKUP_AGE_RECIPIENT=age1...` in the operator's environment.
-- Set `TESTAGRAM_FRESH_ENV_FILE` to `vps/fresh.env` (the default) and optionally set `TESTAGRAM_STORAGE_ROOT` to a mounted local node-storage root.
-- The script takes a consistent PostgreSQL dump of the Data Centre infrastructure database. Coordinate a quiet period or filesystem snapshot if including a node-storage directory; the script does not stop node writers.
-- Store the age private identity separately from the VPS and backup host.
-
-Run the backup from the checked-out deployment repository:
-
-```bash
-sudo --preserve-env=TESTAGRAM_BACKUP_REMOTE,TESTAGRAM_BACKUP_AGE_RECIPIENT,TESTAGRAM_FRESH_ENV_FILE,TESTAGRAM_STORAGE_ROOT \
-  bash vps/backup.sh
-```
-
-For a restore drill, obtain the encrypted `.tar.gz.age` artifact and its `.sha256` sidecar, then use the separately held age identity and the exact approved PostgreSQL image digest used by the deployment:
-
-```bash
-TESTAGRAM_BACKUP_AGE_IDENTITY_FILE=/secure/off-host-age-identity.txt \
-TESTAGRAM_RESTORE_POSTGRES_IMAGE='postgres:17-alpine@sha256:REPLACE_WITH_APPROVED_DIGEST' \
-  bash vps/restore-drill.sh /secure/backup/testagram-YYYYMMDDTHHMMSSZ.tar.gz.age
-```
-
-The restore drill verifies the ciphertext checksum, decrypts the archive, optionally validates the local node-storage tar, restores the Data Centre PostgreSQL dump into a network-isolated temporary container, and checks for expected Data Centre tables. It does **not** prove full login, upload, private-media, or playback recovery, and it does not by itself measure RPO/RTO. Record the drill date, artifact ID, elapsed restore time, and application-level E2E results before declaring disaster recovery ready.
-
-## Forensic E2E gate
+## Forensic end-to-end gate
 
 The required physical path remains:
 
-**real Android storage → real MP4 upload → Android local media server → real FFmpeg HLS → reachable Testagram frontend → actual playback**
+**real Android storage → real MP4 upload → signed object transfer → real FFmpeg HLS → reachable Testagram API/frontend → actual playback**
 
-That gate is not marked green until a physical device supplies evidence for every hop.
+Do not mark the path complete until a physical device supplies evidence for
+every hop.
 
+## Architecture references
 
-## Testagram platform architecture
-
-- [Service catalogue, APIs, health checks, and migration gates](docs/platform/service-catalog.md)
-- [Self-sustaining domains, deployment, compute, performance, and recovery plan](docs/platform/self-sustaining-operations.md)
+- [Service catalogue](docs/platform/service-catalog.md)
+- [Self-sustaining operations and recovery plan](docs/platform/self-sustaining-operations.md)
 - [Internal platform OpenAPI contract](docs/platform/openapi/internal-platform.yaml)
-- [Authenticated hosting control plane API](docs/platform/openapi/hosting-control-plane.yaml)
-- [Hosting control plane implementation boundaries](docs/platform/service-catalog.md#hosting-control-plane-implementation-boundary)
-- [Provider-independent internal platform client](internal/platformclient/client.go)
-
-The platform rebrand preserves compatibility with the existing runtime paths and Compose identity. It does not itself migrate production authentication, database policies, media, or traffic.
-
-
-## Fresh Appwrite runtime
-
-The clean runtime is defined separately in `vps/docker-compose.fresh.yml` and
-`vps/FRESH-DEPLOYMENT.md`. It runs the dedicated fresh Backend API, private
-Algorithm ranker, private Federation service, Data Centre infrastructure
-control plane and Caddy edge without attaching legacy services or starting the
-legacy Backend API. Supabase is retired and is not part of this architecture.
-
-The five-repository ownership boundary is:
-
-- [XClone](https://github.com/Trendyzima/XClone-9b4dz1-9b4dz1-8936-20260809tr): web/mobile UI and presentation only.
-- [Testagram Backend](https://github.com/Trendyzima/Testagram-backend-): canonical Appwrite identity, accounts, posts, social graph, permissions, visibility and API orchestration.
-- [Federated Content](https://github.com/Trendyzima/federated-content): ActivityPub protocol state, signed ingress, actor discovery and asynchronous federation processing.
-- [the-algorithm](https://github.com/Trendyzima/the-algorithm): private ranking and recommendation scoring; Backend remains the authorization authority.
-- **Data Centre (this repository)**: deployment, private networking, node-level storage, provider configuration, backups and recovery. Backend owns the actual B2/R2 media lifecycle and replica verification.
-
-Federation now has PostgreSQL-backed actor/inbox/outbox state, signed inbox verification,
-safe remote-key resolution and a private Backend identity/readiness contract. It is
-still not a complete federation product: inbox activity application, Backend outbox
-polling, outbound delivery workers, follower fan-out and end-to-end interoperability
-tests remain unfinished. Keep it private and do not enable public ActivityPub
-routing until those gates pass.
-
-Keep `FRESH_MEDIA_ENABLED=false` until Backblaze B2 (durable primary),
-Cloudflare R2 (verified delivery/replica), Appwrite metadata collections and
-independent restore tests are staged and verified. See
-[Media storage architecture](docs/platform/media-storage-architecture.md). Retention remains disabled and dry-run.
-The fresh Compose file is a deployment foundation, not a production-readiness
-claim; media placement, replica recovery, federation workers and full
-cross-repository end-to-end tests remain release gates.
+- [Hosting control-plane OpenAPI contract](docs/platform/openapi/hosting-control-plane.yaml)
+- [Media storage architecture](docs/platform/media-storage-architecture.md)
+- [Fresh deployment preview](vps/FRESH-DEPLOYMENT.md)
