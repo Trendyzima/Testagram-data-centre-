@@ -4,7 +4,8 @@ info:
   version: 1.0.0
   description: >
     Contract for Testagram-owned platform primitives. Internal routes are service-to-service only.
-    Do not call them directly from browsers or mobile clients. The service exposes only PostgreSQL-backed configuration and telemetry/audit operations.
+    Do not call them directly from browsers or mobile clients. Auth, REST, storage, and realtime
+    APIs remain release-specific upstream-compatible contracts.
 servers:
   - url: http://platform:8095
     description: Private Docker network only
@@ -103,44 +104,6 @@ components:
       bearerFormat: opaque
       description: Private service token; rotate out of band and never ship to clients.
   schemas:
-      required: [value]
-      properties:
-        value: {type: string}
-      additionalProperties: false
-      required: [key, value, ttl_seconds]
-      properties:
-        key: {type: string, minLength: 1, maxLength: 160}
-        value: {type: string}
-        ttl_seconds: {type: integer, minimum: 1, maximum: 86400}
-      additionalProperties: false
-      required: [key, limit, window_seconds]
-      properties:
-        key: {type: string, minLength: 1, maxLength: 160}
-        limit: {type: integer, minimum: 1, maximum: 100000}
-        window_seconds: {type: integer, minimum: 1, maximum: 86400}
-      required: [allowed, count, remaining, retry_after_seconds]
-      properties:
-        allowed: {type: boolean}
-        count: {type: integer}
-        remaining: {type: integer}
-        retry_after_seconds: {type: integer}
-      additionalProperties: false
-      required: [queue, payload]
-      properties:
-        queue: {type: string, minLength: 1, maxLength: 160}
-        payload:
-          type: object
-          additionalProperties: {type: string}
-      required: [id]
-      properties:
-        id: {type: string}
-      additionalProperties: false
-      required: [queue, group, consumer]
-      properties:
-        queue: {type: string, minLength: 1, maxLength: 160}
-        group: {type: string, minLength: 1, maxLength: 160}
-        consumer: {type: string, minLength: 1, maxLength: 160}
-        count: {type: integer, minimum: 1, maximum: 100, default: 10}
     FeatureFlagSet:
       type: object
       additionalProperties: false
