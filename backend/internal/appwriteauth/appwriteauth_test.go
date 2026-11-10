@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 )
@@ -62,10 +61,14 @@ func TestFetchAccountDoesNotFollowRedirects(t *testing.T) {
 		_, _ = w.Write([]byte(`{"$id":"user_123","status":true}`))
 	}))
 	defer destination.Close()
-	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Redirect(w, nil, destination.URL, http.StatusTemporaryRedirect)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, destination.URL, http.StatusTemporaryRedirect)
 	}))
-	_ = origin
-	_ = strings.TrimSpace
-	_ = destinationCalled
+	defer origin.Close()
+	if _, err := fetchAccount(context.Background(), origin.URL, "test-project", "session-jwt"); err == nil {
+		t.Fatal("expected redirect response to be rejected")
+	}
+	if destinationCalled {
+		t.Fatal("Appwrite JWT was forwarded through a redirect")
+	}
 }
