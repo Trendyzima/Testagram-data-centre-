@@ -10,14 +10,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/Trendyzima/Testagram-data-centre-/backend/internal/appwriteauth"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type service struct {
 	db       *pgxpool.Pool
-	jwtKey   []byte
+	appwriteEndpoint string
+	appwriteProject  string
 	internal string
 }
 
@@ -45,14 +46,13 @@ type deviceInput struct {
 func main() {
 	ctx := context.Background()
 	dsn := mustEnv("DATABASE_URL")
-	jwtSecret := mustEnv("NOTIFICATION_JWT_SECRET")
 	internal := mustEnv("NOTIFICATION_INTERNAL_TOKEN")
 	db, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	s := &service{db: db, jwtKey: []byte(jwtSecret), internal: internal}
+	s := &service{db: db, appwriteEndpoint: mustEnv("APPWRITE_ENDPOINT"), appwriteProject: mustEnv("APPWRITE_PROJECT_ID"), internal: internal}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
@@ -219,17 +219,10 @@ func (s *service) user(r *http.Request) (string, bool) {
 	if raw == "" {
 		return "", false
 	}
-	token, err := jwt.Parse(raw, func(t *jwt.Token) (any, error) {
-		if t.Method.Alg() != "HS256" {
-			return nil, errors.New("algorithm rejected")
-		}
-		return s.jwtKey, nil
-	})
-	if err != nil || !token.Valid {
-		return "", false
-	}
-	sub, err := token.Claims.GetSubject()
-	return sub, err == nil && sub != ""
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	userID, err := appwriteauth.ResolveUserID(ctx, s.db, s.appwriteEndpoint, s.appwriteProject, raw)
+	return userID, err == nil
 }
 
 func bearer(r *http.Request) string {
