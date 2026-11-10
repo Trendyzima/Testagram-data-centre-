@@ -217,6 +217,9 @@ jobs:
           done
           docker exec testagram-postgres pg_isready -U postgres -d postgres
           docker exec testagram-postgres createdb -U postgres testagram
+          # Backend migrations grant privileges to the application role. Provision it in the
+          # clean CI database before applying the canonical Backend migrations.
+          docker exec testagram-postgres psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'DO $role$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ''testagram_app'') THEN CREATE ROLE testagram_app NOLOGIN; END IF; END $role$;'
           for migration in backend-source/migrations/*.sql; do
             docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < "$migration"
           done
