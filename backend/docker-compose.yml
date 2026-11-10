@@ -49,7 +49,9 @@ services:
       FEDERATION_OUTBOX_POLLER_ENABLED: ${FEDERATION_OUTBOX_POLLER_ENABLED:-false}
       FEDERATION_INBOX_WORKER_ENABLED: ${FEDERATION_INBOX_WORKER_ENABLED:-false}
     expose: ["8081"]
-    networks: [platform]
+    networks:
+      platform:
+        aliases: [federation]
     healthcheck:
       test: ["CMD", "/federation-api", "--healthcheck"]
       interval: 10s
