@@ -2,6 +2,21 @@
 set -eu
 
 : "${DATABASE_URL:?DATABASE_URL must point at the Backend-owned PostgreSQL database}"
+federation_database_name="${FEDERATION_DATABASE_NAME:-testagram_federation}"
+case "$federation_database_name" in
+  ""|*[!A-Za-z0-9_]* )
+    echo "FEDERATION_DATABASE_NAME must contain only letters, digits and underscores" >&2
+    exit 1
+    ;;
+esac
+
+# Federation protocol state has a separate database on the same self-hosted PostgreSQL
+# server. This isolates protocol tables without adding a second database provider.
+federation_database_exists=$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc "SELECT 1 FROM pg_database WHERE datname = '$federation_database_name'")
+if [ "$federation_database_exists" != "1" ]; then
+  echo "Creating Federation database: $federation_database_name"
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$federation_database_name\""
+fi
 
 migration_table='public.testagram_data_centre_schema_migrations'
 
