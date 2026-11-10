@@ -6,6 +6,6 @@ It provides creator channels, direct upload, asynchronous local FFmpeg processin
 
 No managed video platform, CDN, or media SaaS is required.
 
-Authentication accepts Supabase legacy HS256 session JWTs when VIDEO_JWT_SECRET matches the legacy JWT secret. For asymmetric Supabase signing keys, the edge/auth layer should verify the Supabase JWKS and pass authenticated traffic to this service; the service never stores a private signing key.
+Authentication accepts Appwrite session JWTs only. The service validates each JWT against the configured Appwrite Account endpoint and resolves the Appwrite user ID through `testagram_identity.appwrite_accounts` to the canonical Testagram UUID. Unknown or unlinked identities fail closed. No Supabase JWT secret, local JWT decoding, or legacy authentication fallback is supported.
 
 PostgreSQL stores metadata and durable jobs. Video bytes stay on Testagram-owned VPS/node storage.
