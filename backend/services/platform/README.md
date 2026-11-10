@@ -1,14 +1,16 @@
 # Testagram Platform Core
 
-Testagram-owned internal platform layer for cache, queues, rate limiting, feature configuration and platform telemetry.
+Testagram-owned internal platform layer for feature configuration and platform telemetry/audit records.
 
-- Valkey-backed TTL cache.
-- Atomic fixed-window rate limiting.
-- Durable Redis Streams queues with consumer groups.
-- Public, non-secret feature configuration backed by PostgreSQL.
-- Prometheus-compatible counters.
-- Readiness checks for both PostgreSQL and Valkey.
+- PostgreSQL-backed public, non-secret feature configuration.
+- PostgreSQL-backed event and audit records.
+- Prometheus-compatible write counters.
+- Readiness checks against PostgreSQL only.
 
-The service is private-network only. Internal endpoints require `Authorization: Bearer $PLATFORM_INTERNAL_TOKEN`.
+The service is private-network only. Internal endpoints require
+`Authorization: Bearer $PLATFORM_INTERNAL_TOKEN`.
 
-Queue delivery is at-least-once. Consumers must be idempotent and acknowledge only after successful processing.
+This service intentionally has no cache, Redis/Valkey, Upstash, or queue dependency.
+Durable asynchronous work is owned by the service that owns the corresponding
+transactional outbox and uses PostgreSQL-backed leases there; do not add a generic
+cache or queue abstraction as a substitute.
