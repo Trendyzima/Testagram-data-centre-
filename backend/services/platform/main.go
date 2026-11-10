@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -191,7 +192,11 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	defer r.Body.Close()
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
-	return d.Decode(v) == nil
+	if err := d.Decode(v); err != nil {
+		return false
+	}
+	var trailing any
+	return d.Decode(&trailing) == io.EOF
 }
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
