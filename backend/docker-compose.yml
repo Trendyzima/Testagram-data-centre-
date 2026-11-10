@@ -16,18 +16,6 @@ services:
         condition: service_healthy
     networks: [edge, internal]
 
-  redis:
-    image: valkey/valkey:8
-    restart: unless-stopped
-    command: ["valkey-server", "--appendonly", "yes"]
-    volumes: [redis_data:/data]
-    networks: [internal]
-    healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
   platform:
     build:
       context: ..
@@ -35,13 +23,9 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      REDIS_URL: redis://redis:6379/0
       PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN}
       PLATFORM_ADDR: :8095
     networks: [internal, platform]
-    depends_on:
-      redis:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8095/readyz"]
       interval: 10s
@@ -126,4 +110,3 @@ networks:
 volumes:
   edge_data:
   edge_config:
-  redis_data:
