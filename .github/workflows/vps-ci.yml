@@ -230,7 +230,7 @@ jobs:
             -e DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram?sslmode=disable \
             -e APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1 -e APPWRITE_PROJECT_ID=ci-project \
             -e ALGORITHM_URL=http://algorithm:8092 -e ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough \
-            -e FEDERATION_INTERNAL_URL=http://federation-api:8081 -e FEDERATION_INTERNAL_TOKEN=ci-federation-internal-token-long-enough \
+            -e FEDERATION_INTERNAL_URL=http://federation:8081 -e FEDERATION_INTERNAL_TOKEN=ci-federation-internal-token-long-enough \
             testagram-backend-ci
           for i in $(seq 1 30); do
             docker exec testagram-api wget -q -O - http://127.0.0.1:8080/readyz >/dev/null 2>&1 && break
