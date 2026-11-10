@@ -21,7 +21,7 @@ services:
     restart: unless-stopped
     environment:
       FRESH_API_ADDR: :8081
-      FRESH_API_ALLOWED_ORIGINS: ${FRESH_API_ALLOWED_ORIGINS:?Set exact HTTPS XClone origins}
+      FRESH_API_ALLOWED_ORIGINS: ${FRESH_API_ALLOWED_ORIGINS:?Set exact HTTPS Flutter/web client origins}
       APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:?Set the fresh Appwrite endpoint}
       APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:?Set the fresh Appwrite project ID}
       APPWRITE_DATABASE_ID: ${APPWRITE_DATABASE_ID:?Set the fresh Appwrite database ID}
