@@ -17,6 +17,11 @@ jobs:
       CADDY_IMAGE: caddy:2.10-alpine
       POSTGRES_CLIENT_IMAGE: postgres:17-alpine
       DATA_CENTRE_DATABASE_URL: postgresql://postgres:testagram@db:5432/data_centre?sslmode=disable
+      # Compose validation fixtures for the independent Data Centre service stack.
+      DATABASE_URL: postgresql://postgres:testagram@db:5432/postgres?sslmode=disable
+      PLATFORM_INTERNAL_TOKEN: ci-platform-internal-token-long-enough
+      VIDEO_SIGNING_SECRET: ci-video-signing-secret-at-least-32-bytes
+      NOTIFICATION_INTERNAL_TOKEN: ci-notification-internal-token-long-enough
       APPWRITE_ENDPOINT: https://cloud.appwrite.io/v1
       APPWRITE_PROJECT_ID: ci-project
       APPWRITE_DATABASE_ID: ci-database
