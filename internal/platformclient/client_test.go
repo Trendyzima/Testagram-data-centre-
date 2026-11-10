@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -145,9 +146,11 @@ func TestPlatformAPIRejectsOversizedRequestBeforeNetworkCall(t *testing.T) {
 		called = true
 		w.WriteHeader(http.StatusNoContent)
 	})
-	_, err := client.Enqueue(context.Background(), "events", map[string]string{
-		"payload": strings.Repeat("x", 1<<20),
-	})
+	payload := make(map[string]string, 100)
+	for i := 0; i < 100; i++ {
+		payload[fmt.Sprintf("field_%03d", i)] = strings.Repeat("x", 12<<10)
+	}
+	_, err := client.Enqueue(context.Background(), "events", payload)
 	if err == nil || !strings.Contains(err.Error(), "exceeds 1 MiB") {
 		t.Fatalf("expected oversized request rejection, got %v", err)
 	}
