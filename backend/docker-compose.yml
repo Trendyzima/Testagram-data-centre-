@@ -1,37 +1,6 @@
-name: testagram-backend
+name: testagram-data-centre
 
 services:
-  edge:
-    image: caddy:2.10
-    restart: unless-stopped
-    ports: ["80:80", "443:443"]
-    volumes:
-      - ./runtime/Caddyfile:/etc/caddy/Caddyfile:ro
-      - edge_data:/data
-      - edge_config:/config
-    depends_on:
-      video:
-        condition: service_healthy
-      platform:
-        condition: service_healthy
-    networks: [edge, internal]
-
-  platform:
-    build:
-      context: ..
-      dockerfile: backend/services/platform/Dockerfile
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
-      PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN}
-      PLATFORM_ADDR: :8095
-    networks: [internal, platform]
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8095/readyz"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-
   video:
     build:
       context: ..
@@ -48,7 +17,7 @@ services:
       VIDEO_MIN_FREE_BYTES: ${VIDEO_MIN_FREE_BYTES:-2147483648}
     volumes:
       - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/media:/media
-    networks: [internal, platform]
+    networks: [internal, platform, egress]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8790/readyz"]
       interval: 10s
@@ -79,7 +48,7 @@ services:
       APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID}
       NOTIFICATION_INTERNAL_TOKEN: ${NOTIFICATION_INTERNAL_TOKEN}
       NOTIFICATION_ADDR: :8090
-    networks: [internal, platform]
+    networks: [internal, platform, egress]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8090/readyz"]
       interval: 10s
@@ -102,13 +71,11 @@ services:
       retries: 6
 
 networks:
-  edge:
   internal:
     internal: true
   platform:
     external: true
     name: ${TESTAGRAM_NETWORK:-testagram-platform}
-
-volumes:
-  edge_data:
-  edge_config:
+  egress:
+    external: true
+    name: ${TESTAGRAM_EGRESS_NETWORK:-testagram-egress}
