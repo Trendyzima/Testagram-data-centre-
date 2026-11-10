@@ -5,12 +5,57 @@ services:
     image: postgres:17-alpine
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
+      FEDERATION_DATABASE_NAME: ${FEDERATION_DATABASE_NAME:-testagram_federation}
     volumes:
       - ../migrations:/migrations:ro
       - ../scripts/migrate-data-centre.sh:/scripts/migrate-data-centre.sh:ro
     entrypoint: ["/bin/sh", "/scripts/migrate-data-centre.sh"]
     restart: "no"
     networks: [platform]
+
+  algorithm:
+    image: ${TESTAGRAM_ALGORITHM_IMAGE:?Set TESTAGRAM_ALGORITHM_IMAGE to a published immutable image tag}
+    restart: unless-stopped
+    environment:
+      HTTP_ADDR: :8092
+      INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:?Set ALGORITHM_INTERNAL_TOKEN in backend/.env}
+    expose: ["8092"]
+    networks: [platform]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8092/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+  federation-api:
+    image: ${TESTAGRAM_FEDERATION_IMAGE:?Set TESTAGRAM_FEDERATION_IMAGE to a published immutable image tag}
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      APP_ENV: production
+      HTTP_ADDR: :8081
+      PUBLIC_BASE_URL: ${FEDERATION_PUBLIC_BASE_URL:-https://federation.testagram.site}
+      INSTANCE_DOMAIN: ${FEDERATION_INSTANCE_DOMAIN:-testagram.site}
+      SERVICE_ACTOR_USERNAME: ${FEDERATION_SERVICE_ACTOR_USERNAME:-testagram}
+      SERVICE_ACTOR_NAME: Testagram
+      SERVICE_ACTOR_SUMMARY: Testagram federated social network
+      FEDERATION_DATABASE_URL: ${FEDERATION_DATABASE_URL:?Set FEDERATION_DATABASE_URL in backend/.env}
+      BACKEND_INTERNAL_URL: http://api:8080
+      BACKEND_INTERNAL_TOKEN: ${FEDERATION_INTERNAL_TOKEN:?Set FEDERATION_INTERNAL_TOKEN in backend/.env}
+      FEDERATION_DELIVERY_WORKER_ENABLED: ${FEDERATION_DELIVERY_WORKER_ENABLED:-false}
+      FEDERATION_OUTBOX_POLLER_ENABLED: ${FEDERATION_OUTBOX_POLLER_ENABLED:-false}
+      FEDERATION_INBOX_WORKER_ENABLED: ${FEDERATION_INBOX_WORKER_ENABLED:-false}
+    expose: ["8081"]
+    networks: [platform]
+    healthcheck:
+      test: ["CMD", "/federation-api", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
 
   platform:
     build:
