@@ -19,20 +19,20 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/Trendyzima/Testagram-data-centre-/backend/internal/appwriteauth"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type server struct {
 	db                *pgxpool.Pool
 	mediaDir          string
-	jwtKey            []byte
+	appwriteEndpoint  string
+	appwriteProject   string
 	signKey           []byte
 	uploadSlots       chan struct{}
 	accountQuotaBytes int64
 	minFreeBytes      int64
 }
-type claims struct{ jwt.RegisteredClaims }
 type channelInput struct {
 	Handle      string `json:"handle"`
 	Name        string `json:"name"`
@@ -54,7 +54,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	s := &server{db: db, mediaDir: mediaDir, jwtKey: []byte(mustEnv("VIDEO_JWT_SECRET")), signKey: []byte(mustEnv("VIDEO_SIGNING_SECRET")), uploadSlots: make(chan struct{}, 2), accountQuotaBytes: accountQuotaBytes, minFreeBytes: minFreeBytes}
+	s := &server{db: db, mediaDir: mediaDir, appwriteEndpoint: mustEnv("APPWRITE_ENDPOINT"), appwriteProject: mustEnv("APPWRITE_PROJECT_ID"), signKey: []byte(mustEnv("VIDEO_SIGNING_SECRET")), uploadSlots: make(chan struct{}, 2), accountQuotaBytes: accountQuotaBytes, minFreeBytes: minFreeBytes}
 	if len(s.signKey) < 32 {
 		log.Fatal("VIDEO_SIGNING_SECRET must be at least 32 bytes")
 	}
@@ -627,20 +627,10 @@ func (s *server) user(r *http.Request) (string, bool) {
 	if raw == "" {
 		return "", false
 	}
-	token, err := jwt.ParseWithClaims(raw, &claims{}, func(t *jwt.Token) (any, error) {
-		if t.Method.Alg() != "HS256" {
-			return nil, errors.New("algorithm rejected")
-		}
-		return s.jwtKey, nil
-	})
-	if err != nil || !token.Valid {
-		return "", false
-	}
-	sub, err := token.Claims.GetSubject()
-	if err != nil || sub == "" {
-		return "", false
-	}
-	return sub, true
+	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+	defer cancel()
+	userID, err := appwriteauth.ResolveUserID(ctx, s.db, s.appwriteEndpoint, s.appwriteProject, raw)
+	return userID, err == nil
 }
 func (s *server) sign(id string, exp time.Time) string {
 	mac := hmac.New(sha256.New, s.signKey)
