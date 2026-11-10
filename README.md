@@ -38,17 +38,18 @@ outboxes and idempotent workers.
 
 ## Deployment status
 
-- `backend/docker-compose.yml` contains Data Centre platform, video,
-  notification and worker services. It expects the canonical Testagram
-  PostgreSQL database and Appwrite project configuration.
-- `vps/docker-compose.fresh.yml` is a separate Appwrite/Neon/B2/R2 deployment
-  preview. It is **not yet the portable self-hosted production stack** because
-  it still relies on external managed database/object-storage providers.
-- The Backend repository's self-hosted Compose stack provides local PostgreSQL
-  and MinIO. Consolidating the Data Centre services into that same portable
-  deployment, with one shared database and object-storage contract, remains a
-  release gate. Do not treat the two Compose stacks as one production system
-  until cross-repository deployment tests pass.
+- `backend/docker-compose.yml` is the Data Centre production overlay. It deploys
+  the platform API, video API/worker, notification API and maintenance worker
+  on the stable private `testagram-platform` and `testagram-egress` networks.
+- Start the Backend repository's self-hosted Compose stack first. It owns local
+  PostgreSQL, MinIO, the public Caddy edge and creates the shared networks.
+  The Data Centre overlay connects to the same PostgreSQL identity bridge and
+  canonical database; it does not start a second database or reverse proxy.
+- `vps/docker-compose.fresh.yml` remains a separate Appwrite/Neon/B2/R2
+  preview and is not the portable deployment path. Use the Backend base stack
+  plus this repository's `backend/docker-compose.yml` overlay for the
+  PostgreSQL/MinIO deployment. End-to-end Compose, Appwrite and media restore
+  tests remain release gates.
 
 ## Backups and restore
 
