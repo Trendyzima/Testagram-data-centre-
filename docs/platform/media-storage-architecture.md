@@ -16,14 +16,14 @@ The Data Centre repository owns deployment, node registration/capacity, node-lev
 | Durable object store B | Cloudflare R2 | Stores a full verified copy of every protected object; supports direct R2 delivery through the private-media Worker |
 | Delivery | Cloudflare Worker + R2 binding | Authenticates short-lived media URLs and streams bytes/ranges from R2; not a separate storage copy |
 | Optional node replicas | Registered Android/Linux nodes | Additional verified copies or explicitly disposable caches; never the only copy |
-| Media metadata and quotas | Appwrite via Backend | Upload reservations, ownership, quotas, lifecycle and per-provider replica state |
+| Media metadata and quotas | Backend PostgreSQL (`testagram_media`) | Upload reservations, ownership, quotas, lifecycle and per-provider replica state; Appwrite is used for identity/session verification, not as the media ledger |
 
 B2 and R2 are independent object stores. Keep endpoints, regions, credentials and buckets separately configured; never reuse access keys. Use least-privilege credentials scoped to the required buckets and operations. Keep both buckets private.
 
 ## Upload and replication contract
 
-1. XClone requests an upload reservation from Backend. Backend authenticates the Appwrite session, authorizes owner and visibility, enforces quotas, and records a pending object plus quota reservation in Appwrite.
-2. Backend selects the configured upload origin (b2 or r2) and persists that choice in the reservation. It issues a short-lived, object-scoped upload authorization for that provider; provider credentials remain server-side.
+1. Flutter requests an upload reservation from the Backend. Backend verifies the Appwrite session, resolves the linked local account, authorizes owner and visibility, enforces quotas, and records the pending object plus quota reservation in its PostgreSQL `testagram_media` schema.
+2. Backend selects the configured upload origin (B2 or R2) and persists that choice in the PostgreSQL reservation. It issues a short-lived, object-scoped upload authorization for that provider; provider credentials remain server-side.
 3. The client uploads bytes directly to the selected provider. Backend verifies object existence, content type, byte length and the actual SHA-256 of the stored bytes.
 4. Backend copies the complete object from the selected origin into the peer provider using a bounded streaming transfer. It independently reads the replica back and verifies size, content type and SHA-256.
 5. Only after both storage providers are verified does Backend commit the protected media and two-provider replica ledger. An object is not ready merely because one upload succeeded.
@@ -36,7 +36,7 @@ This is a dual-object-storage design: B2 and R2 both retain the media bytes. R2 
 ## Object identity and security
 
 - Use opaque, non-user-controlled object keys; do not put email addresses or other personal data in bucket paths.
-- Store SHA-256, byte length, media type, owner, visibility, created time and per-provider verification state in the Appwrite media metadata ledger.
+- Store SHA-256, byte length, media type, owner, visibility, created time and per-provider verification state in the Backend PostgreSQL media metadata ledger.
 - Validate MIME type from file content, enforce upload size limits and reject path traversal or caller-supplied bucket/key overrides.
 - Keep buckets private. Use short-lived signed requests or Backend-proxied authorization; never expose S3 access keys to browsers, Android nodes or desktop nodes.
 - Encrypt transport with TLS. Keep provider secrets in the deployment secret store and rotate them independently.
@@ -67,7 +67,7 @@ The credentials are injected into Backend, not the node control plane. The Data 
 - Real B2 and R2 bucket access, upload, read-back, checksum and delete tests using isolated staging buckets (current provider unit tests are not live-account proof).
 - Crash/retry testing of the current synchronous B2-to-R2 completion path; durable outbox-driven replication, bounded retries and dead-letter recovery remain required before production scale.
 - Provider outage tests proving no unverified object is published and the surviving verified copy remains usable.
-- Reconciliation of Appwrite media/replica metadata with both provider buckets.
+- Reconciliation of PostgreSQL media/replica metadata with both provider buckets.
 - Android removable-SD and Linux node transfer tests with signed receipts; node-to-provider object transfer is not yet implemented.
 - Replica corruption, missing-object repair and restore-from-each-verified-copy tests.
 - Private-media authorization, CDN cache isolation and URL-expiry tests.
