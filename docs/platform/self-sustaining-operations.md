@@ -9,16 +9,16 @@ Testagram owns the control plane, application contracts, deployment definitions,
 Use three layers:
 
 - **Layer 1 — Testagram applications:** web/mobile, feed, federation, auth UX, media, notifications and business logic.
-- **Layer 2 — Testagram platform services:** identity boundary, API gateway, cache/rate limits, durable queues, object/media API, search, email, AI gateway, deployment controller, service registry, metrics and audit.
+- **Layer 2 — Testagram platform services:** identity boundary, API gateway, PostgreSQL rate limits, transactional outboxes, object/media API, search, email, AI gateway, deployment controller, service registry, metrics and audit.
 - **Layer 3 — infrastructure:** compute nodes, private networks, PostgreSQL, object disks, backups, TLS ingress and DNS.
 
-Each Layer 2 capability must have a versioned interface and provider adapter. Application code must not need to know whether cache is Valkey or Redis, object storage is filesystem or S3-compatible, email is local SMTP or a relay, or compute runs on the primary host or a registered worker node.
+Each Layer 2 capability must have a versioned interface and provider adapter. Application code must not depend on a cache/queue vendor; object storage may be filesystem or S3-compatible, email is local SMTP or a relay, or compute runs on the primary host or a registered worker node.
 
 ## 2. Domains and DNS without unnecessary subscriptions
 
 ### What can be self-hosted
 
-- Internal service discovery can use Docker's private service DNS (for example `platform`, `redis`, `video`) on private networks. These names must never be used as public URLs.
+- Internal service discovery can use Docker's private service DNS (for example `platform`, `video`) on private networks. These names must never be used as public URLs.
 - A Testagram-operated private zone such as `svc.testagram.internal` can be served by CoreDNS on the private network when clients/nodes are configured to use it. Keep zone data and configuration in version control, with secrets excluded.
 - Caddy can terminate TLS, route public hostnames to private services, renew certificates, and cache explicitly public immutable assets.
 - DNS zone exports, registrar recovery instructions, TLS expiry checks, and domain-to-service mapping should be stored and monitored by Testagram.
@@ -33,7 +33,7 @@ Keep the current public domain and DNS routing unchanged while testing. Before a
 
 ### Current foundation
 
-- `vps/docker-compose.yml` composes the Testagram control plane, platform API, media services, worker, Valkey and Caddy.
+- `vps/docker-compose.yml` composes the Testagram control plane, platform API, media services, worker and Caddy.
 - `backend/docker-compose.yml` defines reusable service implementations.
 - `testagram-platform/` wraps the upstream-compatible auth, REST, realtime and object storage runtime.
 - The platform client and OpenAPI contract define an internal service boundary.
@@ -46,7 +46,7 @@ These are building blocks, not proof that a zero-touch deployment, disaster reco
 2. Publish immutable images identified by commit SHA; do not deploy a floating `latest` tag.
 3. Validate configuration and secrets without printing them.
 4. Back up the database and object metadata before schema-changing releases; verify backup age and destination.
-5. Deploy to an isolated staging project and run synthetic sign-in, read/write, media upload/playback, queue recovery, and federation tests.
+5. Deploy to an isolated staging project and run synthetic sign-in, read/write, media upload/playback, PostgreSQL outbox recovery, and federation tests.
 6. Roll out one service group at a time. Use health/readiness checks and a bounded observation window.
 7. Stop rollout on a failed probe or elevated error rate. Roll back application images automatically only when database compatibility is known; otherwise require a migration-specific recovery plan.
 8. Record commit, image digests, schema version, health results and operator action in the audit log.
@@ -70,11 +70,11 @@ Optimize for the user's latency and reliability, not for the smallest container 
 
 - Keep internal service calls on private Docker networks; avoid public Internet hairpins between services on the same host.
 - Use PostgreSQL as the system of record, connection pooling where justified, query plans, appropriate indexes, bounded page sizes and keyset pagination for deep feeds.
-- Use Valkey only for disposable cache, rate-limit counters, coordination, and explicitly configured queue persistence. Cache misses must degrade safely; no authoritative user data may exist only in cache.
+- Use PostgreSQL-native rate-limit counters and the owning service's transactional outbox. Do not add Redis/Valkey, Upstash, cache wrappers or generic queue services.
 - Use asynchronous processing for video, thumbnails, email and expensive AI. Cap upload sizes, concurrent transcodes, output duration, retries and request timeouts.
 - Serve public immutable assets through Caddy/cache with correct cache headers. Do not cache authenticated API responses or private media.
 - Apply lazy loading and bounded pagination in clients; do not preload an infinite feed into memory.
-- Measure p50/p95/p99 latency, error rate, queue age, database pool saturation, cache hit ratio, CPU throttling, RSS, disk free space and backup age before tuning.
+- Measure p50/p95/p99 latency, error rate, outbox age, database pool saturation, CPU throttling, RSS, disk free space and backup age before tuning.
 
 ## 6. Durability and recovery
 
@@ -83,8 +83,8 @@ Optimize for the user's latency and reliability, not for the smallest container 
 | Users, credentials metadata, posts, permissions, job state | PostgreSQL and protected key material | Consistent backup, isolated restore, policy tests |
 | Original uploads and media | Durable object/filesystem storage plus metadata | Byte/object count and checksum verification |
 | Transcoded HLS, thumbnails, derived search index | Rebuildable artifacts | Rebuild from original plus durable job state |
-| Cache and ephemeral presence | Valkey/memory | Safe loss and refill |
-| Critical queues | Durable job record in PostgreSQL; queue is delivery mechanism | Reconcile pending jobs after restart; idempotent execution |
+| Rate-limit counters | PostgreSQL | Bounded retention and restore with the canonical database |
+| Critical asynchronous work | PostgreSQL transactional outbox | Reconcile pending rows after restart; idempotent execution |
 | Secrets, signing keys and encryption keys | Protected secret store/off-host encrypted escrow | Restricted recovery access and rotation drill |
 | DNS, deployment configuration and image digests | Versioned config and encrypted backup where secrets exist | Restore instructions tested away from primary host |
 
@@ -98,8 +98,8 @@ Maintain one inventory row per service with: owner, image digest, host/node, int
 - `/readyz`: dependency-aware readiness with short timeouts.
 - `/metrics`: private-network or authenticated access only.
 - All externally reachable routes terminate TLS and are rate limited.
-- PostgreSQL, Valkey, control-plane admin routes and internal platform APIs stay private.
-- Alert on certificate expiry, failed backups, restore-test age, disk pressure, repeated restarts, queue age, stale workers and readiness failures.
+- PostgreSQL, control-plane admin routes and internal platform APIs stay private.
+- Alert on certificate expiry, failed backups, restore-test age, disk pressure, repeated restarts, outbox age, stale workers and readiness failures.
 
 ## 8. What “self-sustaining” means in practice
 
@@ -112,7 +112,7 @@ Self-sustaining means Testagram can deploy, observe, recover, rotate, and replac
 - [ ] Actual application callers use the platform adapters; no unused facade is counted as integration.
 - [ ] Compose config renders from a clean host with documented environment variables.
 - [ ] No required secret has a default value; no secret is logged or committed.
-- [ ] Cold start, host reboot, database outage, cache loss, worker crash and disk-pressure tests pass.
+- [ ] Cold start, host reboot, database outage, outbox backlog, worker crash and disk-pressure tests pass.
 - [ ] Backup restore works on a separate host and object checksums match.
 - [ ] Auth, RLS, email-code, refresh/logout, upload, playback, delete and federation end-to-end flows pass.
 - [ ] Public DNS cutover and rollback are rehearsed without changing production during the test.
