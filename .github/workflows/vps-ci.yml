@@ -223,6 +223,10 @@ jobs:
             docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz >/dev/null 2>&1 && break
             sleep 2
           done
+          for i in $(seq 1 30); do
+            docker compose -f backend/docker-compose.yml exec -T algorithm wget -q -O - http://127.0.0.1:8092/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
           docker compose -f backend/docker-compose.yml exec -T algorithm wget -q -O - http://127.0.0.1:8092/readyz
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - http://127.0.0.1:8095/readyz
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"key":"ci:cache","value":"green","ttl_seconds":60}' http://127.0.0.1:8095/v1/cache/set
