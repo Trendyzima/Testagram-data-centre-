@@ -3,6 +3,7 @@ WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY backend/services/video ./backend/services/video
+COPY backend/internal/appwriteauth ./backend/internal/appwriteauth
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/video ./backend/services/video
 FROM alpine:3.22
 RUN addgroup -S testagram && adduser -S -G testagram -u 65532 testagram
