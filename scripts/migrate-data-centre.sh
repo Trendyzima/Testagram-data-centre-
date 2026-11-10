@@ -2,6 +2,23 @@
 set -eu
 
 : "${DATABASE_URL:?DATABASE_URL must point at the Backend-owned PostgreSQL database}"
+
+# The Backend Compose stack may have just started. Wait for its PostgreSQL
+# endpoint instead of making first deployment depend on operator timing.
+database_ready=0
+attempt=1
+while [ "$attempt" -le 60 ]; do
+  if psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null 2>&1; then
+    database_ready=1
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 2
+done
+if [ "$database_ready" -ne 1 ]; then
+  echo "Backend-owned PostgreSQL did not become ready within 120 seconds" >&2
+  exit 1
+fi
 federation_database_name="${FEDERATION_DATABASE_NAME:-testagram_federation}"
 case "$federation_database_name" in
   ""|*[!A-Za-z0-9_]* )
