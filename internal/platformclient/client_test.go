@@ -129,6 +129,33 @@ func TestRateLimitAndEnqueue(t *testing.T) {
 	}
 }
 
+func TestPlatformAPIRejectsOversizedResponse(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"value":"ok"}` + strings.Repeat(" ", 1<<20)))
+	})
+	if _, err := client.Get(context.Background(), "large"); err == nil || !strings.Contains(err.Error(), "exceeds 1 MiB") {
+		t.Fatalf("expected oversized response rejection, got %v", err)
+	}
+}
+
+func TestPlatformAPIRejectsOversizedRequestBeforeNetworkCall(t *testing.T) {
+	called := false
+	client := testClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+	_, err := client.Enqueue(context.Background(), "events", map[string]string{
+		"payload": strings.Repeat("x", 1<<20),
+	})
+	if err == nil || !strings.Contains(err.Error(), "exceeds 1 MiB") {
+		t.Fatalf("expected oversized request rejection, got %v", err)
+	}
+	if called {
+		t.Fatal("oversized request reached the platform API")
+	}
+}
+
 func TestNonSuccessReturnsStatusError(t *testing.T) {
 	client := testClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
