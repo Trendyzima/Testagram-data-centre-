@@ -1,11 +1,25 @@
 name: testagram-data-centre
 
 services:
+  migrate:
+    image: postgres:17-alpine
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
+    volumes:
+      - ../migrations:/migrations:ro
+      - ../scripts/migrate-data-centre.sh:/scripts/migrate-data-centre.sh:ro
+    entrypoint: ["/bin/sh", "/scripts/migrate-data-centre.sh"]
+    restart: "no"
+    networks: [platform]
+
   platform:
     build:
       context: ..
       dockerfile: backend/services/platform/Dockerfile
     restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
       PLATFORM_INTERNAL_TOKEN: ${PLATFORM_INTERNAL_TOKEN:?Set PLATFORM_INTERNAL_TOKEN in backend/.env}
@@ -22,6 +36,9 @@ services:
       context: ..
       dockerfile: backend/services/video/Dockerfile
     restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
       APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:?Set APPWRITE_ENDPOINT in backend/.env}
@@ -46,6 +63,9 @@ services:
       context: ..
       dockerfile: backend/services/video-worker/Dockerfile
     restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
       VIDEO_MEDIA_ROOT: /media
@@ -58,6 +78,9 @@ services:
       context: ..
       dockerfile: backend/services/notification/Dockerfile
     restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
       APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:?Set APPWRITE_ENDPOINT in backend/.env}
@@ -76,6 +99,9 @@ services:
       context: ..
       dockerfile: backend/services/worker/Dockerfile
     restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
       WORKER_ADDR: :8091
