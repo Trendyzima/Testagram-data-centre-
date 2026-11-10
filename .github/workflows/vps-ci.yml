@@ -14,7 +14,6 @@ jobs:
     env:
       # Test-only immutable-looking references allow Compose model rendering; CI never pulls these API/ranker placeholders.
       TESTAGRAM_BACKEND_IMAGE: ghcr.io/trendyzima/testagram-backend@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-      TESTAGRAM_ALGORITHM_IMAGE: ghcr.io/trendyzima/testagram-feed@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
       TESTAGRAM_ALGORITHM_IMAGE: ghcr.io/trendyzima/testagram-feed:sha-ca585b7fe40cb423d1c5d2f32eb8930ee9558949
       TESTAGRAM_FEDERATION_IMAGE: ghcr.io/trendyzima/testagram-federation:sha-8aa46c04532eab99d533709109c7f86d716cff36
       ALGORITHM_INTERNAL_TOKEN: ci-algorithm-internal-token-long-enough
@@ -45,10 +44,8 @@ jobs:
       FEDERATION_POSTGRES_IMAGE: postgres:17-alpine
       FEDERATION_DB_PASSWORD: ci-federation-db-password-only
       # Compose interpolation fixture only; CI does not connect Federation to this local URL.
-      FEDERATION_DATABASE_URL: postgresql://testagram_federation:ci-federation-db-password-only@localhost:5432/testagram_federation?sslmode=disable
       VPS_INTERNAL_TOKEN: ci-internal-token-for-ci-tests-32chars
       VPS_NODE_BOOTSTRAP_TOKEN: ci-bootstrap-token-for-ci-tests-32chars
-      ALGORITHM_INTERNAL_TOKEN: ci-algorithm-internal-token-long-enough
       TLS_ADMIN_EMAIL: ci@example.invalid
       # Local Postgres service for CI only; production uses Neon with TLS.
       TESTAGRAM_DATABASE_URL: postgresql://postgres:testagram@db:5432/postgres?sslmode=disable
