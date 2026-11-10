@@ -39,8 +39,10 @@ outboxes and idempotent workers.
 ## Deployment status
 
 - `backend/docker-compose.yml` is the Data Centre production overlay. It deploys
-  the platform API, video API/worker, notification API and maintenance worker
-  on the stable private `testagram-platform` and `testagram-egress` networks.
+  the Algorithm ranker, private Federation API, platform API, video API/worker,
+  notification API and maintenance worker on the stable private networks.
+  Algorithm and Federation stay private; public federation routing and delivery
+  workers remain disabled until their end-to-end production gates pass.
 - Start the Backend repository's self-hosted Compose stack first. It owns local
   PostgreSQL, MinIO, the public Caddy edge and creates the shared networks.
   The Data Centre overlay connects to that same PostgreSQL database; it does
