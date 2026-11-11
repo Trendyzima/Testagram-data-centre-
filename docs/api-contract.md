@@ -1,39 +1,49 @@
 # Testagram Data Centre API contract
 
-Data Centre owns infrastructure APIs only: runtime operations, private platform cache/rate-limit/queue adapters, node enrollment/health, storage capacity and physical replica operations. It is not the product API and never owns local user identity, posts, social graph, media ownership or user-facing authorization.
+Data Centre owns private infrastructure APIs, storage nodes, media processing, notification delivery, VPS/control-plane operations, backups and operations. It does not own product identity, posts, social graph, media ownership, privacy or user-facing authorization.
 
-## Current private platform API
-Private platform listener (default `:8095`), internal network only:
-- `GET /healthz`, `GET /readyz`, `GET /metrics`
-- `GET /v1/cache/get?key=...`
-- `POST /v1/cache/set`, `DELETE /v1/cache/delete?key=...`
-- `POST /v1/rate-limit/check`
-- `POST /v1/queue/enqueue`, `POST /v1/queue/claim`, `POST /v1/queue/ack`, `POST /v1/queue/reclaim`
-- `POST /v1/config/set`, `GET /v1/config/{key}`
-- `POST /v1/events`, `POST /v1/audit`
+## Implemented private platform API
 
-Every private operation requires the Data Centre platform bearer token. Do not publish the listener to the public Internet. Backend uses its typed `internal/platformclient`; browser clients never receive this credential.
+Private listener defaults to `:8095` and is attached to the private platform network.
+
+| Route | Method | Authentication | Implemented behavior |
+|---|---|---|---|
+| `/healthz` | GET | Private network | Process liveness |
+| `/readyz` | GET | Private network | PostgreSQL readiness |
+| `/metrics` | GET | Private network | Platform counters |
+| `/v1/config/set` | POST | Platform bearer token | Write a versioned feature/config flag |
+| `/v1/config/{key}` | GET | Public/private visibility is enforced by stored flag | Read an explicitly public config flag |
+| `/v1/events` | POST | Platform bearer token | Store bounded platform event metadata |
+| `/v1/audit` | POST | Platform bearer token | Store audit metadata |
+
+The current platform server does **not** register the previously documented cache, rate-limit, or queue routes. Do not build clients against `/v1/cache/*`, `/v1/rate-limit/*`, or `/v1/queue/*` until handlers, schemas, authentication, persistence and tests are implemented. The current Backend mainline also does not contain a verified typed Data Centre platform client.
 
 ## Media placement boundary
-Backend remains the authority for owner, visibility, quota, retention and lifecycle. Data Centre provides infrastructure placement/replica evidence only. A media placement is not durable until size and SHA-256 have been independently read back and verified. Include object ID, provider/node, object key, bytes, checksum, replica state, request ID and verification timestamp.
 
-The full authenticated Backend <-> Data Centre media placement/replica API is not yet implemented. Do not advertise planned reserve/replicate/repair routes as live. Until implemented and tested, Backend's configured storage adapter remains the active media path. Android Node B remains removable-SD-only and cannot be a sole durable copy.
+Backend remains authoritative for owner, visibility, quota, retention and lifecycle. Data Centre may provide infrastructure placement and replica evidence only. A placement is not durable until byte count and SHA-256 have been independently read back and verified. Evidence should include object ID, provider/node, object key, bytes, checksum, replica state, request ID and verification timestamp.
+
+The authenticated Backend <-> Data Centre media placement/replica API is not yet implemented. Do not advertise planned reserve/replicate/repair routes as live. Until that contract is implemented and tested, Backend's configured S3-compatible storage adapter remains the active media path. Android Node B is removable-SD storage and must not be treated as a sole durable copy.
+
+## Backend, Algorithm and Federation deployment wiring
+
+The current Backend self-hosted production Compose file builds `Dockerfile`, which runs `cmd/api`. That runtime expects:
+
+- `ALGORITHM_URL=http://algorithm:8092` and `ALGORITHM_INTERNAL_TOKEN`, matching Algorithm's `INTERNAL_TOKEN`.
+- `FEDERATION_INTERNAL_URL=http://federation-api:8081` and `FEDERATION_INTERNAL_TOKEN`, matching Federation's dedicated `FEDERATION_INGRESS_TOKEN`.
+- `FEDERATION_BACKEND_INTERNAL_TOKEN`, matching Federation's `BACKEND_INTERNAL_TOKEN`, for Federation -> Backend actor/readiness calls.
+
+These are two separate service credentials for the two directions. Do not reuse Appwrite user JWTs or expose any of these values to Flutter/browser builds.
+
+The separate `Dockerfile.fresh` / `cmd/fresh-api` runtime uses a different set of environment names and a different service wiring contract. Do not combine `ALGORITHM_ENDPOINT` / `FRESH_FEDERATION_INTERNAL_TOKEN` with the `cmd/api` deployment. Select one backend binary and configure its matching environment contract.
+
+The Data Centre overlay deploys Algorithm and Federation on the shared private platform network. Backend must be attached to that same network, and its private URLs must resolve there. Federation delivery, inbox and outbox-poller workers remain disabled by default; the Backend transactional outbox dispatcher is a separate controlled path and does not authorize enabling remote federation delivery.
 
 ## Security and operations
-- Private network plus per-service high-entropy credentials; rotate independently.
+
+- Keep the platform listener on the private network; never publish its port to the public Internet.
+- Use distinct high-entropy credentials per service direction and rotate them independently.
 - Bound payload sizes, timeouts, concurrency, queue claims and retry attempts.
-- Idempotent placement, verification and repair operations.
-- Never interpret missing heartbeat as proof of deletion.
-- Never delete media or reclaim quota without Backend-authorized lifecycle command and independent replica checks.
-- Keep node credentials, provider keys and storage secrets out of XClone and logs.
-
-
-## Fresh API private-service wiring
-
-The deployed Fresh Backend image is built from `Dockerfile.fresh` and runs `cmd/fresh-api`. Its service contract is different from the legacy `cmd/api` binary:
-
-- Algorithm ranking: `ALGORITHM_ENDPOINT=http://algorithm:8092` plus `ALGORITHM_INTERNAL_TOKEN`. The Algorithm service is optional under the `ranking` Compose profile; Fresh API must retain chronological fallback when ranking is unavailable.
-- Federation ingress/outbox: Data Centre passes the same high-entropy `FRESH_FEDERATION_INTERNAL_TOKEN` to Fresh API and Federation's `BACKEND_INTERNAL_TOKEN`. Fresh API exposes only private `/internal/v1/federation/*` routes with this token; Federation polls the Backend outbox and resolves actors through these routes. There is no public browser-to-Federation API.
-- Data Centre platform cache/rate-limit/queue API is a separate infrastructure service. It is not currently a Fresh API dependency and its private token must never be exposed to XClone.
-
-These are service-to-service settings, not browser API URLs. XClone calls only the public Fresh Backend API; it must never call Algorithm, Federation or Data Centre private platform endpoints directly.
+- Make placement, verification and repair idempotent.
+- Never interpret a missing heartbeat as proof of deletion.
+- Never delete media or reclaim quota without a Backend-authorized lifecycle command and independent replica checks.
+- Keep node credentials, provider keys and storage secrets out of client builds and logs.
