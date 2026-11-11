@@ -3,7 +3,7 @@
 set -euo pipefail
 umask 077
 
-for bin in age sha256sum tar jq stat find mktemp; do
+for bin in age sha256sum tar jq stat find mktemp realpath grep awk wc tr; do
   command -v "$bin" >/dev/null 2>&1 || { echo "$bin is required" >&2; exit 1; }
 done
 
