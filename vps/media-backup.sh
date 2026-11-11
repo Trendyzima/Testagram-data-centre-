@@ -5,7 +5,7 @@
 set -euo pipefail
 umask 077
 
-for bin in aws age tar sha256sum find stat python3 jq mktemp; do
+for bin in aws age tar sha256sum find stat python3 jq mktemp base64 awk; do
   command -v "$bin" >/dev/null 2>&1 || { echo "$bin is required" >&2; exit 1; }
 done
 
@@ -30,6 +30,8 @@ done
 APPWRITE_BACKUP_PROJECT_ID="${APPWRITE_BACKUP_PROJECT_ID:-unspecified}"
 APPWRITE_BACKUP_DATABASE_ID="${APPWRITE_BACKUP_DATABASE_ID:-unspecified}"
 BACKUP_ROOT="${TESTAGRAM_MEDIA_BACKUP_ROOT:-/var/backups/testagram-media}"
+mkdir -p "$BACKUP_ROOT"
+chmod 0700 "$BACKUP_ROOT"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 ARCHIVE_PREFIX="${TESTAGRAM_MEDIA_ARCHIVE_PREFIX:-testagram-media-backups}"
 STAGE="$(mktemp -d "${BACKUP_ROOT}.stage.XXXXXX")"
