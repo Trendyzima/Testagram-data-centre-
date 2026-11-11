@@ -347,3 +347,87 @@ jobs:
           name: testagram-android-node
           path: android-node/dist/
           retention-days: 90
+
+  isolated-restore-drill:
+    name: Encrypted database restore drill (isolated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install age
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes age
+
+      - name: Create disposable source databases and encrypted backup fixture
+        id: fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull postgres:17-alpine
+          restore_image="$(docker image inspect postgres:17-alpine --format '{{index .RepoDigests 0}}')"
+          [[ "$restore_image" == postgres@sha256:* ]]
+          echo "restore_image=$restore_image" >> "$GITHUB_OUTPUT"
+
+          stage="$(mktemp -d)"
+          echo "stage=$stage" >> "$GITHUB_OUTPUT"
+          docker run --detach --name testagram-restore-source \
+            --publish 127.0.0.1:54329:5432 \
+            --env POSTGRES_PASSWORD=ci-only-password \
+            postgres:17-alpine >/dev/null
+          for attempt in $(seq 1 45); do
+            if docker exec testagram-restore-source pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          docker exec testagram-restore-source pg_isready -U postgres -d postgres
+
+          docker exec testagram-restore-source createdb -U postgres data_centre
+          docker exec testagram-restore-source createdb -U postgres neon_social
+          docker exec testagram-restore-source psql -U postgres -d data_centre -v ON_ERROR_STOP=1 \
+            -c 'CREATE TABLE restore_probe(id integer PRIMARY KEY, value text NOT NULL); INSERT INTO restore_probe VALUES (1, ''data-centre-ok'');'
+          docker exec testagram-restore-source psql -U postgres -d neon_social -v ON_ERROR_STOP=1 \
+            -c 'CREATE TABLE restore_probe(id integer PRIMARY KEY, value text NOT NULL); INSERT INTO restore_probe VALUES (1, ''neon-social-ok'');'
+
+          docker exec testagram-restore-source pg_dump -U postgres -Fc data_centre > "$stage/data-centre.dump"
+          docker exec testagram-restore-source pg_dump -U postgres -Fc neon_social > "$stage/neon-social.dump"
+          test -s "$stage/data-centre.dump"
+          test -s "$stage/neon-social.dump"
+
+          tar -czf "$stage/testagram-ci-backup.tar.gz" -C "$stage" data-centre.dump neon-social.dump
+          age-keygen -o "$stage/restore-identity.txt"
+          chmod 600 "$stage/restore-identity.txt"
+          recipient="$(age-keygen -y "$stage/restore-identity.txt")"
+          age -r "$recipient" -o "$stage/testagram-ci-backup.tar.gz.age" "$stage/testagram-ci-backup.tar.gz"
+          (cd "$stage" && sha256sum testagram-ci-backup.tar.gz.age > testagram-ci-backup.tar.gz.age.sha256)
+          test -s "$stage/testagram-ci-backup.tar.gz.age"
+
+      - name: Restore both encrypted database archives in network-isolated PostgreSQL
+        env:
+          STAGE: ${{ steps.fixture.outputs.stage }}
+          RESTORE_IMAGE: ${{ steps.fixture.outputs.restore_image }}
+        run: |
+          set -euo pipefail
+          TESTAGRAM_BACKUP_AGE_IDENTITY_FILE="$STAGE/restore-identity.txt" \
+          TESTAGRAM_RESTORE_POSTGRES_IMAGE="$RESTORE_IMAGE" \
+            vps/restore-drill.sh "$STAGE/testagram-ci-backup.tar.gz.age"
+
+      - name: Verify the restore drill left no test containers
+        if: always()
+        run: |
+          if docker ps -a --format '{{.Names}}' | grep -Eq '^testagram-restore-drill-'; then
+            echo "A restore-drill container was not cleaned up" >&2
+            exit 1
+          fi
+          docker rm -f testagram-restore-source >/dev/null 2>&1 || true
+
+      - name: Remove encrypted fixture and temporary identity
+        if: always()
+        env:
+          STAGE: ${{ steps.fixture.outputs.stage }}
+        run: |
+          if [[ -n "${STAGE:-}" && -d "$STAGE" ]]; then
+            rm -rf -- "$STAGE"
+          fi
