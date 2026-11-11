@@ -213,6 +213,7 @@ jobs:
           docker network create testagram-egress 2>/dev/null || true
           docker run -d --name testagram-postgres --network testagram-platform --network-alias federation-db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
           trap 'docker rm -f testagram-api testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true; docker network rm testagram-egress testagram-platform >/dev/null 2>&1 || true' EXIT
+          trap 'status=$?; echo "Backend runtime smoke failed; service logs follow"; docker compose -f backend/docker-compose.yml logs --no-color platform algorithm federation-api video notification worker 2>&1 || true; docker logs testagram-api 2>&1 || true; exit "$status"' ERR
           for i in $(seq 1 30); do
             docker exec testagram-postgres pg_isready -U postgres -d postgres >/dev/null 2>&1 && break
             sleep 2
@@ -281,7 +282,15 @@ jobs:
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"event_name":"ci.smoke","properties":{"status":"green"}}' http://127.0.0.1:8095/v1/events
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"action":"ci.smoke","resource_type":"workflow","resource_id":"platform","metadata":{"status":"green"}}' http://127.0.0.1:8095/v1/audit
           docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz
+          for i in $(seq 1 30); do
+            docker compose -f backend/docker-compose.yml exec -T notification wget -q -O - http://127.0.0.1:8090/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
           docker compose -f backend/docker-compose.yml exec -T notification wget -q -O - http://127.0.0.1:8090/readyz
+          for i in $(seq 1 30); do
+            docker compose -f backend/docker-compose.yml exec -T worker wget -q -O - http://127.0.0.1:8091/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
           docker compose -f backend/docker-compose.yml exec -T worker wget -q -O - http://127.0.0.1:8091/readyz
 
   android:
