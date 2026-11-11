@@ -18,6 +18,8 @@ jobs:
       TESTAGRAM_FEDERATION_IMAGE: ghcr.io/trendyzima/testagram-federation:sha-8aa46c04532eab99d533709109c7f86d716cff36
       ALGORITHM_INTERNAL_TOKEN: ci-algorithm-internal-token-long-enough
       FEDERATION_INTERNAL_TOKEN: ci-federation-internal-token-long-enough
+      FEDERATION_BACKEND_INTERNAL_TOKEN: ci-federation-backend-read-token-long-enough
+      FEDERATION_INGRESS_TOKEN: ci-federation-ingress-token-long-enough
       FEDERATION_DATABASE_NAME: testagram_federation
       FEDERATION_DATABASE_URL: postgresql://postgres:testagram@federation-db:5432/testagram_federation?sslmode=disable
       FEDERATION_PUBLIC_BASE_URL: https://federation.testagram.site
@@ -40,7 +42,7 @@ jobs:
       FRESH_MEDIA_ENABLED: "false"
       # Non-production credentials used only to render/validate the fresh Compose model in CI.
       # Production must supply one independently generated secret to both Backend and Federation.
-      FRESH_FEDERATION_INTERNAL_TOKEN: ci-federation-internal-token-long-enough
+      FRESH_FEDERATION_INTERNAL_TOKEN: ci-federation-backend-read-token-long-enough
       FEDERATION_POSTGRES_IMAGE: postgres:17-alpine
       FEDERATION_DB_PASSWORD: ci-federation-db-password-only
       # Compose interpolation fixture only; CI does not connect Federation to this local URL.
@@ -125,7 +127,7 @@ jobs:
           cmp -s vps/docker-compose.yml vps/docker-compose.fresh.yml
           ! grep -Eqi "supabase|SUPABASE" vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml
           # Both services must receive exactly the same non-empty private credential.
-          docker compose --profile federation -f vps/docker-compose.fresh.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; fed=c["services"]["federation-api"]["environment"]; a=api.get("FRESH_FEDERATION_INTERNAL_TOKEN",""); b=fed.get("BACKEND_INTERNAL_TOKEN",""); assert a and b and a == b, "Backend/Federation private token contract mismatch"'
+          docker compose --profile federation -f vps/docker-compose.fresh.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; fed=c["services"]["federation-api"]["environment"]; a=api.get("FRESH_FEDERATION_INTERNAL_TOKEN",""); b=fed.get("BACKEND_INTERNAL_TOKEN",""); ingress=fed.get("FEDERATION_INGRESS_TOKEN",""); assert a and b and a == b, "Federation-to-Backend read token mismatch"; assert ingress and ingress != b, "Backend-to-Federation ingress token must be distinct"'
           ! grep -qi 'supabase' vps/docker-compose.fresh.yml
           ! grep -Eq '/migrations/(002_video_platform|003_production_hardening|004_storage_buckets|005_platform|006_video_upload_safety|007_video_upload_safety)\.sql' vps/docker-compose.fresh.yml
           docker run --rm -e TLS_ADMIN_EMAIL=ci@example.invalid -v "$PWD/vps/fresh/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
