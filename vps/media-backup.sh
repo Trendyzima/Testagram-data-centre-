@@ -161,6 +161,8 @@ export AWS_DEFAULT_REGION="$ARCHIVE_S3_REGION"
 export AWS_EC2_METADATA_DISABLED=true
 aws s3 cp "$ENCRYPTED" "s3://$ARCHIVE_S3_BUCKET/$ARCHIVE_PREFIX/$(basename "$ENCRYPTED")" --endpoint-url "$ARCHIVE_S3_ENDPOINT" --region "$ARCHIVE_S3_REGION" --only-show-errors
 aws s3 cp "$ENCRYPTED.sha256" "s3://$ARCHIVE_S3_BUCKET/$ARCHIVE_PREFIX/$(basename "$ENCRYPTED").sha256" --endpoint-url "$ARCHIVE_S3_ENDPOINT" --region "$ARCHIVE_S3_REGION" --only-show-errors
+aws s3api get-object --bucket "$ARCHIVE_S3_BUCKET" --key "$ARCHIVE_PREFIX/$(basename "$ENCRYPTED")" --endpoint-url "$ARCHIVE_S3_ENDPOINT" --region "$ARCHIVE_S3_REGION" --no-cli-pager "$STAGE/archive-readback.age" >/dev/null
+cmp -s "$ENCRYPTED" "$STAGE/archive-readback.age" || { echo "Archive provider read-back verification failed" >&2; exit 1; }
 unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION
 
 printf 'Encrypted independent media backup uploaded: s3://%s/%s/%s\n' "$ARCHIVE_S3_BUCKET" "$ARCHIVE_PREFIX" "$(basename "$ENCRYPTED")"
