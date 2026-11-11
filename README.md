@@ -88,5 +88,5 @@ every hop.
 - [Self-sustaining operations and recovery plan](docs/platform/self-sustaining-operations.md)
 - [Internal platform OpenAPI contract](docs/platform/openapi/internal-platform.yaml)
 - [Hosting control-plane OpenAPI contract](docs/platform/openapi/hosting-control-plane.yaml)
-- [Media storage architecture](docs/platform/media-storage-architecture.md)
+- [Media storage architecture](docs/platform/media-storage-architecture.md)\n- Instabox VPS + Cloudflare R2 + Backblaze B2 target: three verified media copies; Testagram CDN owns public delivery.
 - [Fresh deployment preview](vps/FRESH-DEPLOYMENT.md)
