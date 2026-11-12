@@ -110,37 +110,36 @@ func (s *server) verify(w http.ResponseWriter,r *http.Request){
 	if r.Method!=http.MethodPost{method(w,"POST");return};if !s.auth(w,r){return}
 	var in verifyRequest;if !decode(w,r,&in)||!validUpload(in.uploadRequest)||len(in.SHA256)!=64{writeErr(w,400,"invalid verification request");return}
 	want,err:=hex.DecodeString(in.SHA256);if err!=nil||len(want)!=32{writeErr(w,400,"invalid SHA-256");return}
-	ctx,c:=context.WithTimeout(r.Context(),90*time.Second);defer c()
+	ctx,c:=context.WithTimeout(r.Context(),5*time.Second);defer c()
+	expected:=strings.ToLower(in.SHA256)
 	var grant bool
 	err=s.db.QueryRow(ctx,`select exists(select 1 from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3 and max_bytes=$4 and expires_at>now() and consumed_at is null)`,in.OwnerID,in.Namespace,in.Key,in.SizeBytes).Scan(&grant)
 	if err!=nil{writeErr(w,503,"upload grant state unavailable");return}
 	if !grant {
-		var currentStatus,currentSHA string
-		stateErr:=s.db.QueryRow(ctx,`select status,coalesce(sha256,'') from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key).Scan(&currentStatus,&currentSHA)
-		if stateErr==nil&&currentSHA==strings.ToLower(in.SHA256) {
+		var currentStatus,currentSHA string;var primaryVerified *time.Time
+		stateErr:=s.db.QueryRow(ctx,`select status,coalesce(sha256,''),primary_verified_at from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key).Scan(&currentStatus,&currentSHA,&primaryVerified)
+		if stateErr==nil&&currentSHA==expected {
 			if currentStatus=="protected"{writeJSON(w,200,map[string]string{"status":"protected","sha256":currentSHA});return}
-			if currentStatus=="replication_pending"||currentStatus=="replication_failed" {
-				if currentStatus=="replication_failed"{_,_=s.db.Exec(ctx,`update media_objects set status='replication_pending',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key);_,_=s.db.Exec(ctx,`update media_outbox set status='retry',attempts=0,available_at=now(),locked_until=null,last_error=null where owner_id=$1 and namespace=$2 and object_key=$3 and operation='replicate'`,in.OwnerID,in.Namespace,in.Key)}
+			if currentStatus=="uploaded"||currentStatus=="replication_pending"||currentStatus=="replication_failed" {
+				if currentStatus=="replication_failed" {
+					op:="verify";nextStatus:="uploaded"
+					if primaryVerified!=nil{op="replicate";nextStatus="replication_pending"}
+					_,_=s.db.Exec(ctx,`update media_objects set status=$4,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key,nextStatus)
+					_,_=s.db.Exec(ctx,`update media_outbox set status='retry',attempts=0,available_at=now(),locked_until=null,last_error=null where owner_id=$1 and namespace=$2 and object_key=$3 and operation=$4`,in.OwnerID,in.Namespace,in.Key,op)
+				}
 				writeJSON(w,202,map[string]string{"status":"replication_pending","sha256":currentSHA});return
 			}
 		}
 		writeErr(w,409,"no active upload grant");return
 	}
-	resp,err:=s.signedRequest(ctx,s.cfg.primary,http.MethodGet,in.Key,nil,"")
-	if err!=nil{writeErr(w,503,"primary storage read failed");return};defer resp.Body.Close()
-	if resp.StatusCode!=200{writeErr(w,404,"uploaded object not found");return}
-	if resp.ContentLength>=0&&resp.ContentLength!=in.SizeBytes{writeErr(w,409,"object size mismatch");return}
-	if got:=strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"),";")[0]);got!=""&&got!=in.ContentType{writeErr(w,409,"object content type mismatch");return}
-	h:=sha256.New();n,copyErr:=io.Copy(h,io.LimitReader(resp.Body,in.SizeBytes+1));if copyErr!=nil||n!=in.SizeBytes||subtle.ConstantTimeCompare(h.Sum(nil),want)!=1{writeErr(w,409,"object size or SHA-256 mismatch");return}
 	tx,err:=s.db.Begin(ctx);if err!=nil{writeErr(w,503,"durable state unavailable");return};defer tx.Rollback(ctx)
-	now:=time.Now().UTC()
-	tag,consumeErr:=tx.Exec(ctx,`update media_upload_grants set consumed_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and max_bytes=$4 and expires_at>now() and consumed_at is null`,in.OwnerID,in.Namespace,in.Key,in.SizeBytes)
-	if consumeErr!=nil||tag.RowsAffected()!=1{writeErr(w,409,"upload grant already consumed");return}
-	tag,err=tx.Exec(ctx,`update media_objects set sha256=$4,status='replication_pending',primary_verified_at=$5,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and size_bytes=$6 and status='upload_pending'`,in.OwnerID,in.Namespace,in.Key,strings.ToLower(in.SHA256),now,in.SizeBytes)
+	tag,err:=tx.Exec(ctx,`update media_upload_grants set consumed_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and max_bytes=$4 and expires_at>now() and consumed_at is null`,in.OwnerID,in.Namespace,in.Key,in.SizeBytes)
+	if err!=nil||tag.RowsAffected()!=1{writeErr(w,409,"upload grant already consumed");return}
+	tag,err=tx.Exec(ctx,`update media_objects set sha256=$4,status='uploaded',primary_verified_at=null,replica_verified_at=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and size_bytes=$5 and status='upload_pending'`,in.OwnerID,in.Namespace,in.Key,expected,in.SizeBytes)
 	if err==nil&&tag.RowsAffected()!=1{err=errors.New("object lifecycle changed during verification")}
-	if err==nil{_,err=tx.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'replicate','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),last_error=null`,in.OwnerID,in.Namespace,in.Key)}
-	if err==nil{err=tx.Commit(ctx)};if err!=nil{writeErr(w,503,"could not persist verification and replication job");return}
-	writeJSON(w,202,map[string]string{"status":"replication_pending","sha256":strings.ToLower(in.SHA256)})
+	if err==nil{_,err=tx.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'verify','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),locked_until=null,last_error=null`,in.OwnerID,in.Namespace,in.Key)}
+	if err==nil{err=tx.Commit(ctx)};if err!=nil{writeErr(w,503,"could not persist verification job");return}
+	writeJSON(w,202,map[string]string{"status":"replication_pending","sha256":expected})
 }
 func (s *server) status(w http.ResponseWriter,r *http.Request){
 	if r.Method!=http.MethodGet{method(w,"GET");return};if !s.auth(w,r){return}
@@ -178,19 +177,33 @@ func (s *server) worker(ctx context.Context){
 	for{select{case<-ctx.Done():return;case<-t.C:if err:=s.processOne(ctx);err!=nil{log.Printf("media outbox worker: %v",err)}}}
 }
 func (s *server) processOne(parent context.Context)error{
-	ctx,c:=context.WithTimeout(parent,2*time.Minute);defer c()
+	ctx,c:=context.WithTimeout(parent,10*time.Minute);defer c()
 	tx,err:=s.db.Begin(ctx);if err!=nil{return err};defer tx.Rollback(ctx)
 	var id int64;var owner,ns,key,op string
 	err=tx.QueryRow(ctx,`select o.id,o.owner_id,o.namespace,o.object_key,o.operation from media_outbox o where o.status in ('pending','retry','processing') and o.available_at<=now() and (o.locked_until is null or o.locked_until<now()) and not exists (select 1 from media_outbox active where active.owner_id=o.owner_id and active.namespace=o.namespace and active.object_key=o.object_key and active.status='processing' and active.id<>o.id) order by o.id for update of o skip locked limit 1`).Scan(&id,&owner,&ns,&key,&op)
 	if errors.Is(err,pgx.ErrNoRows){return nil};if err!=nil{return err}
-	_,err=tx.Exec(ctx,`update media_outbox set status='processing',locked_until=now()+interval '3 minutes',attempts=attempts+1 where id=$1`,id);if err!=nil{return err};if err=tx.Commit(ctx);err!=nil{return err}
-	if op=="replicate"{err=s.replicate(ctx,owner,ns,key)}else if op=="delete"{err=s.deleteOrigins(ctx,owner,ns,key)}else{err=fmt.Errorf("unknown outbox operation %q",op)}
+	_,err=tx.Exec(ctx,`update media_outbox set status='processing',locked_until=now()+interval '15 minutes',attempts=attempts+1 where id=$1`,id);if err!=nil{return err};if err=tx.Commit(ctx);err!=nil{return err}
+	switch op{case "verify":err=s.verifyPrimary(ctx,owner,ns,key);case "replicate":err=s.replicate(ctx,owner,ns,key);case "delete":err=s.deleteOrigins(ctx,owner,ns,key);default:err=fmt.Errorf("unknown outbox operation %q",op)}
 	if err!=nil{
 		_,_ = s.db.Exec(ctx,`update media_outbox set status=case when attempts>=12 then 'dead' else 'retry' end,available_at=now()+make_interval(secs=>least(3600,power(2,least(attempts,10))::int)),locked_until=null,last_error=left($2,1000),updated_at=now() where id=$1`,id,err.Error())
-		if op=="replicate"{_,_=s.db.Exec(ctx,`update media_objects set status='replication_failed',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status<>'delete_pending'`,owner,ns,key)}
+		if op=="replicate"||op=="verify"{_,_=s.db.Exec(ctx,`update media_objects set status='replication_failed',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status not in ('delete_pending','deleted')`,owner,ns,key)}
 		return err
 	}
 	_,err=s.db.Exec(ctx,`update media_outbox set status='done',locked_until=null,last_error=null,updated_at=now() where id=$1`,id);return err
+}
+func (s *server) verifyPrimary(ctx context.Context,owner,ns,key string)error{
+	var size int64;var typ,want string
+	if err:=s.db.QueryRow(ctx,`select size_bytes,content_type,sha256 from media_objects where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('uploaded','replication_failed') and primary_verified_at is null`,owner,ns,key).Scan(&size,&typ,&want);err!=nil{return err}
+	resp,err:=s.signedRequest(ctx,s.cfg.primary,http.MethodGet,key,nil,"");if err!=nil{return err};if resp.StatusCode!=200{resp.Body.Close();return fmt.Errorf("primary object GET status %d",resp.StatusCode)};defer resp.Body.Close()
+	if resp.ContentLength>=0&&resp.ContentLength!=size{return errors.New("primary object size mismatch")}
+	if got:=strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"),";")[0]);got!=""&&got!=typ{return errors.New("primary object content type mismatch")}
+	h:=sha256.New();n,err:=io.Copy(h,io.LimitReader(resp.Body,size+1));if err!=nil{return err};if n!=size||hex.EncodeToString(h.Sum(nil))!=want{return errors.New("primary object size or SHA-256 mismatch")}
+	tx,err:=s.db.Begin(ctx);if err!=nil{return err};defer tx.Rollback(ctx)
+	now:=time.Now().UTC()
+	tag,err:=tx.Exec(ctx,`update media_objects set status='replication_pending',primary_verified_at=$4,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('uploaded','replication_failed') and primary_verified_at is null`,owner,ns,key,now)
+	if err==nil&&tag.RowsAffected()!=1{err=errors.New("object lifecycle changed during primary verification")}
+	if err==nil{_,err=tx.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'replicate','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),locked_until=null,last_error=null`,owner,ns,key)}
+	if err==nil{err=tx.Commit(ctx)};return err
 }
 func (s *server) replicate(ctx context.Context,owner,ns,key string)error{
 	var size int64;var typ,want string
