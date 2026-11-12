@@ -168,6 +168,7 @@ func (s *server) delete(w http.ResponseWriter,r *http.Request){
 	if errors.Is(err,pgx.ErrNoRows){writeJSON(w,200,map[string]string{"status":"deleted"});return};if err!=nil{writeErr(w,503,"media state unavailable");return}
 	if old=="deleted"{writeJSON(w,200,map[string]string{"status":"deleted"});return}
 	_,err=tx.Exec(ctx,`update media_objects set status='delete_pending',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key)
+	if err==nil{_,err=tx.Exec(ctx,`update media_outbox set status='done',locked_until=null,last_error='superseded by delete' where owner_id=$1 and namespace=$2 and object_key=$3 and operation in ('verify','replicate') and status in ('pending','retry')`,in.OwnerID,in.Namespace,in.Key)}
 	if err==nil{_,err=tx.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'delete','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),last_error=null`,in.OwnerID,in.Namespace,in.Key)}
 	if err==nil{err=tx.Commit(ctx)};if err!=nil{writeErr(w,503,"could not queue durable deletion");return}
 	writeJSON(w,202,map[string]string{"status":"delete_pending"})
