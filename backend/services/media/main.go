@@ -50,6 +50,8 @@ func main() {
 		uploadTTL: duration("MEDIA_UPLOAD_TTL", 10*time.Minute), downloadTTL: duration("MEDIA_DOWNLOAD_TTL", 5*time.Minute),
 	}
 	if len(cfg.token)<32 { log.Fatal("MEDIA_INTERNAL_TOKEN must be at least 32 characters") }
+	if err:=validateStore(cfg.primary);err!=nil{log.Fatalf("invalid B2 primary configuration: %v",err)}
+	if err:=validateStore(cfg.replica);err!=nil{log.Fatalf("invalid R2 replica configuration: %v",err)}
 	db,err:=pgxpool.New(context.Background(),required("MEDIA_DATABASE_URL")); if err!=nil { log.Fatal(err) }; defer db.Close()
 	ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second); defer cancel()
 	if err=db.Ping(ctx); err!=nil { log.Fatalf("media database unavailable: %v",err) }
@@ -208,9 +210,10 @@ func presign(store s3Store,method,key string,ttl time.Duration,contentType strin
 }
 type lengthReader struct{io.Reader;n int64}
 func(r *lengthReader)Len64()int64{return r.n}
+func validateStore(s s3Store)error{u,err:=url.Parse(strings.TrimSpace(s.endpoint));if err!=nil||u.Scheme!="https"||u.Host==""||u.User!=nil||u.RawQuery!=""||u.Fragment!=""||(u.Path!=""&&u.Path!="/"){return errors.New("S3 endpoint must be an HTTPS origin without credentials, path, query or fragment")};if s.region==""||s.bucket==""||s.access==""||s.secret==""||strings.ContainsAny(s.region+s.bucket+s.access+s.secret,"\r\n"){return errors.New("S3 region, bucket and credentials must be non-empty single-line values")};return nil}
 func objectURL(s s3Store,key string)(*url.URL,error){
-	base,err:=url.Parse(strings.TrimRight(s.endpoint,"/"));if err!=nil||base.Host==""||(base.Scheme!="https"&&base.Scheme!="http")||base.User!=nil{return nil,errors.New("invalid S3 endpoint")}
-	base.Path=strings.TrimRight(base.Path,"/")+"/"+s.bucket+"/"+strings.TrimLeft(key,"/");return base,nil
+	if err:=validateStore(s);err!=nil{return nil,err};base,err:=url.Parse(strings.TrimRight(s.endpoint,"/"));if err!=nil{return nil,err}
+	base.Path="/"+s.bucket+"/"+strings.TrimLeft(key,"/");return base,nil
 }
 func signingKey(secret,day,region string)[]byte{k:=hmacSHA([]byte("AWS4"+secret),day);k=hmacSHA(k,region);k=hmacSHA(k,"s3");return hmacSHA(k,"aws4_request")}
 func hmacSHA(key []byte,data string)[]byte{h:=hmac.New(sha256.New,key);_,_=h.Write([]byte(data));return h.Sum(nil)}
