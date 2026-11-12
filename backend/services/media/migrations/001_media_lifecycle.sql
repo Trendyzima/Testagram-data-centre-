@@ -54,3 +54,18 @@ create table if not exists media_operations (
 );
 create index if not exists media_operations_object_idx on media_operations(owner_id,namespace,object_key,created_at desc,id desc);
 create index if not exists media_operations_id_idx on media_operations(operation_id,created_at desc);
+
+create or replace function media_record_outbox_operation() returns trigger language plpgsql as $$
+begin
+ if new.status in ('done','retry','dead') and new.status is distinct from old.status then
+  insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome,attempt,detail)
+  values ('outbox:'||new.id::text||':'||new.attempts::text,new.owner_id,new.namespace,new.object_key,new.operation,
+          case new.status when 'done' then 'succeeded' when 'dead' then 'dead' else 'retry' end,
+          new.attempts,new.last_error);
+ end if;
+ return new;
+end;
+$$;
+drop trigger if exists media_outbox_operation_journal on media_outbox;
+create trigger media_outbox_operation_journal after update of status on media_outbox
+for each row execute function media_record_outbox_operation();
