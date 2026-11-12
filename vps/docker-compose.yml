@@ -62,11 +62,11 @@ services:
     restart: "no"
     entrypoint: ["/bin/sh", "-ec"]
     command: |
-      psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/007_media_lifecycle.sql
+      psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql
     environment:
       MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}
     volumes:
-      - ../migrations:/migrations:ro
+      - ../backend/services/media/migrations:/migrations:ro
     networks: [services]
 
   media:
