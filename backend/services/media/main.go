@@ -38,7 +38,7 @@ type s3Store struct { name, endpoint, region, bucket, access, secret string }
 type server struct { cfg config; db *pgxpool.Pool; http *http.Client }
 type uploadRequest struct { OwnerID string `json:"owner_id"`; Namespace string `json:"namespace"`; Key string `json:"key"`; ContentType string `json:"content_type"`; SizeBytes int64 `json:"size_bytes"` }
 type verifyRequest struct { uploadRequest; SHA256 string `json:"sha256"` }
-type downloadRequest struct { RequesterID string `json:"requester_id"`; OwnerID string `json:"owner_id"`; Namespace string `json:"namespace"`; Key string `json:"key"` }
+type downloadRequest struct { RequesterID string `json:"requester_id"`; OwnerID string `json:"owner_id"`; Namespace string `json:"namespace"`; Key string `json:"key"`; Method string `json:"method,omitempty"` }
 type deleteRequest = downloadRequest
 type object struct { OwnerID string; Namespace string; Key string; ContentType string; Size int64; SHA string; Status string; PrimaryVerified *time.Time; ReplicaVerified *time.Time }
 
@@ -161,6 +161,7 @@ func (s *server) downloadURL(w http.ResponseWriter, r *http.Request) {
 	if !s.auth(w, r) { return }
 	var in downloadRequest
 	if !decode(w, r, &in) || !validIdentity(in.RequesterID) || !validIdentity(in.OwnerID) || !validNamespace(in.Namespace) || !validMediaKey(in.Key, in.OwnerID) { writeErr(w, 400, "invalid download request"); return }
+	if in.Method == "" { in.Method = http.MethodGet }; if in.Method != http.MethodGet && in.Method != http.MethodHead { writeErr(w, 400, "download method must be GET or HEAD"); return }
 	var status string; var size int64
 	err := s.db.QueryRow(r.Context(), `select status,size_bytes from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key).Scan(&status, &size)
 	if err != nil || status != "protected" { writeErr(w, 404, "protected object not found"); return }
@@ -171,7 +172,7 @@ func (s *server) downloadURL(w http.ResponseWriter, r *http.Request) {
 		present := resp.StatusCode == http.StatusOK && resp.ContentLength == size
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
 		if !present { continue }
-		u, signErr := presign(store, http.MethodGet, in.Key, s.cfg.downloadTTL, "")
+		u, signErr := presign(store, in.Method, in.Key, s.cfg.downloadTTL, "")
 		if signErr == nil { writeJSON(w, 200, map[string]string{"url": u, "provider": store.name}); return }
 	}
 	writeErr(w, 503, "no verified origin is currently readable")
