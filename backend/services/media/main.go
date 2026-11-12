@@ -102,6 +102,8 @@ func (s *server) verify(w http.ResponseWriter,r *http.Request){
 	h:=sha256.New();n,copyErr:=io.Copy(h,io.LimitReader(resp.Body,in.SizeBytes+1));if copyErr!=nil||n!=in.SizeBytes||subtle.ConstantTimeCompare(h.Sum(nil),want)!=1{writeErr(w,409,"object size or SHA-256 mismatch");return}
 	tx,err:=s.db.Begin(ctx);if err!=nil{writeErr(w,503,"durable state unavailable");return};defer tx.Rollback(ctx)
 	now:=time.Now().UTC()
+	tag,consumeErr:=tx.Exec(ctx,`update media_upload_grants set consumed_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and max_bytes=$4 and expires_at>now() and consumed_at is null`,in.OwnerID,in.Namespace,in.Key,in.SizeBytes)
+	if consumeErr!=nil||tag.RowsAffected()!=1{writeErr(w,409,"upload grant already consumed");return}
 	_,err=tx.Exec(ctx,`update media_objects set sha256=$4,status='replication_pending',primary_verified_at=$5,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and size_bytes=$6`,in.OwnerID,in.Namespace,in.Key,strings.ToLower(in.SHA256),now,in.SizeBytes)
 	if err==nil{_,err=tx.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'replicate','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),last_error=null`,in.OwnerID,in.Namespace,in.Key)}
 	if err==nil{err=tx.Commit(ctx)};if err!=nil{writeErr(w,503,"could not persist verification and replication job");return}
