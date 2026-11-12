@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log"
+	"strings"
 	"net/http"
 	"time"
 
@@ -83,8 +85,16 @@ func (s *server) reconcileProtectedBatch(parent context.Context, limit int) erro
 	}
 
 	for _, item := range items {
-		primaryOK := s.originMatches(ctx, s.cfg.primary, item)
-		replicaOK := s.originMatches(ctx, s.cfg.replica, item)
+		primaryOK, primaryErr := s.originMatches(ctx, s.cfg.primary, item)
+		if primaryErr != nil {
+			_, _ = s.db.Exec(ctx, `update media_objects set reconciliation_claimed_at=null where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
+			return fmt.Errorf("primary origin reconciliation failed: %w", primaryErr)
+		}
+		replicaOK, replicaErr := s.originMatches(ctx, s.cfg.replica, item)
+		if replicaErr != nil {
+			_, _ = s.db.Exec(ctx, `update media_objects set reconciliation_claimed_at=null where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
+			return fmt.Errorf("replica origin reconciliation failed: %w", replicaErr)
+		}
 		switch {
 		case primaryOK && replicaOK:
 			_, err = s.db.Exec(ctx, `update media_objects set reconciled_at=now(),reconciliation_claimed_at=null
@@ -116,19 +126,22 @@ func (s *server) reconcileProtectedBatch(parent context.Context, limit int) erro
 	return nil
 }
 
-func (s *server) originMatches(ctx context.Context, store s3Store, item reconcileItem) bool {
+func (s *server) originMatches(ctx context.Context, store s3Store, item reconcileItem) (bool, error) {
 	resp, err := s.signedRequest(ctx, store, http.MethodGet, item.key, nil, "")
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		return false, fmt.Errorf("%s returned transient HTTP %d", store.name, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK || (resp.ContentLength >= 0 && resp.ContentLength != item.size) {
-		return false
+		return false, nil
 	}
-	if got := resp.Header.Get("Content-Type"); got != "" && got != item.contentType {
-		return false
+	if got := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]); got != "" && got != item.contentType {
+		return false, nil
 	}
-	return digestMatches(resp.Body, item.size, item.expectedSHA)
+	return digestMatches(resp.Body, item.size, item.expectedSHA), nil
 }
 
 func (s *server) requeueReplica(ctx context.Context, item reconcileItem) error {
