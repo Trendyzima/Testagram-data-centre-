@@ -67,7 +67,7 @@ create or replace function media_record_outbox_operation() returns trigger langu
 begin
  if new.status in ('done','retry','dead','cancelled') and new.status is distinct from old.status then
   insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome,attempt,detail)
-  values ('outbox:'||new.id::text||':'||new.attempts::text,new.owner_id,new.namespace,new.object_key,new.operation,
+  values ('outbox:'||new.id::text||':'||new.attempts::text||':'||clock_timestamp()::text,new.owner_id,new.namespace,new.object_key,new.operation,
           case new.status when 'done' then 'succeeded' when 'dead' then 'dead' when 'cancelled' then 'cancelled' else 'retry' end,
           new.attempts,new.last_error);
  end if;
