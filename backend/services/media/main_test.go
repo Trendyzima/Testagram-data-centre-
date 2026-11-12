@@ -46,3 +46,12 @@ func TestS3PresignBindsMethodAndContentType(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	if strings.Contains(get, "content-type") || put == get { t.Fatal("GET and PUT grants must be distinct") }
 }
+
+func TestS3StoreRequiresTLSAndCleanOrigin(t *testing.T) {
+	base := s3Store{name:"backblaze_b2",endpoint:"https://s3.example.invalid",region:"us-west-004",bucket:"test-bucket",access:"access-key",secret:strings.Repeat("s",40)}
+	if err := validateStore(base); err != nil { t.Fatalf("valid TLS endpoint rejected: %v",err) }
+	base.endpoint = "http://s3.example.invalid"
+	if err := validateStore(base); err == nil { t.Fatal("plaintext S3 endpoint accepted") }
+	base.endpoint = "https://s3.example.invalid?token=unsafe"
+	if err := validateStore(base); err == nil { t.Fatal("S3 endpoint query string accepted") }
+}
