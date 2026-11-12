@@ -12,6 +12,8 @@ create table if not exists media_objects (
  updated_at timestamptz not null default now(),
  primary key(owner_id,namespace,object_key)
 );
+alter table media_objects add column if not exists reconciled_at timestamptz;
+
 create table if not exists media_upload_grants (
  id text primary key,
  owner_id text not null,
