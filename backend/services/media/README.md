@@ -20,6 +20,8 @@ Implements the five routes in `docs/platform/openapi/media-lifecycle-v1.yaml`. E
 - Worker uses leased `FOR UPDATE SKIP LOCKED` jobs, bounded exponential retries and a dead state.
 - R2 writes are independently read back and hashed before state becomes `protected`.
 - Deletion is idempotently queued and removes both B2 and R2 copies.
+- A separate reconciliation loop re-reads protected objects from both origins every 24 hours, compares exact byte counts and SHA-256, requeues a damaged replica when the primary remains valid, and fails closed if the primary no longer matches.
+- Reconciliation leases expire after 15 minutes so a crashed worker does not suppress future checks for a full day.
 - No public port is exposed; mount only on a private service network.
 
 This initial adapter targets S3-compatible B2 and R2. Instabox is intentionally not enabled until its supported API, authentication model and object consistency guarantees are verified. Do not set `FRESH_MEDIA_ENABLED=true` until live provider integration tests, staging and CDN/Flutter journeys pass.
