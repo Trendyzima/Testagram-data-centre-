@@ -29,7 +29,7 @@ create table if not exists media_outbox (
  namespace text not null,
  object_key text not null,
  operation text not null check(operation in ('verify','replicate','delete')),
- status text not null default 'pending' check(status in ('pending','processing','retry','done','dead')),
+ status text not null default 'pending' check(status in ('pending','processing','retry','done','dead','cancelled')),
  attempts integer not null default 0,
  available_at timestamptz not null default now(),
  locked_until timestamptz,
@@ -47,7 +47,7 @@ create table if not exists media_operations (
  namespace text not null,
  object_key text not null,
  operation text not null check(operation in ('upload_grant','verify','replicate','delete')),
- outcome text not null check(outcome in ('issued','verified','queued','succeeded','retry','dead')),
+ outcome text not null check(outcome in ('issued','verified','queued','succeeded','retry','dead','cancelled')),
  attempt integer not null default 0 check(attempt>=0),
  detail text,
  created_at timestamptz not null default now()
@@ -55,12 +55,17 @@ create table if not exists media_operations (
 create index if not exists media_operations_object_idx on media_operations(owner_id,namespace,object_key,created_at desc,id desc);
 create index if not exists media_operations_id_idx on media_operations(operation_id,created_at desc);
 
+alter table media_outbox drop constraint if exists media_outbox_status_check;
+alter table media_outbox add constraint media_outbox_status_check check(status in ('pending','processing','retry','done','dead','cancelled'));
+alter table media_operations drop constraint if exists media_operations_outcome_check;
+alter table media_operations add constraint media_operations_outcome_check check(outcome in ('issued','verified','queued','succeeded','retry','dead','cancelled'));
+
 create or replace function media_record_outbox_operation() returns trigger language plpgsql as $$
 begin
- if new.status in ('done','retry','dead') and new.status is distinct from old.status then
+ if new.status in ('done','retry','dead','cancelled') and new.status is distinct from old.status then
   insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome,attempt,detail)
   values ('outbox:'||new.id::text||':'||new.attempts::text,new.owner_id,new.namespace,new.object_key,new.operation,
-          case new.status when 'done' then 'succeeded' when 'dead' then 'dead' else 'retry' end,
+          case new.status when 'done' then 'succeeded' when 'dead' then 'dead' when 'cancelled' then 'cancelled' else 'retry' end,
           new.attempts,new.last_error);
  end if;
  return new;
