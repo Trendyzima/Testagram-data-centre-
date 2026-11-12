@@ -35,8 +35,8 @@ services:
       FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}
       ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
       ONSPACE_AI_API_KEY: ${ONSPACE_AI_API_KEY:-}
-      # B2 and R2 are independent full-copy stores; choose the direct-upload origin per reservation.
-      # Provider keys stay in Backend, never in XClone or node-agent containers.
+      # B2 and R2 are independent full-copy stores; Data Centre owns their credentials.
+      # Provider keys stay only in the dedicated media service, never in Backend or node-agent containers.
       FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}
       DATA_CENTRE_MEDIA_API_URL: ${DATA_CENTRE_MEDIA_API_URL:-}
       FRESH_DATA_CENTRE_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}
