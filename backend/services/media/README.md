@@ -14,8 +14,9 @@ Implements the five routes in `docs/platform/openapi/media-lifecycle-v1.yaml`. E
 
 - Backend remains the product authorization authority; requester_id is recorded as an authenticated service assertion, not independently interpreted as social permission.
 - Upload URLs are short-lived, content-type-bound and byte-limited at the Backend gateway.
-- Verification downloads the full B2 object and computes SHA-256 before enqueuing replication.
-- PostgreSQL transactionally records verification and the replication outbox event.
+- Verification requests are durably queued and return promptly; a worker downloads the full B2 object and computes SHA-256 before enqueuing replication.
+- The media schema lives only in `backend/services/media/migrations/` and is applied to the dedicated `MEDIA_DATABASE_URL`, never the Backend-owned migration database.
+- PostgreSQL transactionally records upload-grant consumption, verification jobs and subsequent replication jobs.
 - Worker uses leased `FOR UPDATE SKIP LOCKED` jobs, bounded exponential retries and a dead state.
 - R2 writes are independently read back and hashed before state becomes `protected`.
 - Deletion is idempotently queued and removes both B2 and R2 copies.
