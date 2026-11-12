@@ -18,6 +18,8 @@ jobs:
       TESTAGRAM_FEDERATION_IMAGE: ghcr.io/trendyzima/testagram-federation:sha-8aa46c04532eab99d533709109c7f86d716cff36
       ALGORITHM_INTERNAL_TOKEN: ci-algorithm-internal-token-long-enough
       FEDERATION_INTERNAL_TOKEN: ci-federation-internal-token-long-enough
+      FEDERATION_BACKEND_INTERNAL_TOKEN: ci-federation-backend-read-token-long-enough
+      FEDERATION_INGRESS_TOKEN: ci-federation-ingress-token-long-enough
       FEDERATION_DATABASE_NAME: testagram_federation
       FEDERATION_DATABASE_URL: postgresql://postgres:testagram@federation-db:5432/testagram_federation?sslmode=disable
       FEDERATION_PUBLIC_BASE_URL: https://federation.testagram.site
@@ -40,7 +42,7 @@ jobs:
       FRESH_MEDIA_ENABLED: "false"
       # Non-production credentials used only to render/validate the fresh Compose model in CI.
       # Production must supply one independently generated secret to both Backend and Federation.
-      FRESH_FEDERATION_INTERNAL_TOKEN: ci-federation-internal-token-long-enough
+      FRESH_FEDERATION_INTERNAL_TOKEN: ci-federation-backend-read-token-long-enough
       FEDERATION_POSTGRES_IMAGE: postgres:17-alpine
       FEDERATION_DB_PASSWORD: ci-federation-db-password-only
       # Compose interpolation fixture only; CI does not connect Federation to this local URL.
@@ -125,7 +127,7 @@ jobs:
           cmp -s vps/docker-compose.yml vps/docker-compose.fresh.yml
           ! grep -Eqi "supabase|SUPABASE" vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml
           # Both services must receive exactly the same non-empty private credential.
-          docker compose --profile federation -f vps/docker-compose.fresh.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; fed=c["services"]["federation-api"]["environment"]; a=api.get("FRESH_FEDERATION_INTERNAL_TOKEN",""); b=fed.get("BACKEND_INTERNAL_TOKEN",""); assert a and b and a == b, "Backend/Federation private token contract mismatch"'
+          docker compose --profile federation -f vps/docker-compose.fresh.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; fed=c["services"]["federation-api"]["environment"]; a=api.get("FRESH_FEDERATION_INTERNAL_TOKEN",""); b=fed.get("BACKEND_INTERNAL_TOKEN",""); ingress=fed.get("FEDERATION_INGRESS_TOKEN",""); assert a and b and a == b, "Federation-to-Backend read token mismatch"; assert ingress and ingress != b, "Backend-to-Federation ingress token must be distinct"'
           ! grep -qi 'supabase' vps/docker-compose.fresh.yml
           ! grep -Eq '/migrations/(002_video_platform|003_production_hardening|004_storage_buckets|005_platform|006_video_upload_safety|007_video_upload_safety)\.sql' vps/docker-compose.fresh.yml
           docker run --rm -e TLS_ADMIN_EMAIL=ci@example.invalid -v "$PWD/vps/fresh/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
@@ -211,6 +213,7 @@ jobs:
           docker network create testagram-egress 2>/dev/null || true
           docker run -d --name testagram-postgres --network testagram-platform --network-alias federation-db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
           trap 'docker rm -f testagram-api testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true; docker network rm testagram-egress testagram-platform >/dev/null 2>&1 || true' EXIT
+          trap 'status=$?; echo "Backend runtime smoke failed at: $BASH_COMMAND"; docker compose -f backend/docker-compose.yml logs --no-color platform algorithm federation-api video notification worker 2>&1 || true; docker logs testagram-api 2>&1 || true; exit "$status"' ERR
           for i in $(seq 1 30); do
             docker exec testagram-postgres pg_isready -U postgres -d postgres >/dev/null 2>&1 && break
             sleep 2
@@ -245,7 +248,8 @@ jobs:
             -e DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram?sslmode=disable \
             -e APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1 -e APPWRITE_PROJECT_ID=ci-project \
             -e ALGORITHM_URL=http://algorithm:8092 -e ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough \
-            -e FEDERATION_INTERNAL_URL=http://federation:8081 -e FEDERATION_INTERNAL_TOKEN=ci-federation-internal-token-long-enough \
+            -e FEDERATION_INTERNAL_URL=http://federation:8081 -e FEDERATION_INTERNAL_TOKEN=ci-federation-ingress-token-long-enough \
+            -e FEDERATION_BACKEND_INTERNAL_TOKEN=ci-federation-backend-read-token-long-enough \
             testagram-backend-ci
           for i in $(seq 1 30); do
             docker exec testagram-api wget -q -O - http://127.0.0.1:8080/readyz >/dev/null 2>&1 && break
@@ -268,13 +272,25 @@ jobs:
           docker compose -f backend/docker-compose.yml exec -T algorithm wget -q -O - --header="Authorization: Bearer ci-algorithm-internal-token-long-enough" --header="X-Testagram-API-Version: 1" --header="X-Request-ID: ci-ranker-smoke" --header="Content-Type: application/json" --post-data='{"now":"2026-11-10T10:00:00Z","candidates":[{"id":"post-ci","authorId":"user-ci","createdAt":"2026-11-10T09:00:00Z","visible":true,"features":{"quality":0.8}}],"limit":10}' http://127.0.0.1:8092/v1/feed/rank | grep -q 'post-ci'
           docker compose -f backend/docker-compose.yml exec -T federation-api /federation-api --healthcheck
           docker run --rm --network testagram-platform postgres:17-alpine wget -q -O - --header="Accept: application/jrd+json" "http://federation:8081/.well-known/webfinger?resource=acct:testagram@testagram.site" | grep -q 'acct:testagram@testagram.site'
+          for i in $(seq 1 30); do
+            docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - http://127.0.0.1:8095/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - http://127.0.0.1:8095/readyz
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"key":"ci.flag","enabled":true,"public":true,"value":{"mode":"green"}}' http://127.0.0.1:8095/v1/config/set || { echo "feature-flag write failed; platform logs follow"; docker compose -f backend/docker-compose.yml logs --no-color platform; exit 1; }
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - http://127.0.0.1:8095/v1/config/ci.flag | grep -Eq '"mode"[[:space:]]*:[[:space:]]*"green"'
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"event_name":"ci.smoke","properties":{"status":"green"}}' http://127.0.0.1:8095/v1/events
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"action":"ci.smoke","resource_type":"workflow","resource_id":"platform","metadata":{"status":"green"}}' http://127.0.0.1:8095/v1/audit
           docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz
+          for i in $(seq 1 30); do
+            docker compose -f backend/docker-compose.yml exec -T notification wget -q -O - http://127.0.0.1:8090/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
           docker compose -f backend/docker-compose.yml exec -T notification wget -q -O - http://127.0.0.1:8090/readyz
+          for i in $(seq 1 30); do
+            docker compose -f backend/docker-compose.yml exec -T worker wget -q -O - http://127.0.0.1:8091/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
           docker compose -f backend/docker-compose.yml exec -T worker wget -q -O - http://127.0.0.1:8091/readyz
 
   android:
