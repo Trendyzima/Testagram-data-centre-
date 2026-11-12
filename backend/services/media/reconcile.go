@@ -128,9 +128,7 @@ func (s *server) originMatches(ctx context.Context, store s3Store, item reconcil
 	if got := resp.Header.Get("Content-Type"); got != "" && got != item.contentType {
 		return false
 	}
-	hash := sha256.New()
-	n, err := io.Copy(hash, io.LimitReader(resp.Body, item.size+1))
-	return err == nil && n == item.size && hex.EncodeToString(hash.Sum(nil)) == item.expectedSHA
+	return digestMatches(resp.Body, item.size, item.expectedSHA)
 }
 
 func (s *server) requeueReplica(ctx context.Context, item reconcileItem) error {
@@ -165,4 +163,13 @@ func (s *server) requeueReplica(ctx context.Context, item reconcileItem) error {
 		err = tx.Commit(ctx)
 	}
 	return err
+}
+
+func digestMatches(body io.Reader, size int64, expected string) bool {
+	if body == nil || size < 0 || len(expected) != 64 {
+		return false
+	}
+	hash := sha256.New()
+	n, err := io.Copy(hash, io.LimitReader(body, size+1))
+	return err == nil && n == size && hex.EncodeToString(hash.Sum(nil)) == expected
 }
