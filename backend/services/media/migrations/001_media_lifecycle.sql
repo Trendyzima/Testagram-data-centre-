@@ -39,3 +39,18 @@ create table if not exists media_outbox (
  unique(owner_id,namespace,object_key,operation)
 );
 create index if not exists media_outbox_claim_idx on media_outbox(status,available_at,locked_until,id);
+
+create table if not exists media_operations (
+ id bigserial primary key,
+ operation_id text not null,
+ owner_id text not null,
+ namespace text not null,
+ object_key text not null,
+ operation text not null check(operation in ('upload_grant','verify','replicate','delete')),
+ outcome text not null check(outcome in ('issued','verified','queued','succeeded','retry','dead')),
+ attempt integer not null default 0 check(attempt>=0),
+ detail text,
+ created_at timestamptz not null default now()
+);
+create index if not exists media_operations_object_idx on media_operations(owner_id,namespace,object_key,created_at desc,id desc);
+create index if not exists media_operations_id_idx on media_operations(operation_id,created_at desc);
