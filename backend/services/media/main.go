@@ -78,7 +78,7 @@ func (s *server) uploadURL(w http.ResponseWriter,r *http.Request){
 	ctx,c:=context.WithTimeout(r.Context(),5*time.Second);defer c()
 	exp:=time.Now().UTC().Add(s.cfg.uploadTTL)
 	tag,err:=s.db.Exec(ctx,`insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status,updated_at) values($1,$2,$3,$4,$5,'upload_pending',now()) on conflict(owner_id,namespace,object_key) do update set content_type=excluded.content_type,size_bytes=excluded.size_bytes,status='upload_pending',sha256=null,primary_verified_at=null,replica_verified_at=null,updated_at=now() where media_objects.status in ('upload_pending','deleted')`,in.OwnerID,in.Namespace,in.Key,in.ContentType,in.SizeBytes)
-	if err!=nil{writeErr(w,409,"object key already has an active lifecycle");return}
+	if err!=nil||tag.RowsAffected()!=1{writeErr(w,409,"object key already has an active lifecycle");return}
 	id:=randomID()
 	_,err=s.db.Exec(ctx,`insert into media_upload_grants(id,owner_id,namespace,object_key,max_bytes,expires_at) values($1,$2,$3,$4,$5,$6)`,id,in.OwnerID,in.Namespace,in.Key,in.SizeBytes,exp)
 	if err!=nil{writeErr(w,503,"could not persist upload grant");return}
