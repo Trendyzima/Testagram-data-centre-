@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"strings"
+	"sync"
 	"net/http"
 	"time"
 
@@ -86,48 +87,48 @@ func (s *server) reconcileProtectedBatch(parent context.Context, limit int) erro
 		return err
 	}
 
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 2)
+	errCh := make(chan error, len(items))
 	for _, item := range items {
-		primaryOK, primaryErr := s.originMatches(ctx, s.cfg.primary, item)
-		if primaryErr != nil {
-			_, _ = s.db.Exec(ctx, `update media_objects set reconciliation_claimed_at=null where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
-			return fmt.Errorf("primary origin reconciliation failed: %w", primaryErr)
-		}
-		replicaOK, replicaErr := s.originMatches(ctx, s.cfg.replica, item)
-		if replicaErr != nil {
-			_, _ = s.db.Exec(ctx, `update media_objects set reconciliation_claimed_at=null where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
-			return fmt.Errorf("replica origin reconciliation failed: %w", replicaErr)
-		}
-		switch {
-		case primaryOK && replicaOK:
-			_, err = s.db.Exec(ctx, `update media_objects set reconciled_at=now(),reconciliation_claimed_at=null
-				where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`,
-				item.owner, item.namespace, item.key)
-		case primaryOK && !replicaOK:
-			err = s.requeueReplica(ctx, item)
-		default:
-			// Fail closed: do not serve an object whose primary origin no longer
-			// matches its verified digest. If the replica is intact, operators
-			// can restore the primary without exposing an unverified object.
-			_, err = s.db.Exec(ctx, `update media_objects set status='replication_failed',
-				reconciled_at=now(),reconciliation_claimed_at=null,updated_at=now()
-				where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`,
-				item.owner, item.namespace, item.key)
-			if err == nil {
-				log.Printf("media reconciliation quarantined object owner=%s namespace=%s key=%s primary_ok=false replica_ok=%t",
-					item.owner, item.namespace, item.key, replicaOK)
-			}
-		}
-		if err != nil {
-			// Expire the claim quickly so transient DB failures are retried.
-			_, _ = s.db.Exec(ctx, `update media_objects set reconciliation_claimed_at=null
-				where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`,
-				item.owner, item.namespace, item.key)
-			return err
-		}
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(item reconcileItem) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if err := s.reconcileOne(ctx, item); err != nil { errCh <- err }
+		}(item)
 	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh { if err != nil { return err } }
 	return nil
 }
 
+
+func (s *server) reconcileOne(ctx context.Context, item reconcileItem) error {
+	primaryOK, primaryErr := s.originMatches(ctx, s.cfg.primary, item)
+	if primaryErr != nil {
+		_, _ = s.db.Exec(ctx, `update media_objects set reconciliation_claimed_at=null where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
+		return fmt.Errorf("primary origin reconciliation failed: %w", primaryErr)
+	}
+	replicaOK, replicaErr := s.originMatches(ctx, s.cfg.replica, item)
+	if replicaErr != nil {
+		_, _ = s.db.Exec(ctx, `update media_objects set reconciliation_claimed_at=null where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
+		return fmt.Errorf("replica origin reconciliation failed: %w", replicaErr)
+	}
+	switch {
+	case primaryOK && replicaOK:
+		_, err := s.db.Exec(ctx, `update media_objects set reconciled_at=now(),reconciliation_claimed_at=null where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
+		return err
+	case primaryOK && !replicaOK:
+		return s.requeueReplica(ctx, item)
+	default:
+		_, err := s.db.Exec(ctx, `update media_objects set status='replication_failed',reconciled_at=now(),reconciliation_claimed_at=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
+		if err == nil { log.Printf("media reconciliation quarantined object owner=%s namespace=%s key=%s primary_ok=false replica_ok=%t", item.owner, item.namespace, item.key, replicaOK) }
+		return err
+	}
+}
 func (s *server) originMatches(ctx context.Context, store s3Store, item reconcileItem) (bool, error) {
 	resp, err := s.signedRequest(ctx, store, http.MethodGet, item.key, nil, "")
 	if err != nil {
