@@ -144,14 +144,14 @@ func (s *server) verify(w http.ResponseWriter,r *http.Request){
 func (s *server) status(w http.ResponseWriter,r *http.Request){
 	if r.Method!=http.MethodGet{method(w,"GET");return};if !s.auth(w,r){return}
 	owner,ns,key:=r.URL.Query().Get("owner_id"),r.URL.Query().Get("namespace"),r.URL.Query().Get("key")
-	if owner==""||!validNamespace(ns)||key==""||len(key)>1024{writeErr(w,400,"invalid status query");return}
+	if owner==""||!validNamespace(ns)||!validObjectKey(key){writeErr(w,400,"invalid status query");return}
 	var o object;err:=s.db.QueryRow(r.Context(),`select owner_id,namespace,object_key,content_type,size_bytes,coalesce(sha256,''),status,primary_verified_at,replica_verified_at from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&o.OwnerID,&o.Namespace,&o.Key,&o.ContentType,&o.Size,&o.SHA,&o.Status,&o.PrimaryVerified,&o.ReplicaVerified)
 	if errors.Is(err,pgx.ErrNoRows){writeErr(w,404,"object not found");return};if err!=nil{writeErr(w,503,"media state unavailable");return}
 	writeJSON(w,200,map[string]any{"status":o.Status,"content_type":o.ContentType,"size_bytes":o.Size,"sha256":o.SHA,"primary_verified_at":o.PrimaryVerified,"replica_verified_at":o.ReplicaVerified})
 }
 func (s *server) downloadURL(w http.ResponseWriter,r *http.Request){
 	if r.Method!=http.MethodPost{method(w,"POST");return};if !s.auth(w,r){return}
-	var in downloadRequest;if !decode(w,r,&in)||!validIdentity(in.RequesterID)||!validIdentity(in.OwnerID)||!validNamespace(in.Namespace)||in.Key==""{writeErr(w,400,"invalid download request");return}
+	var in downloadRequest;if !decode(w,r,&in)||!validIdentity(in.RequesterID)||!validIdentity(in.OwnerID)||!validNamespace(in.Namespace)||!validObjectKey(in.Key){writeErr(w,400,"invalid download request");return}
 	var status string;err:=s.db.QueryRow(r.Context(),`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key).Scan(&status)
 	if err!=nil||status!="protected"{writeErr(w,404,"protected object not found");return}
 	u,err:=presign(s.cfg.replica,http.MethodGet,in.Key,s.cfg.downloadTTL,"");provider:=s.cfg.replica.name
@@ -161,7 +161,7 @@ func (s *server) downloadURL(w http.ResponseWriter,r *http.Request){
 }
 func (s *server) delete(w http.ResponseWriter,r *http.Request){
 	if r.Method!=http.MethodPost{method(w,"POST");return};if !s.auth(w,r){return}
-	var in deleteRequest;if !decode(w,r,&in)||!validIdentity(in.RequesterID)||!validIdentity(in.OwnerID)||!validNamespace(in.Namespace)||in.Key==""{writeErr(w,400,"invalid delete request");return}
+	var in deleteRequest;if !decode(w,r,&in)||!validIdentity(in.RequesterID)||!validIdentity(in.OwnerID)||!validNamespace(in.Namespace)||!validObjectKey(in.Key){writeErr(w,400,"invalid delete request");return}
 	ctx,c:=context.WithTimeout(r.Context(),5*time.Second);defer c()
 	tx,err:=s.db.Begin(ctx);if err!=nil{writeErr(w,503,"durable state unavailable");return};defer tx.Rollback(ctx)
 	var old string;err=tx.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3 for update`,in.OwnerID,in.Namespace,in.Key).Scan(&old)
@@ -242,7 +242,7 @@ func presign(store s3Store,method,key string,ttl time.Duration,contentType strin
 }
 type lengthReader struct{io.Reader;n int64}
 func(r *lengthReader)Len64()int64{return r.n}
-func validateStore(s s3Store)error{u,err:=url.Parse(strings.TrimSpace(s.endpoint));if err!=nil||u.Scheme!="https"||u.Host==""||u.User!=nil||u.RawQuery!=""||u.Fragment!=""||(u.Path!=""&&u.Path!="/"){return errors.New("S3 endpoint must be an HTTPS origin without credentials, path, query or fragment")};if s.region==""||s.bucket==""||s.access==""||s.secret==""||strings.ContainsAny(s.region+s.bucket+s.access+s.secret,"\r\n"){return errors.New("S3 region, bucket and credentials must be non-empty single-line values")};return nil}
+func validateStore(s s3Store)error{u,err:=url.Parse(strings.TrimSpace(s.endpoint));if err!=nil||u.Scheme!="https"||u.Host==""||u.User!=nil||u.RawQuery!=""||u.Fragment!=""||(u.Path!=""&&u.Path!="/"){return errors.New("S3 endpoint must be an HTTPS origin without credentials, path, query or fragment")};if s.region==""||len(s.region)>64||strings.ContainsAny(s.region,"/\\\r\n")||s.bucket==""||len(s.bucket)>255||strings.ContainsAny(s.bucket,"/\\\r\n")||s.access==""||s.secret==""||strings.ContainsAny(s.access+s.secret,"\r\n"){return errors.New("S3 region, bucket and credentials must be valid non-empty single-line values")};return nil}
 func objectURL(s s3Store,key string)(*url.URL,error){
 	if err:=validateStore(s);err!=nil{return nil,err};base,err:=url.Parse(strings.TrimRight(s.endpoint,"/"));if err!=nil{return nil,err}
 	base.Path="/"+s.bucket+"/"+strings.TrimLeft(key,"/");return base,nil
@@ -250,7 +250,8 @@ func objectURL(s s3Store,key string)(*url.URL,error){
 func signingKey(secret,day,region string)[]byte{k:=hmacSHA([]byte("AWS4"+secret),day);k=hmacSHA(k,region);k=hmacSHA(k,"s3");return hmacSHA(k,"aws4_request")}
 func hmacSHA(key []byte,data string)[]byte{h:=hmac.New(sha256.New,key);_,_=h.Write([]byte(data));return h.Sum(nil)}
 func hashHex(b []byte)string{h:=sha256.Sum256(b);return hex.EncodeToString(h[:])}
-func validUpload(in uploadRequest)bool{if !validIdentity(in.OwnerID)||!validNamespace(in.Namespace)||in.Key==""||len(in.Key)>1024||strings.HasPrefix(in.Key,"/")||strings.ContainsAny(in.Key,"\\\x00\r\n")||in.ContentType==""||len(in.ContentType)>160||strings.ContainsAny(in.ContentType,"\r\n")||in.SizeBytes<=0||in.SizeBytes>1<<40{return false};for _,part:=range strings.Split(in.Key,"/"){if part=="."||part==".."{return false}};return true}
+func validUpload(in uploadRequest)bool{return validIdentity(in.OwnerID)&&validNamespace(in.Namespace)&&validObjectKey(in.Key)&&in.ContentType!=""&&len(in.ContentType)<=160&&!strings.ContainsAny(in.ContentType,"\r\n")&&in.SizeBytes>0&&in.SizeBytes<=1<<40}
+func validObjectKey(key string)bool{if key==""||len(key)>1024||strings.HasPrefix(key,"/")||strings.ContainsAny(key,"\\\x00\r\n"){return false};for _,part:=range strings.Split(key,"/"){if part==""||part=="."||part==".."{return false}};return true}
 func validIdentity(v string)bool{return strings.TrimSpace(v)!=""&&len(v)<=128&&!strings.ContainsAny(v,"\x00\r\n")}
 func validNamespace(v string)bool{return v=="media-public"||v=="media-private"}
 func decode(w http.ResponseWriter,r *http.Request,v any)bool{r.Body=http.MaxBytesReader(w,r.Body,maxJSON);defer r.Body.Close();d:=json.NewDecoder(r.Body);d.DisallowUnknownFields();if d.Decode(v)!=nil{return false};var extra any;return d.Decode(&extra)==io.EOF}
