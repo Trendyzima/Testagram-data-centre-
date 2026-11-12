@@ -214,6 +214,7 @@ func (s *server) verifyPrimary(ctx context.Context,owner,ns,key string)error{
 	tag,err:=tx.Exec(ctx,`update media_objects set status='replication_pending',primary_verified_at=$4,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('uploaded','replication_failed') and primary_verified_at is null`,owner,ns,key,now)
 	if err==nil&&tag.RowsAffected()!=1{err=errors.New("object lifecycle changed during primary verification")}
 	if err==nil{_,err=tx.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'replicate','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),locked_until=null,last_error=null`,owner,ns,key)}
+	if err==nil{eventID,idErr:=randomID();if idErr!=nil{err=idErr}else{_,err=tx.Exec(ctx,`insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome) values($1,$2,$3,$4,'replicate','queued')`,eventID,owner,ns,key)}}
 	if err==nil{err=tx.Commit(ctx)};return err
 }
 func (s *server) replicate(ctx context.Context,owner,ns,key string)error{
