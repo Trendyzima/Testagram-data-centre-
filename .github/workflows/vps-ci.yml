@@ -226,6 +226,36 @@ jobs:
         run: |
           docker compose -f backend/docker-compose.yml build platform video video-worker notification worker
           docker build -f backend/services/media/Dockerfile -t testagram-media-ci .
+      - name: Dedicated media service runtime smoke test
+        run: |
+          set -euo pipefail
+          token=ci-media-internal-token-at-least-32-chars
+          docker run -d --name testagram-media-runtime-ci --network host \
+            -e MEDIA_ADDR=:8096 \
+            -e MEDIA_INTERNAL_TOKEN="$token" \
+            -e MEDIA_DATABASE_URL=postgresql://postgres:testagram@127.0.0.1:5432/testagram_media_ci?sslmode=disable \
+            -e B2_S3_ENDPOINT=https://s3.us-west-004.backblazeb2.com \
+            -e B2_S3_REGION=us-west-004 -e B2_S3_BUCKET=ci-media-primary \
+            -e B2_S3_ACCESS_KEY_ID=ci-b2-access -e B2_S3_SECRET_ACCESS_KEY=ci-b2-secret \
+            -e CLOUDFLARE_R2_ENDPOINT=https://ci-account.r2.cloudflarestorage.com \
+            -e CLOUDFLARE_R2_REGION=auto -e CLOUDFLARE_R2_BUCKET=ci-media-replica \
+            -e CLOUDFLARE_R2_ACCESS_KEY_ID=ci-r2-access -e CLOUDFLARE_R2_SECRET_ACCESS_KEY=ci-r2-secret \
+            testagram-media-ci
+          trap 'docker rm -f testagram-media-runtime-ci >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8096/readyz >/dev/null; then ready=1; break; fi
+            sleep 2
+          done
+          test "$ready" = 1
+          unauthorized="$(curl -sS -o /tmp/media-unauthorized.json -w '%{http_code}' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2Fsmoke')"
+          test "$unauthorized" = 401
+          created="$(curl -sS -o /tmp/media-upload-grant.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/smoke","content_type":"video/mp4","size_bytes":123}')"
+          test "$created" = 201
+          python -c 'import json; d=json.load(open("/tmp/media-upload-grant.json")); assert d["primary"]=="backblaze_b2" and d["max_bytes"]==123 and d["upload_url"].startswith("https://")'
+          state="$(curl -sS -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2Fsmoke')"
+          python -c 'import json,sys; assert json.loads(sys.argv[1])["status"]=="upload_pending"' "$state"
+          echo "Dedicated media API auth, durable upload grant, status and B2 SigV4 presign: PASS"
       - name: Backend runtime smoke test
         run: |
           set -euo pipefail
