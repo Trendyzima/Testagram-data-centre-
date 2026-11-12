@@ -193,7 +193,9 @@ func presign(store s3Store,method,key string,ttl time.Duration,contentType strin
 	canonical:=method+"\n"+u.EscapedPath()+"\n"+u.Query().Encode()+"\n"+headers+"\n"+signed+"\nUNSIGNED-PAYLOAD"
 	toSign:="AWS4-HMAC-SHA256\n"+date+"\n"+scope+"\n"+hashHex([]byte(canonical));sig:=hex.EncodeToString(hmacSHA(signingKey(store.secret,day,store.region),toSign));q=u.Query();q.Set("X-Amz-Signature",sig);u.RawQuery=q.Encode();return u.String(),nil
 }
-type lengthReader struct{io.Reader;n int64}\nfunc(r *lengthReader)Len64()int64{return r.n}\nfunc objectURL(s s3Store,key string)(*url.URL,error){
+type lengthReader struct{io.Reader;n int64}
+func(r *lengthReader)Len64()int64{return r.n}
+func objectURL(s s3Store,key string)(*url.URL,error){
 	base,err:=url.Parse(strings.TrimRight(s.endpoint,"/"));if err!=nil||base.Host==""||(base.Scheme!="https"&&base.Scheme!="http")||base.User!=nil{return nil,errors.New("invalid S3 endpoint")}
 	base.Path=strings.TrimRight(base.Path,"/")+"/"+s.bucket+"/"+strings.TrimLeft(key,"/");return base,nil
 }
