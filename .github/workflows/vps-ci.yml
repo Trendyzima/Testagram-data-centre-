@@ -33,7 +33,7 @@ jobs:
       PLATFORM_INTERNAL_TOKEN: ci-platform-internal-token-long-enough
       VIDEO_SIGNING_SECRET: ci-video-signing-secret-at-least-32-bytes
       NOTIFICATION_INTERNAL_TOKEN: ci-notification-internal-token-long-enough
-      APPWRITE_ENDPOINT: https://cloud.appwrite.io/v1
+      APPWRITE_ENDPOINT: https://fra.cloud.appwrite.io/v1
       APPWRITE_PROJECT_ID: ci-project
       APPWRITE_DATABASE_ID: ci-database
       APPWRITE_SERVER_API_KEY: ci-appwrite-server-key
