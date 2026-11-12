@@ -418,7 +418,7 @@ jobs:
           set -euo pipefail
           TESTAGRAM_BACKUP_AGE_IDENTITY_FILE="$STAGE/restore-identity.txt" \
           TESTAGRAM_RESTORE_POSTGRES_IMAGE="$RESTORE_IMAGE" \
-            vps/restore-drill.sh "$STAGE/testagram-ci-backup.tar.gz.age"
+            bash vps/restore-drill.sh "$STAGE/testagram-ci-backup.tar.gz.age"
 
       - name: Verify the restore drill left no test containers
         if: always()
