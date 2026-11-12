@@ -133,7 +133,7 @@ jobs:
             -e PGPASSWORD=testagram \
             -v "$PWD:/workspace:ro" \
             postgres:17-alpine \
-            sh -ec 'createdb -h 127.0.0.1 -U postgres testagram_media_ci; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/001_media_lifecycle.sql; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/test_media_lifecycle.sql; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -Atqc "SELECT to_regclass(\$\$public.media_objects\$\$) IS NOT NULL AND to_regclass(\$\$public.media_outbox\$\$) IS NOT NULL" | grep -qx t'
+            sh -ec 'createdb -h 127.0.0.1 -U postgres testagram_media_ci; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/001_media_lifecycle.sql; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/test_media_lifecycle.sql; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -Atqc "SELECT to_regclass(\$\$public.media_objects\$\$) IS NOT NULL AND to_regclass(\$\$public.media_outbox\$\$) IS NOT NULL AND to_regclass(\$\$public.media_operations\$\$) IS NOT NULL AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname=\$\$media_outbox_operation_journal\$\$ AND NOT tgisinternal)" | grep -qx t'
       - name: Validate Compose syntax
         run: |
           set -euo pipefail
