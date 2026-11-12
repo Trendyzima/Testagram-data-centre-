@@ -193,7 +193,7 @@ func (s *server) processOne(parent context.Context)error{
 	if err!=nil{
 		var objectStatus string
 		stateErr:=s.db.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&objectStatus)
-		if stateErr==nil&&(objectStatus=='delete_pending'||objectStatus=='deleted') { _,cancelErr:=s.db.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete',updated_at=now() where id=$1 and status='processing'`,id);return cancelErr }
+		if stateErr==nil&&(objectStatus=="delete_pending"||objectStatus=="deleted") { _,cancelErr:=s.db.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete',updated_at=now() where id=$1 and status='processing'`,id);return cancelErr }
 		tag,updateErr:=s.db.Exec(ctx,`update media_outbox set status=case when attempts>=12 then 'dead' else 'retry' end,available_at=now()+make_interval(secs=>least(3600,power(2,least(attempts,10))::int)),locked_until=null,last_error=left($2,1000),updated_at=now() where id=$1 and status='processing'`,id,err.Error())
 		if updateErr!=nil{return updateErr};if tag.RowsAffected()==0{return nil}
 		if op=="replicate"||op=="verify"{_,_=s.db.Exec(ctx,`update media_objects set status='replication_failed',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status not in ('delete_pending','deleted')`,owner,ns,key)}
