@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -80,4 +82,22 @@ func TestObjectURLRejectsTraversalAndUnsafeBucket(t *testing.T) {
 	if _,err:=objectURL(store,"users/../secret");err==nil{t.Fatal("traversal key accepted")}
 	store.bucket="../bucket"
 	if _,err:=objectURL(store,"users/user/object");err==nil{t.Fatal("unsafe bucket path accepted")}
+}
+
+func TestDigestMatchesExactSizeAndSHA256(t *testing.T) {
+	payload := "testagram-media-payload"
+	sum := sha256.Sum256([]byte(payload))
+	expected := hex.EncodeToString(sum[:])
+	if !digestMatches(strings.NewReader(payload), int64(len(payload)), expected) {
+		t.Fatal("matching object digest rejected")
+	}
+	if digestMatches(strings.NewReader(payload+"x"), int64(len(payload)), expected) {
+		t.Fatal("oversized object accepted")
+	}
+	if digestMatches(strings.NewReader(payload[:len(payload)-1]), int64(len(payload)), expected) {
+		t.Fatal("truncated object accepted")
+	}
+	if digestMatches(strings.NewReader(payload), int64(len(payload)), strings.Repeat("0",64)) {
+		t.Fatal("wrong digest accepted")
+	}
 }
