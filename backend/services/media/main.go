@@ -148,7 +148,7 @@ func (s *server) verify(w http.ResponseWriter,r *http.Request){
 func (s *server) status(w http.ResponseWriter,r *http.Request){
 	if r.Method!=http.MethodGet{method(w,"GET");return};if !s.auth(w,r){return}
 	owner,ns,key:=r.URL.Query().Get("owner_id"),r.URL.Query().Get("namespace"),r.URL.Query().Get("key")
-	if owner==""||!validNamespace(ns)||!validObjectKey(key){writeErr(w,400,"invalid status query");return}
+	if !validIdentity(owner)||!validNamespace(ns)||!validObjectKey(key){writeErr(w,400,"invalid status query");return}
 	var o object;err:=s.db.QueryRow(r.Context(),`select owner_id,namespace,object_key,content_type,size_bytes,coalesce(sha256,''),status,primary_verified_at,replica_verified_at from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&o.OwnerID,&o.Namespace,&o.Key,&o.ContentType,&o.Size,&o.SHA,&o.Status,&o.PrimaryVerified,&o.ReplicaVerified)
 	if errors.Is(err,pgx.ErrNoRows){writeErr(w,404,"object not found");return};if err!=nil{writeErr(w,503,"media state unavailable");return}
 	writeJSON(w,200,map[string]any{"status":o.Status,"content_type":o.ContentType,"size_bytes":o.Size,"sha256":o.SHA,"primary_verified_at":o.PrimaryVerified,"replica_verified_at":o.ReplicaVerified})
