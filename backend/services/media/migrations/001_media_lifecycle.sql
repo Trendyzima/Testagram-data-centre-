@@ -74,3 +74,15 @@ $$;
 drop trigger if exists media_outbox_operation_journal on media_outbox;
 create trigger media_outbox_operation_journal after update of status on media_outbox
 for each row execute function media_record_outbox_operation();
+
+create table if not exists media_operations (
+ operation_id text primary key,
+ owner_id text not null,
+ namespace text not null check(namespace in ('media-public','media-private')),
+ object_key text not null,
+ operation text not null check(operation in ('upload_grant','verify','replicate','delete')),
+ outcome text not null check(outcome in ('issued','queued','completed','failed')),
+ created_at timestamptz not null default now(),
+ updated_at timestamptz not null default now()
+);
+create index if not exists media_operations_object_idx on media_operations(owner_id,namespace,object_key,created_at desc);
