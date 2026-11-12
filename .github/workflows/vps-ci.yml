@@ -248,17 +248,17 @@ jobs:
             sleep 2
           done
           test "$ready" = 1
-          unauthorized="$(curl -sS -o /tmp/media-unauthorized.json -w '%{http_code}' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2Fsmoke')"
+          unauthorized="$(curl -sS -o /tmp/media-unauthorized.json -w '%{http_code}' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2F0123456789abcdef0123456789abcdef')"
           test "$unauthorized" = 401
-          created="$(curl -sS -o /tmp/media-upload-grant.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/smoke","content_type":"video/mp4","size_bytes":123}')"
+          created="$(curl -sS -o /tmp/media-upload-grant.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123}')"
           test "$created" = 201
           python -c 'import json; d=json.load(open("/tmp/media-upload-grant.json")); assert d["primary"]=="backblaze_b2" and d["max_bytes"]==123 and d["upload_url"].startswith("https://")'
-          state="$(curl -sS -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2Fsmoke')"
+          state="$(curl -sS -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2F0123456789abcdef0123456789abcdef')"
           python -c 'import json,sys; assert json.loads(sys.argv[1])["status"]=="upload_pending"' "$state"
-          verified="$(curl -sS -o /tmp/media-verify.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/verify -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/smoke","content_type":"video/mp4","size_bytes":123,"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}')"
+          verified="$(curl -sS -o /tmp/media-verify.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/verify -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123,"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}')"
           test "$verified" = 202
           python -c 'import json; assert json.load(open("/tmp/media-verify.json"))["status"]=="replication_pending"'
-          state="$(curl -sS -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2Fsmoke')"
+          state="$(curl -sS -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2F0123456789abcdef0123456789abcdef')"
           python -c 'import json,sys; assert json.loads(sys.argv[1])["status"] in ("uploaded","replication_pending","replication_failed")' "$state"
           echo "Dedicated media API auth, durable upload grant, queued verification, status and B2 SigV4 presign: PASS"
       - name: Backend runtime smoke test
