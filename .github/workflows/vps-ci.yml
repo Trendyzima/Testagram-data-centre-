@@ -18,6 +18,7 @@ jobs:
       TESTAGRAM_FEDERATION_IMAGE: ghcr.io/trendyzima/testagram-federation:sha-8aa46c04532eab99d533709109c7f86d716cff36
       ALGORITHM_INTERNAL_TOKEN: ci-algorithm-internal-token-long-enough
       FEDERATION_INTERNAL_TOKEN: ci-federation-internal-token-long-enough
+      FEDERATION_BACKEND_INTERNAL_TOKEN: ci-federation-backend-token-long-enough
       FEDERATION_DATABASE_NAME: testagram_federation
       FEDERATION_DATABASE_URL: postgresql://postgres:testagram@federation-db:5432/testagram_federation?sslmode=disable
       FEDERATION_PUBLIC_BASE_URL: https://federation.testagram.site
