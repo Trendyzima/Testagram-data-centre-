@@ -19,6 +19,7 @@ create table if not exists media_upload_grants (
  object_key text not null,
  max_bytes bigint not null check(max_bytes>0),
  expires_at timestamptz not null,
+ consumed_at timestamptz,
  created_at timestamptz not null default now()
 );
 create index if not exists media_upload_grants_lookup_idx on media_upload_grants(owner_id,namespace,object_key,expires_at desc);
