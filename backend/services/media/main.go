@@ -172,7 +172,7 @@ func (s *server) delete(w http.ResponseWriter,r *http.Request){
 	if errors.Is(err,pgx.ErrNoRows){writeJSON(w,200,map[string]string{"status":"deleted"});return};if err!=nil{writeErr(w,503,"media state unavailable");return}
 	if old=="deleted"{writeJSON(w,200,map[string]string{"status":"deleted"});return}
 	_,err=tx.Exec(ctx,`update media_objects set status='delete_pending',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key)
-	if err==nil{_,err=tx.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete' where owner_id=$1 and namespace=$2 and object_key=$3 and operation in ('verify','replicate') and status in ('pending','retry','processing')`,in.OwnerID,in.Namespace,in.Key)}
+	if err==nil{_,err=tx.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete' where owner_id=$1 and namespace=$2 and object_key=$3 and operation in ('verify','replicate') and status in ('pending','retry')`,in.OwnerID,in.Namespace,in.Key)}
 	if err==nil{_,err=tx.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'delete','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),last_error=null`,in.OwnerID,in.Namespace,in.Key)}
 	if err==nil{eventID,idErr:=randomID();if idErr!=nil{err=idErr}else{_,err=tx.Exec(ctx,`insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome) values($1,$2,$3,$4,'delete','queued')`,eventID,in.OwnerID,in.Namespace,in.Key)}}
 	if err==nil{err=tx.Commit(ctx)};if err!=nil{writeErr(w,503,"could not queue durable deletion");return}
@@ -191,6 +191,9 @@ func (s *server) processOne(parent context.Context)error{
 	_,err=tx.Exec(ctx,`update media_outbox set status='processing',locked_until=now()+interval '35 minutes',attempts=attempts+1 where id=$1`,id);if err!=nil{return err};if err=tx.Commit(ctx);err!=nil{return err}
 	switch op{case "verify":err=s.verifyPrimary(ctx,owner,ns,key);case "replicate":err=s.replicate(ctx,owner,ns,key);case "delete":err=s.deleteOrigins(ctx,owner,ns,key);default:err=fmt.Errorf("unknown outbox operation %q",op)}
 	if err!=nil{
+		var objectStatus string
+		stateErr:=s.db.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&objectStatus)
+		if stateErr==nil&&(objectStatus=='delete_pending'||objectStatus=='deleted') { _,cancelErr:=s.db.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete',updated_at=now() where id=$1 and status='processing'`,id);return cancelErr }
 		tag,updateErr:=s.db.Exec(ctx,`update media_outbox set status=case when attempts>=12 then 'dead' else 'retry' end,available_at=now()+make_interval(secs=>least(3600,power(2,least(attempts,10))::int)),locked_until=null,last_error=left($2,1000),updated_at=now() where id=$1 and status='processing'`,id,err.Error())
 		if updateErr!=nil{return updateErr};if tag.RowsAffected()==0{return nil}
 		if op=="replicate"||op=="verify"{_,_=s.db.Exec(ctx,`update media_objects set status='replication_failed',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status not in ('delete_pending','deleted')`,owner,ns,key)}
