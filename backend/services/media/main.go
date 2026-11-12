@@ -163,7 +163,7 @@ func (s *server) replicate(ctx context.Context,owner,ns,key string)error{
 	var size int64;var typ,want string
 	if err:=s.db.QueryRow(ctx,`select size_bytes,content_type,sha256 from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&size,&typ,&want);err!=nil{return err}
 	resp,err:=s.signedRequest(ctx,s.cfg.primary,http.MethodGet,key,nil,"");if err!=nil{return err};if resp.StatusCode!=200{resp.Body.Close();return fmt.Errorf("primary GET status %d",resp.StatusCode)}
-	h:=sha256.New();reader:=io.TeeReader(io.LimitReader(resp.Body,size+1),h)
+	h:=sha256.New();reader:=&lengthReader{Reader:io.TeeReader(io.LimitReader(resp.Body,size+1),h),n:size}
 	put,err:=s.signedRequest(ctx,s.cfg.replica,http.MethodPut,key,reader,typ);closeErr:=resp.Body.Close();if err!=nil{return err};if closeErr!=nil{return closeErr};if put.StatusCode<200||put.StatusCode>=300{put.Body.Close();return fmt.Errorf("replica PUT status %d",put.StatusCode)};put.Body.Close()
 	if hex.EncodeToString(h.Sum(nil))!=want{return errors.New("primary object changed during replication")}
 	check,err:=s.signedRequest(ctx,s.cfg.replica,http.MethodGet,key,nil,"");if err!=nil{return err};defer check.Body.Close();if check.StatusCode!=200{return fmt.Errorf("replica read-back status %d",check.StatusCode)}
@@ -176,7 +176,7 @@ func (s *server) deleteOrigins(ctx context.Context,owner,ns,key string)error{
 }
 func (s *server) signedRequest(ctx context.Context,store s3Store,method,key string,body io.Reader,contentType string)(*http.Response,error){
 	u,err:=objectURL(store,key);if err!=nil{return nil,err};payload:="UNSIGNED-PAYLOAD";date:=time.Now().UTC().Format("20060102T150405Z");day:=date[:8]
-	req,err:=http.NewRequestWithContext(ctx,method,u.String(),body);if err!=nil{return nil,err}
+	req,err:=http.NewRequestWithContext(ctx,method,u.String(),body);if err!=nil{return nil,err};if sized,ok:=body.(interface{Len64() int64});ok{req.ContentLength=sized.Len64()}
 	req.Header.Set("X-Amz-Date",date);req.Header.Set("X-Amz-Content-Sha256",payload);if contentType!=""{req.Header.Set("Content-Type",contentType)}
 	canonicalHeaders:="host:"+u.Host+"\nx-amz-content-sha256:"+payload+"\nx-amz-date:"+date+"\n";signed:="host;x-amz-content-sha256;x-amz-date"
 	if contentType!=""{canonicalHeaders="content-type:"+contentType+"\n"+canonicalHeaders;signed="content-type;"+signed}
