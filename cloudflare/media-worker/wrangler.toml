@@ -8,9 +8,8 @@ workers_dev = false
 binding = "MEDIA_BUCKET"
 bucket_name = "testagram-media"
 
-[[routes]]
-pattern = "media.testagram.site"
-custom_domain = true
+# Intentionally no public route: media.testagram.site belongs to Testagram Go CDN.
+# This legacy worker must not claim the public media hostname.
 
 [vars]
 FRONTEND_ORIGINS = "https://testagram.site,https://www.testagram.site"
