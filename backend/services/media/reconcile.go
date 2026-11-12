@@ -5,13 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 )
 
 // reconcileWorker periodically re-reads protected objects from both independent
@@ -55,7 +53,7 @@ func (s *server) reconcileProtectedBatch(parent context.Context, limit int) erro
 		  and coalesce(reconciled_at,replica_verified_at,updated_at) <= now()-interval '24 hours'
 		  and (reconciliation_claimed_at is null or reconciliation_claimed_at < now()-interval '15 minutes')
 		order by coalesce(reconciled_at,replica_verified_at,updated_at),owner_id,object_key
-		for update skip locked limit $1`, limit)
+		limit $1 for update skip locked`, limit)
 	if err != nil {
 		return err
 	}
@@ -160,7 +158,7 @@ func (s *server) requeueReplica(ctx context.Context, item reconcileItem) error {
 		} else {
 			_, err = tx.Exec(ctx, `insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome,detail)
 				values($1,$2,$3,$4,'replicate','queued',$5)`,
-				eventID, item.owner, item.namespace, item.key, fmt.Sprintf("scheduled after periodic replica verification"))
+				eventID, item.owner, item.namespace, item.key, "scheduled after periodic replica verification")
 		}
 	}
 	if err == nil {
