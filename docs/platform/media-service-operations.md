@@ -53,3 +53,10 @@ The ordinary CI runtime smoke deliberately uses placeholder endpoints and creden
 Use dedicated, private, empty-or-test staging buckets and least-privilege keys that can only read, write and delete objects in those buckets. Do not reuse production bucket names or expose these values in chat or source control.
 
 Then run **Actions → Live media provider smoke → Run workflow**, and explicitly check `confirm_live_provider_writes`. The workflow writes a unique `ci-smoke/` object to each provider, reads it back and verifies exact length plus SHA-256, checks HEAD metadata, then deletes the object. Cleanup is attempted even after a failed assertion. A green run is the first evidence of real B2/R2 API compatibility; it still does not replace a full Backend-to-CDN staging upload/playback test.
+
+
+## InstaBox is the compute host, not the object-store API
+
+InstaBox's documented API provisions and controls Linux VMs. It is not itself an S3 object-storage API. If Testagram wants an InstaBox-backed media origin, provision a persistent InstaBox machine and run MinIO (or another tested S3-compatible object server) on its persistent data disk. Expose only a private/TLS-protected S3 endpoint to the Data Centre/CDN network, with a bucket-scoped access key. Do not pass the InstaBox machine-management API key to the media service or Flutter.
+
+Before adding that origin as a durable replica, prove its S3 SigV4 PUT/GET/HEAD/DELETE behavior, persistent-volume survival across machine stop/start, disk-full behavior, restart recovery and independent SHA-256 read-back. Until that endpoint and credentials exist, there is no honest direct InstaBox storage adapter to enable; the B2 and R2 adapters remain the only active provider adapters.
