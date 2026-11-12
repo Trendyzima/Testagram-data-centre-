@@ -77,7 +77,7 @@ func (s *server) uploadURL(w http.ResponseWriter,r *http.Request){
 	var in uploadRequest;if !decode(w,r,&in)||!validUpload(in){writeErr(w,400,"invalid upload request");return}
 	ctx,c:=context.WithTimeout(r.Context(),5*time.Second);defer c()
 	exp:=time.Now().UTC().Add(s.cfg.uploadTTL)
-	_,err:=s.db.Exec(ctx,`insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status,updated_at) values($1,$2,$3,$4,$5,'upload_pending',now()) on conflict(owner_id,namespace,object_key) do update set content_type=excluded.content_type,size_bytes=excluded.size_bytes,status='upload_pending',sha256=null,primary_verified_at=null,replica_verified_at=null,updated_at=now() where media_objects.status in ('upload_pending','deleted')`,in.OwnerID,in.Namespace,in.Key,in.ContentType,in.SizeBytes)
+	tag,err:=s.db.Exec(ctx,`insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status,updated_at) values($1,$2,$3,$4,$5,'upload_pending',now()) on conflict(owner_id,namespace,object_key) do update set content_type=excluded.content_type,size_bytes=excluded.size_bytes,status='upload_pending',sha256=null,primary_verified_at=null,replica_verified_at=null,updated_at=now() where media_objects.status in ('upload_pending','deleted')`,in.OwnerID,in.Namespace,in.Key,in.ContentType,in.SizeBytes)
 	if err!=nil{writeErr(w,409,"object key already has an active lifecycle");return}
 	id:=randomID()
 	_,err=s.db.Exec(ctx,`insert into media_upload_grants(id,owner_id,namespace,object_key,max_bytes,expires_at) values($1,$2,$3,$4,$5,$6)`,id,in.OwnerID,in.Namespace,in.Key,in.SizeBytes,exp)
@@ -92,7 +92,7 @@ func (s *server) verify(w http.ResponseWriter,r *http.Request){
 	want,err:=hex.DecodeString(in.SHA256);if err!=nil||len(want)!=32{writeErr(w,400,"invalid SHA-256");return}
 	ctx,c:=context.WithTimeout(r.Context(),90*time.Second);defer c()
 	var grant bool
-	err=s.db.QueryRow(ctx,`select exists(select 1 from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3 and max_bytes=$4 and expires_at>now())`,in.OwnerID,in.Namespace,in.Key,in.SizeBytes).Scan(&grant)
+	err=s.db.QueryRow(ctx,`select exists(select 1 from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3 and max_bytes=$4 and expires_at>now() and consumed_at is null)`,in.OwnerID,in.Namespace,in.Key,in.SizeBytes).Scan(&grant)
 	if err!=nil||!grant{writeErr(w,409,"no active upload grant");return}
 	resp,err:=s.signedRequest(ctx,s.cfg.primary,http.MethodGet,in.Key,nil,"")
 	if err!=nil{writeErr(w,503,"primary storage read failed");return};defer resp.Body.Close()
@@ -146,7 +146,7 @@ func (s *server) processOne(parent context.Context)error{
 	ctx,c:=context.WithTimeout(parent,2*time.Minute);defer c()
 	tx,err:=s.db.Begin(ctx);if err!=nil{return err};defer tx.Rollback(ctx)
 	var id int64;var owner,ns,key,op string
-	err=tx.QueryRow(ctx,`select id,owner_id,namespace,object_key,operation from media_outbox where status in ('pending','retry') and available_at<=now() and (locked_until is null or locked_until<now()) order by id for update skip locked limit 1`).Scan(&id,&owner,&ns,&key,&op)
+	err=tx.QueryRow(ctx,`select id,owner_id,namespace,object_key,operation from media_outbox where status in ('pending','retry','processing') and available_at<=now() and (locked_until is null or locked_until<now()) order by id for update skip locked limit 1`).Scan(&id,&owner,&ns,&key,&op)
 	if errors.Is(err,pgx.ErrNoRows){return nil};if err!=nil{return err}
 	_,err=tx.Exec(ctx,`update media_outbox set status='processing',locked_until=now()+interval '3 minutes',attempts=attempts+1 where id=$1`,id);if err!=nil{return err};if err=tx.Commit(ctx);err!=nil{return err}
 	if op=="replicate"{err=s.replicate(ctx,owner,ns,key)}else if op=="delete"{err=s.deleteOrigins(ctx,owner,ns,key)}else{err=fmt.Errorf("unknown outbox operation %q",op)}
@@ -191,7 +191,7 @@ func presign(store s3Store,method,key string,ttl time.Duration,contentType strin
 	canonical:=method+"\n"+u.EscapedPath()+"\n"+u.Query().Encode()+"\n"+headers+"\n"+signed+"\nUNSIGNED-PAYLOAD"
 	toSign:="AWS4-HMAC-SHA256\n"+date+"\n"+scope+"\n"+hashHex([]byte(canonical));sig:=hex.EncodeToString(hmacSHA(signingKey(store.secret,day,store.region),toSign));q=u.Query();q.Set("X-Amz-Signature",sig);u.RawQuery=q.Encode();return u.String(),nil
 }
-func objectURL(s s3Store,key string)(*url.URL,error){
+type lengthReader struct{io.Reader;n int64}\nfunc(r *lengthReader)Len64()int64{return r.n}\nfunc objectURL(s s3Store,key string)(*url.URL,error){
 	base,err:=url.Parse(strings.TrimRight(s.endpoint,"/"));if err!=nil||base.Host==""||(base.Scheme!="https"&&base.Scheme!="http")||base.User!=nil{return nil,errors.New("invalid S3 endpoint")}
 	base.Path=strings.TrimRight(base.Path,"/")+"/"+s.bucket+"/"+strings.TrimLeft(key,"/");return base,nil
 }
@@ -208,7 +208,7 @@ func method(w http.ResponseWriter,m string){w.Header().Set("Allow",m);writeErr(w
 func required(k string)string{v:=strings.TrimSpace(os.Getenv(k));if v==""{log.Fatalf("%s is required",k)};return v}
 func env(k,d string)string{if v:=strings.TrimSpace(os.Getenv(k));v!=""{return v};return d}
 func duration(k string,d time.Duration)time.Duration{v:=env(k,"");if v==""{return d};x,e:=time.ParseDuration(v);if e!=nil||x<=0{log.Fatalf("invalid %s",k)};return x}
-func randomID()string{var b [16]byte;if _,e:=io.ReadFull(strings.NewReader(fmt.Sprintf("%032x",time.Now().UnixNano())),b[:]);e!=nil{return fmt.Sprintf("media-%d",time.Now().UnixNano())};return hex.EncodeToString(b[:])}
+func randomID()string{var b [16]byte;if _,e:=rand.Read(b[:]);e!=nil{return fmt.Sprintf("media-%d",time.Now().UnixNano())};return hex.EncodeToString(b[:])}
 func logging(next http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){start:=time.Now();next.ServeHTTP(w,r);log.Printf("%s %s %s",r.Method,r.URL.Path,time.Since(start))})}
 
 var _ = sort.Strings
