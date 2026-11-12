@@ -64,6 +64,18 @@ mv "$ENCRYPTED.partial" "$ENCRYPTED"
 (cd "$BACKUP_ROOT" && sha256sum "$(basename "$ENCRYPTED")" > "$(basename "$ENCRYPTED").sha256")
 chmod 0600 "$ENCRYPTED" "$ENCRYPTED.sha256"
 rsync --archive --partial --protect-args "$ENCRYPTED" "$ENCRYPTED.sha256" "$BACKUP_REMOTE/"
-printf 'Encrypted database backup created and transferred: %s\n' "$ENCRYPTED"
+# A successful rsync exit is not the same as proving the remote bytes match.
+# Re-run rsync in checksum/dry-run mode; any listed difference means the
+# offsite copy is incomplete or corrupt and this backup must not be reported
+# as successful.
+REMOTE_DRIFT="$STAGE/remote-drift.txt"
+rsync --archive --checksum --dry-run --itemize-changes --out-format='%n' --protect-args "$ENCRYPTED" "$ENCRYPTED.sha256" "$BACKUP_REMOTE/" > "$REMOTE_DRIFT"
+if [ -s "$REMOTE_DRIFT" ]; then
+  echo "Offsite backup verification failed; remote files differ:" >&2
+  cat "$REMOTE_DRIFT" >&2
+  exit 1
+fi
+
+printf 'Encrypted database backup created, transferred and checksum-verified: %s\n' "$ENCRYPTED"
 printf 'Remote destination: %s\n' "$BACKUP_REMOTE"
 printf 'Note: Appwrite documents and B2/R2 media bytes are outside this database archive.\n'
