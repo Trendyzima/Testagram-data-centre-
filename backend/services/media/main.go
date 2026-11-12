@@ -74,19 +74,37 @@ func (s *server) auth(w http.ResponseWriter,r *http.Request)bool{
 	got:=strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"),"Bearer "))
 	if got==""||subtle.ConstantTimeCompare([]byte(got),[]byte(s.cfg.token))!=1||r.Header.Get("X-Testagram-API-Version")!=apiVersion { writeErr(w,401,"unauthorized");return false };return true
 }
-func (s *server) uploadURL(w http.ResponseWriter,r *http.Request){
-	if r.Method!=http.MethodPost{method(w,"POST");return};if !s.auth(w,r){return}
-	var in uploadRequest;if !decode(w,r,&in)||!validUpload(in){writeErr(w,400,"invalid upload request");return}
-	ctx,c:=context.WithTimeout(r.Context(),5*time.Second);defer c()
-	exp:=time.Now().UTC().Add(s.cfg.uploadTTL)
-	tag,err:=s.db.Exec(ctx,`insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status,updated_at) values($1,$2,$3,$4,$5,'upload_pending',now()) on conflict(owner_id,namespace,object_key) do update set content_type=excluded.content_type,size_bytes=excluded.size_bytes,status='upload_pending',sha256=null,primary_verified_at=null,replica_verified_at=null,updated_at=now() where media_objects.status in ('upload_pending','deleted')`,in.OwnerID,in.Namespace,in.Key,in.ContentType,in.SizeBytes)
-	if err!=nil||tag.RowsAffected()!=1{writeErr(w,409,"object key already has an active lifecycle");return}
-	id:=randomID()
-	_,err=s.db.Exec(ctx,`insert into media_upload_grants(id,owner_id,namespace,object_key,max_bytes,expires_at) values($1,$2,$3,$4,$5,$6)`,id,in.OwnerID,in.Namespace,in.Key,in.SizeBytes,exp)
-	if err!=nil{writeErr(w,503,"could not persist upload grant");return}
-	u,err:=presign(s.cfg.primary,http.MethodPut,in.Key,s.cfg.uploadTTL,in.ContentType)
-	if err!=nil{writeErr(w,503,"primary storage signing failed");return}
-	writeJSON(w,201,map[string]any{"intent_id":id,"upload_url":u,"expires_at":exp,"max_bytes":in.SizeBytes,"primary":"backblaze_b2"})
+func (s *server) uploadURL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost { method(w, "POST"); return }
+	if !s.auth(w, r) { return }
+	var in uploadRequest
+	if !decode(w, r, &in) || !validUpload(in) { writeErr(w, 400, "invalid upload request"); return }
+	id, err := randomID()
+	if err != nil { writeErr(w, 503, "secure upload grant generation failed"); return }
+	exp := time.Now().UTC().Add(s.cfg.uploadTTL)
+	u, err := presign(s.cfg.primary, http.MethodPut, in.Key, s.cfg.uploadTTL, in.ContentType)
+	if err != nil { writeErr(w, 503, "primary storage signing failed"); return }
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second); defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil { writeErr(w, 503, "media state unavailable"); return }
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status,updated_at)
+		values($1,$2,$3,$4,$5,'upload_pending',now())
+		on conflict(owner_id,namespace,object_key) do update
+		set content_type=excluded.content_type,size_bytes=excluded.size_bytes,status='upload_pending',
+			sha256=null,primary_verified_at=null,replica_verified_at=null,updated_at=now()
+		where media_objects.status='deleted'
+		   or (media_objects.status='upload_pending' and not exists (
+				select 1 from media_upload_grants g
+				where g.owner_id=excluded.owner_id and g.namespace=excluded.namespace and g.object_key=excluded.object_key
+				  and g.expires_at>now() and g.consumed_at is null
+		   ))`, in.OwnerID, in.Namespace, in.Key, in.ContentType, in.SizeBytes)
+	if err != nil || tag.RowsAffected() != 1 { writeErr(w, 409, "object key already has an active lifecycle or upload grant"); return }
+	_, err = tx.Exec(ctx, `delete from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key)
+	if err == nil { _, err = tx.Exec(ctx, `insert into media_upload_grants(id,owner_id,namespace,object_key,max_bytes,expires_at) values($1,$2,$3,$4,$5,$6)`, id, in.OwnerID, in.Namespace, in.Key, in.SizeBytes, exp) }
+	if err == nil { err = tx.Commit(ctx) }
+	if err != nil { writeErr(w, 503, "could not persist upload grant"); return }
+	writeJSON(w, 201, map[string]any{"intent_id": id, "upload_url": u, "expires_at": exp, "max_bytes": in.SizeBytes, "primary": "backblaze_b2"})
 }
 func (s *server) verify(w http.ResponseWriter,r *http.Request){
 	if r.Method!=http.MethodPost{method(w,"POST");return};if !s.auth(w,r){return}
@@ -163,7 +181,7 @@ func (s *server) processOne(parent context.Context)error{
 	ctx,c:=context.WithTimeout(parent,2*time.Minute);defer c()
 	tx,err:=s.db.Begin(ctx);if err!=nil{return err};defer tx.Rollback(ctx)
 	var id int64;var owner,ns,key,op string
-	err=tx.QueryRow(ctx,`select id,owner_id,namespace,object_key,operation from media_outbox where status in ('pending','retry','processing') and available_at<=now() and (locked_until is null or locked_until<now()) order by id for update skip locked limit 1`).Scan(&id,&owner,&ns,&key,&op)
+	err=tx.QueryRow(ctx,`select o.id,o.owner_id,o.namespace,o.object_key,o.operation from media_outbox o where o.status in ('pending','retry','processing') and o.available_at<=now() and (o.locked_until is null or o.locked_until<now()) and not exists (select 1 from media_outbox active where active.owner_id=o.owner_id and active.namespace=o.namespace and active.object_key=o.object_key and active.status='processing' and active.id<>o.id) order by o.id for update of o skip locked limit 1`).Scan(&id,&owner,&ns,&key,&op)
 	if errors.Is(err,pgx.ErrNoRows){return nil};if err!=nil{return err}
 	_,err=tx.Exec(ctx,`update media_outbox set status='processing',locked_until=now()+interval '3 minutes',attempts=attempts+1 where id=$1`,id);if err!=nil{return err};if err=tx.Commit(ctx);err!=nil{return err}
 	if op=="replicate"{err=s.replicate(ctx,owner,ns,key)}else if op=="delete"{err=s.deleteOrigins(ctx,owner,ns,key)}else{err=fmt.Errorf("unknown outbox operation %q",op)}
@@ -228,6 +246,6 @@ func method(w http.ResponseWriter,m string){w.Header().Set("Allow",m);writeErr(w
 func required(k string)string{v:=strings.TrimSpace(os.Getenv(k));if v==""{log.Fatalf("%s is required",k)};return v}
 func env(k,d string)string{if v:=strings.TrimSpace(os.Getenv(k));v!=""{return v};return d}
 func duration(k string,d time.Duration)time.Duration{v:=env(k,"");if v==""{return d};x,e:=time.ParseDuration(v);if e!=nil||x<=0{log.Fatalf("invalid %s",k)};return x}
-func randomID()string{var b [16]byte;if _,e:=rand.Read(b[:]);e!=nil{return fmt.Sprintf("media-%d",time.Now().UnixNano())};return hex.EncodeToString(b[:])}
+func randomID()(string,error){var b [16]byte;if _,e:=rand.Read(b[:]);e!=nil{return "",e};return hex.EncodeToString(b[:]),nil}
 func logging(next http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){start:=time.Now();next.ServeHTTP(w,r);log.Printf("%s %s %s",r.Method,r.URL.Path,time.Since(start))})}
 
