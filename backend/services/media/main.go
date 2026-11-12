@@ -47,7 +47,7 @@ func main() {
 		token: required("MEDIA_INTERNAL_TOKEN"), addr: env("MEDIA_ADDR", ":8096"),
 		primary: s3Store{name:"backblaze_b2", endpoint:required("B2_S3_ENDPOINT"), region:required("B2_S3_REGION"), bucket:required("B2_S3_BUCKET"), access:required("B2_S3_ACCESS_KEY_ID"), secret:required("B2_S3_SECRET_ACCESS_KEY")},
 		replica: s3Store{name:"cloudflare_r2", endpoint:required("CLOUDFLARE_R2_ENDPOINT"), region:env("CLOUDFLARE_R2_REGION","auto"), bucket:required("CLOUDFLARE_R2_BUCKET"), access:required("CLOUDFLARE_R2_ACCESS_KEY_ID"), secret:required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")},
-		uploadTTL: duration("MEDIA_UPLOAD_TTL", 30*time.Minute), downloadTTL: duration("MEDIA_DOWNLOAD_TTL", 5*time.Minute),
+		uploadTTL: duration("MEDIA_UPLOAD_TTL", 45*time.Minute), downloadTTL: duration("MEDIA_DOWNLOAD_TTL", 5*time.Minute),
 	}
 	if len(cfg.token)<32 { log.Fatal("MEDIA_INTERNAL_TOKEN must be at least 32 characters") }
 	if err:=validateStore(cfg.primary);err!=nil{log.Fatalf("invalid B2 primary configuration: %v",err)}
