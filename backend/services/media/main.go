@@ -55,7 +55,7 @@ func main() {
 	db,err:=pgxpool.New(context.Background(),required("MEDIA_DATABASE_URL")); if err!=nil { log.Fatal(err) }; defer db.Close()
 	ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second); defer cancel()
 	if err=db.Ping(ctx); err!=nil { log.Fatalf("media database unavailable: %v",err) }
-	s:=&server{cfg:cfg,db:db,http:&http.Client{Timeout:20*time.Minute,CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}}}
+	s:=&server{cfg:cfg,db:db,http:&http.Client{Timeout:30*time.Minute,CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}}}
 	mux:=http.NewServeMux()
 	mux.HandleFunc("/healthz",s.health); mux.HandleFunc("/readyz",s.ready)
 	mux.HandleFunc("/internal/v1/media/upload-url",s.uploadURL)
