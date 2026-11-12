@@ -40,6 +40,11 @@ jobs:
           for name in MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION MEDIA_SMOKE_B2_BUCKET MEDIA_SMOKE_B2_ACCESS_KEY_ID MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_ENDPOINT MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_BUCKET MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY; do
             if [ -z "${!name:-}" ]; then echo "Missing required GitHub secret: $name" >&2; exit 1; fi
           done
-          case "$MEDIA_SMOKE_B2_BUCKET:$MEDIA_SMOKE_R2_BUCKET" in *prod*|*production*) echo "Use dedicated staging buckets, not production buckets." >&2; exit 1;; esac
+          for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_R2_BUCKET"; do
+            if [[ "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]]; then
+              echo "Use dedicated staging buckets, not production buckets." >&2
+              exit 1
+            fi
+          done
       - name: Write, read-back hash, HEAD and delete on B2 and R2
         run: go test -count=1 -run '^TestLiveProviderRoundTrip$' -v ./backend/services/media
