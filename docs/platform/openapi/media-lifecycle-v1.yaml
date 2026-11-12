@@ -43,7 +43,7 @@ paths:
   /internal/v1/media/verify:
     post:
       operationId: verifyMediaObject
-      summary: Read back and verify an uploaded object
+      summary: Queue primary read-back verification and replica protection
       requestBody:
         required: true
         content:
@@ -52,13 +52,13 @@ paths:
               $ref: '#/components/schemas/VerifyRequest'
       responses:
         '202':
-          description: Object verified; replication is pending
+          description: Verification is durably queued; the object remains unavailable until primary SHA-256 verification and replica read-back succeed
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Verification'
         '200':
-          description: Object meets configured protection policy
+          description: Object already meets the configured protection policy
           content:
             application/json:
               schema:
@@ -68,9 +68,9 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
-          description: Object not found in primary storage
+          description: No active upload grant or matching object lifecycle exists
         '409':
-          description: Size, content type or SHA-256 mismatch
+          description: Upload grant was consumed or the object lifecycle conflicts with this verification request
         '503':
           $ref: '#/components/responses/Unavailable'
   /internal/v1/media/status:
