@@ -57,3 +57,14 @@ func TestS3StoreRequiresTLSAndCleanOrigin(t *testing.T) {
 	base.endpoint = "https://s3.example.invalid?token=unsafe"
 	if err := validateStore(base); err == nil { t.Fatal("S3 endpoint query string accepted") }
 }
+
+func TestObjectLockKeyIsPostgresTextSafeAndUnambiguous(t *testing.T) {
+	a := objectLockKey("owner", "media-private", "a|b")
+	b := objectLockKey("owner|media-private", "a", "b")
+	if strings.ContainsRune(a, '\x00') || strings.ContainsRune(b, '\x00') {
+		t.Fatal("advisory lock key must be valid PostgreSQL text")
+	}
+	if a == b {
+		t.Fatal("length-prefixed lock keys must not collide across tuple boundaries")
+	}
+}
