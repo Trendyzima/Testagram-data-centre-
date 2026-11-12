@@ -55,6 +55,9 @@ func TestS3PresignBindsMethodAndContentType(t *testing.T) {
 	get, err := presign(store, "GET", "owner/object.mp4", 5*time.Minute, "")
 	if err != nil { t.Fatal(err) }
 	if strings.Contains(get, "content-type") || put == get { t.Fatal("GET and PUT grants must be distinct") }
+	head, err := presign(store, "HEAD", "owner/object.mp4", 5*time.Minute, "")
+	if err != nil { t.Fatal(err) }
+	if head == get || head == put { t.Fatal("HEAD grant must be distinct from GET and PUT") }
 }
 
 func TestS3StoreRequiresTLSAndCleanOrigin(t *testing.T) {
