@@ -55,7 +55,7 @@ func main() {
 	db,err:=pgxpool.New(context.Background(),required("MEDIA_DATABASE_URL")); if err!=nil { log.Fatal(err) }; defer db.Close()
 	ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second); defer cancel()
 	if err=db.Ping(ctx); err!=nil { log.Fatalf("media database unavailable: %v",err) }
-	s:=&server{cfg:cfg,db:db,http:&http.Client{Timeout:90*time.Second,CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}}}
+	s:=&server{cfg:cfg,db:db,http:&http.Client{Timeout:20*time.Minute,CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}}}
 	mux:=http.NewServeMux()
 	mux.HandleFunc("/healthz",s.health); mux.HandleFunc("/readyz",s.ready)
 	mux.HandleFunc("/internal/v1/media/upload-url",s.uploadURL)
@@ -180,12 +180,12 @@ func (s *server) worker(ctx context.Context){
 	for{select{case<-ctx.Done():return;case<-t.C:if err:=s.processOne(ctx);err!=nil{log.Printf("media outbox worker: %v",err)}}}
 }
 func (s *server) processOne(parent context.Context)error{
-	ctx,c:=context.WithTimeout(parent,10*time.Minute);defer c()
+	ctx,c:=context.WithTimeout(parent,30*time.Minute);defer c()
 	tx,err:=s.db.Begin(ctx);if err!=nil{return err};defer tx.Rollback(ctx)
 	var id int64;var owner,ns,key,op string
 	err=tx.QueryRow(ctx,`select o.id,o.owner_id,o.namespace,o.object_key,o.operation from media_outbox o where o.status in ('pending','retry','processing') and o.available_at<=now() and (o.locked_until is null or o.locked_until<now()) and not exists (select 1 from media_outbox active where active.owner_id=o.owner_id and active.namespace=o.namespace and active.object_key=o.object_key and active.status='processing' and active.id<>o.id) order by o.id for update of o skip locked limit 1`).Scan(&id,&owner,&ns,&key,&op)
 	if errors.Is(err,pgx.ErrNoRows){return nil};if err!=nil{return err}
-	_,err=tx.Exec(ctx,`update media_outbox set status='processing',locked_until=now()+interval '15 minutes',attempts=attempts+1 where id=$1`,id);if err!=nil{return err};if err=tx.Commit(ctx);err!=nil{return err}
+	_,err=tx.Exec(ctx,`update media_outbox set status='processing',locked_until=now()+interval '35 minutes',attempts=attempts+1 where id=$1`,id);if err!=nil{return err};if err=tx.Commit(ctx);err!=nil{return err}
 	switch op{case "verify":err=s.verifyPrimary(ctx,owner,ns,key);case "replicate":err=s.replicate(ctx,owner,ns,key);case "delete":err=s.deleteOrigins(ctx,owner,ns,key);default:err=fmt.Errorf("unknown outbox operation %q",op)}
 	if err!=nil{
 		_,_ = s.db.Exec(ctx,`update media_outbox set status=case when attempts>=12 then 'dead' else 'retry' end,available_at=now()+make_interval(secs=>least(3600,power(2,least(attempts,10))::int)),locked_until=null,last_error=left($2,1000),updated_at=now() where id=$1`,id,err.Error())
