@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -14,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -211,4 +211,3 @@ func duration(k string,d time.Duration)time.Duration{v:=env(k,"");if v==""{retur
 func randomID()string{var b [16]byte;if _,e:=rand.Read(b[:]);e!=nil{return fmt.Sprintf("media-%d",time.Now().UnixNano())};return hex.EncodeToString(b[:])}
 func logging(next http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){start:=time.Now();next.ServeHTTP(w,r);log.Printf("%s %s %s",r.Method,r.URL.Path,time.Since(start))})}
 
-var _ = sort.Strings
