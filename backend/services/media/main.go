@@ -93,7 +93,19 @@ func (s *server) verify(w http.ResponseWriter,r *http.Request){
 	ctx,c:=context.WithTimeout(r.Context(),90*time.Second);defer c()
 	var grant bool
 	err=s.db.QueryRow(ctx,`select exists(select 1 from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3 and max_bytes=$4 and expires_at>now() and consumed_at is null)`,in.OwnerID,in.Namespace,in.Key,in.SizeBytes).Scan(&grant)
-	if err!=nil||!grant{writeErr(w,409,"no active upload grant");return}
+	if err!=nil{writeErr(w,503,"upload grant state unavailable");return}
+	if !grant {
+		var currentStatus,currentSHA string
+		stateErr:=s.db.QueryRow(ctx,`select status,coalesce(sha256,'') from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key).Scan(&currentStatus,&currentSHA)
+		if stateErr==nil&&currentSHA==strings.ToLower(in.SHA256) {
+			if currentStatus=="protected"{writeJSON(w,200,map[string]string{"status":"protected","sha256":currentSHA});return}
+			if currentStatus=="replication_pending"||currentStatus=="replication_failed" {
+				if currentStatus=="replication_failed"{_,_=s.db.Exec(ctx,`update media_objects set status='replication_pending',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key);_,_=s.db.Exec(ctx,`update media_outbox set status='retry',attempts=0,available_at=now(),locked_until=null,last_error=null where owner_id=$1 and namespace=$2 and object_key=$3 and operation='replicate'`,in.OwnerID,in.Namespace,in.Key)}
+				writeJSON(w,202,map[string]string{"status":"replication_pending","sha256":currentSHA});return
+			}
+		}
+		writeErr(w,409,"no active upload grant");return
+	}
 	resp,err:=s.signedRequest(ctx,s.cfg.primary,http.MethodGet,in.Key,nil,"")
 	if err!=nil{writeErr(w,503,"primary storage read failed");return};defer resp.Body.Close()
 	if resp.StatusCode!=200{writeErr(w,404,"uploaded object not found");return}
@@ -104,7 +116,8 @@ func (s *server) verify(w http.ResponseWriter,r *http.Request){
 	now:=time.Now().UTC()
 	tag,consumeErr:=tx.Exec(ctx,`update media_upload_grants set consumed_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and max_bytes=$4 and expires_at>now() and consumed_at is null`,in.OwnerID,in.Namespace,in.Key,in.SizeBytes)
 	if consumeErr!=nil||tag.RowsAffected()!=1{writeErr(w,409,"upload grant already consumed");return}
-	_,err=tx.Exec(ctx,`update media_objects set sha256=$4,status='replication_pending',primary_verified_at=$5,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and size_bytes=$6`,in.OwnerID,in.Namespace,in.Key,strings.ToLower(in.SHA256),now,in.SizeBytes)
+	tag,err=tx.Exec(ctx,`update media_objects set sha256=$4,status='replication_pending',primary_verified_at=$5,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and size_bytes=$6 and status='upload_pending'`,in.OwnerID,in.Namespace,in.Key,strings.ToLower(in.SHA256),now,in.SizeBytes)
+	if err==nil&&tag.RowsAffected()!=1{err=errors.New("object lifecycle changed during verification")}
 	if err==nil{_,err=tx.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'replicate','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),last_error=null`,in.OwnerID,in.Namespace,in.Key)}
 	if err==nil{err=tx.Commit(ctx)};if err!=nil{writeErr(w,503,"could not persist verification and replication job");return}
 	writeJSON(w,202,map[string]string{"status":"replication_pending","sha256":strings.ToLower(in.SHA256)})
