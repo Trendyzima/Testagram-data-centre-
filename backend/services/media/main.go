@@ -202,7 +202,7 @@ func objectURL(s s3Store,key string)(*url.URL,error){
 func signingKey(secret,day,region string)[]byte{k:=hmacSHA([]byte("AWS4"+secret),day);k=hmacSHA(k,region);k=hmacSHA(k,"s3");return hmacSHA(k,"aws4_request")}
 func hmacSHA(key []byte,data string)[]byte{h:=hmac.New(sha256.New,key);_,_=h.Write([]byte(data));return h.Sum(nil)}
 func hashHex(b []byte)string{h:=sha256.Sum256(b);return hex.EncodeToString(h[:])}
-func validUpload(in uploadRequest)bool{return validIdentity(in.OwnerID)&&validNamespace(in.Namespace)&&in.Key!=""&&len(in.Key)<=1024&&!strings.ContainsAny(in.Key,"\\\x00\r\n")&&in.ContentType!=""&&len(in.ContentType)<=160&&!strings.ContainsAny(in.ContentType,"\r\n")&&in.SizeBytes>0&&in.SizeBytes<=1<<40}
+func validUpload(in uploadRequest)bool{if !validIdentity(in.OwnerID)||!validNamespace(in.Namespace)||in.Key==""||len(in.Key)>1024||strings.HasPrefix(in.Key,"/")||strings.ContainsAny(in.Key,"\\\x00\r\n")||in.ContentType==""||len(in.ContentType)>160||strings.ContainsAny(in.ContentType,"\r\n")||in.SizeBytes<=0||in.SizeBytes>1<<40{return false};for _,part:=range strings.Split(in.Key,"/"){if part=="."||part==".."{return false}};return true}
 func validIdentity(v string)bool{return strings.TrimSpace(v)!=""&&len(v)<=128&&!strings.ContainsAny(v,"\x00\r\n")}
 func validNamespace(v string)bool{return v=="media-public"||v=="media-private"}
 func decode(w http.ResponseWriter,r *http.Request,v any)bool{r.Body=http.MaxBytesReader(w,r.Body,maxJSON);defer r.Body.Close();d:=json.NewDecoder(r.Body);d.DisallowUnknownFields();if d.Decode(v)!=nil{return false};var extra any;return d.Decode(&extra)==io.EOF}
