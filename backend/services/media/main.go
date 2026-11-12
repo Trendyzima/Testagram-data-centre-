@@ -88,6 +88,8 @@ func (s *server) uploadURL(w http.ResponseWriter, r *http.Request) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil { writeErr(w, 503, "media state unavailable"); return }
 	defer tx.Rollback(ctx)
+	lockKey := in.OwnerID + "\x00" + in.Namespace + "\x00" + in.Key
+	if _, err = tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil { writeErr(w, 503, "media grant lock unavailable"); return }
 	tag, err := tx.Exec(ctx, `insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status,updated_at)
 		values($1,$2,$3,$4,$5,'upload_pending',now())
 		on conflict(owner_id,namespace,object_key) do update
