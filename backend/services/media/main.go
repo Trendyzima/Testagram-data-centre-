@@ -88,7 +88,7 @@ func (s *server) uploadURL(w http.ResponseWriter, r *http.Request) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil { writeErr(w, 503, "media state unavailable"); return }
 	defer tx.Rollback(ctx)
-	lockKey := in.OwnerID + "\x00" + in.Namespace + "\x00" + in.Key
+	lockKey := objectLockKey(in.OwnerID, in.Namespace, in.Key)
 	if _, err = tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil { writeErr(w, 503, "media grant lock unavailable"); return }
 	tag, err := tx.Exec(ctx, `insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status,updated_at)
 		values($1,$2,$3,$4,$5,'upload_pending',now())
@@ -261,6 +261,7 @@ func signingKey(secret,day,region string)[]byte{k:=hmacSHA([]byte("AWS4"+secret)
 func hmacSHA(key []byte,data string)[]byte{h:=hmac.New(sha256.New,key);_,_=h.Write([]byte(data));return h.Sum(nil)}
 func hashHex(b []byte)string{h:=sha256.Sum256(b);return hex.EncodeToString(h[:])}
 func validUpload(in uploadRequest)bool{return validIdentity(in.OwnerID)&&validNamespace(in.Namespace)&&validObjectKey(in.Key)&&in.ContentType!=""&&len(in.ContentType)<=160&&!strings.ContainsAny(in.ContentType,"\r\n")&&in.SizeBytes>0&&in.SizeBytes<=1<<40}
+func objectLockKey(owner,namespace,key string)string{return fmt.Sprintf("%d:%s:%d:%s:%s",len(owner),owner,len(namespace),namespace,key)}
 func validObjectKey(key string)bool{if key==""||len(key)>1024||strings.HasPrefix(key,"/")||strings.ContainsAny(key,"\\\x00\r\n"){return false};for _,part:=range strings.Split(key,"/"){if part==""||part=="."||part==".."{return false}};return true}
 func validIdentity(v string)bool{return strings.TrimSpace(v)!=""&&len(v)<=128&&!strings.ContainsAny(v,"\x00\r\n")}
 func validNamespace(v string)bool{return v=="media-public"||v=="media-private"}
