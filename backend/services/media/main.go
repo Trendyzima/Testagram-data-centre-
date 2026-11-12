@@ -141,6 +141,7 @@ func (s *server) verify(w http.ResponseWriter,r *http.Request){
 	tag,err=tx.Exec(ctx,`update media_objects set sha256=$4,status='uploaded',primary_verified_at=null,replica_verified_at=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and size_bytes=$5 and status='upload_pending'`,in.OwnerID,in.Namespace,in.Key,expected,in.SizeBytes)
 	if err==nil&&tag.RowsAffected()!=1{err=errors.New("object lifecycle changed during verification")}
 	if err==nil{_,err=tx.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'verify','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),locked_until=null,last_error=null`,in.OwnerID,in.Namespace,in.Key)}
+	if err==nil{eventID,idErr:=randomID();if idErr!=nil{err=idErr}else{_,err=tx.Exec(ctx,`insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome) values($1,$2,$3,$4,'verify','queued')`,eventID,in.OwnerID,in.Namespace,in.Key)}}
 	if err==nil{err=tx.Commit(ctx)};if err!=nil{writeErr(w,503,"could not persist verification job");return}
 	writeJSON(w,202,map[string]string{"status":"replication_pending","sha256":expected})
 }
@@ -173,6 +174,7 @@ func (s *server) delete(w http.ResponseWriter,r *http.Request){
 	_,err=tx.Exec(ctx,`update media_objects set status='delete_pending',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key)
 	if err==nil{_,err=tx.Exec(ctx,`update media_outbox set status='done',locked_until=null,last_error='superseded by delete' where owner_id=$1 and namespace=$2 and object_key=$3 and operation in ('verify','replicate') and status in ('pending','retry')`,in.OwnerID,in.Namespace,in.Key)}
 	if err==nil{_,err=tx.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'delete','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),last_error=null`,in.OwnerID,in.Namespace,in.Key)}
+	if err==nil{eventID,idErr:=randomID();if idErr!=nil{err=idErr}else{_,err=tx.Exec(ctx,`insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome) values($1,$2,$3,$4,'delete','queued')`,eventID,in.OwnerID,in.Namespace,in.Key)}}
 	if err==nil{err=tx.Commit(ctx)};if err!=nil{writeErr(w,503,"could not queue durable deletion");return}
 	writeJSON(w,202,map[string]string{"status":"delete_pending"})
 }
