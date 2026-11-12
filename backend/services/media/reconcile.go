@@ -15,15 +15,15 @@ import (
 
 )
 
-// reconcileWorker periodically re-reads one protected object from both independent
-// origins. Full SHA-256 verification is bandwidth-bound, so keep the batch small
+// reconcileWorker periodically re-reads a bounded batch of protected objects from both independent
+// origins. Full SHA-256 verification is bandwidth-bound, so keep the batch small and concurrency capped at two
 // and give a maximum-size object a bounded 30-minute window. A crash leaves a
 // short lease, not a 24-hour blind spot.
 func (s *server) reconcileWorker(ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
 	for {
-		if err := s.reconcileProtectedBatch(ctx, 1); err != nil && !errors.Is(err, context.Canceled) {
+		if err := s.reconcileProtectedBatch(ctx, 4); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("media replica reconciliation: %v", err)
 		}
 		select {
