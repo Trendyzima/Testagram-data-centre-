@@ -13,6 +13,7 @@ create table if not exists media_objects (
  primary key(owner_id,namespace,object_key)
 );
 alter table media_objects add column if not exists reconciled_at timestamptz;
+alter table media_objects add column if not exists reconciliation_claimed_at timestamptz;
 
 create table if not exists media_upload_grants (
  id text primary key,
