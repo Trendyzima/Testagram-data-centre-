@@ -1,4 +1,4 @@
-# Testagram object storage: Backblaze B2 + Cloudflare R2
+# Testagram object storage: Instabox VPS + Cloudflare R2 + Backblaze B2
 
 ## Storage is not just CDN
 
@@ -8,13 +8,14 @@ The Cloudflare Worker is only an authorization-aware delivery interface to R2. I
 
 ## Ownership
 
-The Data Centre repository owns deployment, node registration/capacity, node-level replica placement and independent backup/restore orchestration. The Go Backend remains the only public API and authorization boundary and owns B2/R2 provider operations, signed upload/download authorization, checksum verification and the provider-replica ledger. XClone and node agents never receive long-lived provider credentials.
+The Data Centre repository owns deployment, node registration/capacity, node-level replica placement and independent backup/restore orchestration. The Go Backend remains the only public API and authorization boundary and owns media authorization, metadata, quotas, checksum policy and the provider-replica ledger. Data Centre operates the Instabox VPS object-store service, replication/repair workers and backup/restore operations. Provider operations across all three stores must be coordinated through this contract. XClone and node agents never receive long-lived provider credentials.
 
 | Role | Provider | Responsibility |
 |---|---|---|
-| Durable object store A | Backblaze B2 | Stores canonical uploaded bytes and serves as an independent verified origin |
-| Durable object store B | Cloudflare R2 | Stores a full verified copy of every protected object; supports direct R2 delivery through the private-media Worker |
-| Delivery | Cloudflare Worker + R2 binding | Authenticates short-lived media URLs and streams bytes/ranges from R2; not a separate storage copy |
+| Durable object store A | Instabox VPS private object storage | Local S3-compatible MinIO/object service on persistent attached storage; one verified full copy |
+| Durable object store B | Cloudflare R2 | Full verified copy in a private bucket; private origin for Testagram CDN |
+| Durable object store C | Backblaze B2 | Independent full verified copy and off-site recovery origin |
+| Public delivery | Testagram Go CDN | Own edge/shield cache, viewer authorization, range/HLS/DASH delivery and health-aware origin failover; not a durable replica |
 | Optional node replicas | Registered Android/Linux nodes | Additional verified copies or explicitly disposable caches; never the only copy |
 | Media metadata and quotas | Backend PostgreSQL (`testagram_media`) | Upload reservations, ownership, quotas, lifecycle and per-provider replica state; Appwrite is used for identity/session verification, not as the media ledger |
 
@@ -25,11 +26,11 @@ B2 and R2 are independent object stores. Keep endpoints, regions, credentials an
 1. Flutter requests an upload reservation from the Backend. Backend verifies the Appwrite session, resolves the linked local account, authorizes owner and visibility, enforces quotas, and records the pending object plus quota reservation in its PostgreSQL `testagram_media` schema.
 2. Backend selects the configured upload origin (B2 or R2) and persists that choice in the PostgreSQL reservation. It issues a short-lived, object-scoped upload authorization for that provider; provider credentials remain server-side.
 3. The client uploads bytes directly to the selected provider. Backend verifies object existence, content type, byte length and the actual SHA-256 of the stored bytes.
-4. Backend copies the complete object from the selected origin into the peer provider using a bounded streaming transfer. It independently reads the replica back and verifies size, content type and SHA-256.
-5. Only after both storage providers are verified does Backend commit the protected media and two-provider replica ledger. An object is not ready merely because one upload succeeded.
-6. Delivery prefers R2 through the Cloudflare private-media Worker. If R2 is unavailable or fails integrity checks, Backend can use the independently verified B2 copy while repair reconciles the degraded R2 replica.
-7. Repair can copy in either direction from the surviving verified provider. It must never overwrite a good copy with an unverified source.
-8. Node replicas are optional additional copies. A node must prove mounted storage identity, available quota, object checksum and heartbeat health. Reported disk capacity alone is not replica evidence.
+4. Backend/Data Centre copies the complete object to the other two providers using bounded streaming transfers. It independently reads each replica back and verifies size, content type and SHA-256.
+5. Under the target durable-media policy, only after all three stores are verified does Backend commit the protected media as ready and record all three replicas. A missing copy leaves the object replicating/degraded and triggers repair; never report three-copy durability from one or two successful uploads.
+6. Testagram CDN serves the object from its own cache/shield. On a miss it fetches from healthy private origins in the configured order (Instabox VPS, R2, B2). If an origin is unavailable or fails integrity checks, CDN falls back to another verified replica and raises a repair signal. Cloudflare is not the public media CDN.
+7. Repair can copy in either direction from a surviving verified provider. It must never overwrite a good copy with an unverified source.
+8. Registered Android/Linux node replicas are optional additional copies beyond the three required stores. A node must prove mounted storage identity, available quota, object checksum and heartbeat health. Reported disk capacity alone is not replica evidence.
 
 This is a dual-object-storage design: B2 and R2 both retain the media bytes. R2 is not only a cache, and the application must not count a CDN cache hit as a verified replica.
 
@@ -54,13 +55,20 @@ Backups must be independent of the active B2/R2 pair. A restore drill must recov
 
 ## Runtime configuration
 
-The Backend media runtime requires independent server-side configuration for both stores:
+The target Backend/Data Centre media runtime requires independent server-side configuration for all three stores. Instabox VPS uses its private MinIO/S3-compatible endpoint and dedicated credentials; the current self-hosted stack already deploys local MinIO but the fresh dual-provider media path has not yet integrated it as a verified third copy.
 
+The external provider configuration includes:
+
+- Instabox VPS: private MinIO endpoint, bucket and dedicated access/secret key (configuration contract still to be implemented in the fresh media runtime)
 - B2: `B2_S3_ENDPOINT`, `B2_S3_REGION`, `B2_S3_BUCKET`, `B2_S3_ACCESS_KEY_ID`, `B2_S3_SECRET_ACCESS_KEY`
 - R2: `CLOUDFLARE_R2_ENDPOINT`, `CLOUDFLARE_R2_REGION`, `CLOUDFLARE_R2_BUCKET`, `CLOUDFLARE_R2_ACCESS_KEY_ID`, `CLOUDFLARE_R2_SECRET_ACCESS_KEY`
 - Worker delivery: `CLOUDFLARE_MEDIA_BASE_URL`, `CLOUDFLARE_MEDIA_SIGNING_SECRET`
 
 The credentials are injected into Backend, not the node control plane. The Data Centre node agent only receives node-scoped credentials or one-time transfer capabilities when verified node-level object transfer is implemented.
+
+## Delivery and DNS boundary
+
+Cloudflare DNS is authoritative for Testagram's zone. The media hostname points DNS-only to Testagram CDN edges. Testagram CDN owns public delivery and cache/shield behavior. Cloudflare R2 stays private and is fetched as an origin by Testagram CDN using a reviewed private-origin adapter. Do not expose R2 directly to browsers or use Cloudflare's proxy/Worker as a second media CDN. Cloudflare DNS/Web Analytics provide aggregated domain and site-performance telemetry; product analytics remains in Instabox PostgreSQL and CDN operational telemetry flows to Data Centre monitoring.
 
 ## Release gates — not yet satisfied
 
