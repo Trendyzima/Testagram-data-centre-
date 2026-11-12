@@ -74,3 +74,10 @@ func TestObjectLockKeyIsPostgresTextSafeAndUnambiguous(t *testing.T) {
 		t.Fatal("length-prefixed lock keys must not collide across tuple boundaries")
 	}
 }
+
+func TestObjectURLRejectsTraversalAndUnsafeBucket(t *testing.T) {
+	store := s3Store{name:"b2",endpoint:"https://s3.example.invalid",region:"us-west-004",bucket:"test-bucket",access:"key",secret:strings.Repeat("s",40)}
+	if _,err:=objectURL(store,"users/../secret");err==nil{t.Fatal("traversal key accepted")}
+	store.bucket="../bucket"
+	if _,err:=objectURL(store,"users/user/object");err==nil{t.Fatal("unsafe bucket path accepted")}
+}
