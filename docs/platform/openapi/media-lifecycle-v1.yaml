@@ -11,8 +11,9 @@ servers:
   - url: http://control-plane:8787
     description: Private platform network only
 security:
+  # Both requirements are mandatory; separate list entries would mean OR.
   - BackendBearer: []
-  - ApiVersion: []
+    ApiVersion: []
 paths:
   /internal/v1/media/upload-url:
     post:
@@ -203,7 +204,7 @@ components:
       additionalProperties: false
       required: [status, content_type, size_bytes, sha256]
       properties:
-        status: { type: string, enum: [upload_pending, uploaded, replication_pending, protected, delete_pending, deleted, failed] }
+        status: { type: string, enum: [upload_pending, uploaded, replication_pending, protected, replication_failed, delete_pending, deleted] }
         content_type: { type: string }
         size_bytes: { type: integer, format: int64, minimum: 0 }
         sha256: { type: string }
