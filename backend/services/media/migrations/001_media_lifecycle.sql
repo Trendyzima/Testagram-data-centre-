@@ -28,7 +28,7 @@ create table if not exists media_outbox (
  owner_id text not null,
  namespace text not null,
  object_key text not null,
- operation text not null check(operation in ('replicate','delete')),
+ operation text not null check(operation in ('verify','replicate','delete')),
  status text not null default 'pending' check(status in ('pending','processing','retry','done','dead')),
  attempts integer not null default 0,
  available_at timestamptz not null default now(),
