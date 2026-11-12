@@ -162,7 +162,7 @@ func (s *server) processOne(parent context.Context)error{
 func (s *server) replicate(ctx context.Context,owner,ns,key string)error{
 	var size int64;var typ,want string
 	if err:=s.db.QueryRow(ctx,`select size_bytes,content_type,sha256 from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&size,&typ,&want);err!=nil{return err}
-	resp,err:=s.signedRequest(ctx,s.cfg.primary,http.MethodGet,key,nil,"");if err!=nil{return err};if resp.StatusCode!=200{resp.Body.Close();return fmt.Errorf("primary GET status %d",resp.StatusCode)}
+	resp,err:=s.signedRequest(ctx,s.cfg.primary,http.MethodGet,key,nil,"");if err!=nil{return err};if resp.StatusCode!=200{resp.Body.Close();return fmt.Errorf("primary GET status %d",resp.StatusCode)};if resp.ContentLength>=0&&resp.ContentLength!=size{resp.Body.Close();return errors.New("primary object size changed before replication")}
 	h:=sha256.New();reader:=&lengthReader{Reader:io.TeeReader(io.LimitReader(resp.Body,size+1),h),n:size}
 	put,err:=s.signedRequest(ctx,s.cfg.replica,http.MethodPut,key,reader,typ);closeErr:=resp.Body.Close();if err!=nil{return err};if closeErr!=nil{return closeErr};if put.StatusCode<200||put.StatusCode>=300{put.Body.Close();return fmt.Errorf("replica PUT status %d",put.StatusCode)};put.Body.Close()
 	if hex.EncodeToString(h.Sum(nil))!=want{return errors.New("primary object changed during replication")}
