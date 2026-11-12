@@ -64,6 +64,7 @@ func main() {
 	mux.HandleFunc("/internal/v1/media/download-url",s.downloadURL)
 	mux.HandleFunc("/internal/v1/media/delete",s.delete)
 	go s.worker(context.Background())
+	go s.reconcileWorker(context.Background())
 	srv:=&http.Server{Addr:cfg.addr,Handler:logging(mux),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:30*time.Second,IdleTimeout:60*time.Second}
 	log.Printf("dedicated media service listening on %s",cfg.addr)
 	log.Fatal(srv.ListenAndServe())
