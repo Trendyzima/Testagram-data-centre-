@@ -20,8 +20,9 @@ var ErrUnlinked = errors.New("Appwrite identity is not linked to a Testagram acc
 const maxAccountResponse = 64 << 10
 
 type account struct {
-	ID     string `json:"$id"`
-	Status bool   `json:"status"`
+	ID                string `json:"$id"`
+	Status            bool   `json:"status"`
+	EmailVerification bool   `json:"emailVerification"`
 }
 
 // ResolveUserID validates the supplied Appwrite session with Appwrite itself,
@@ -89,8 +90,8 @@ func fetchAccount(ctx context.Context, endpoint, projectID, jwt string) (account
 	}
 	var identity account
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxAccountResponse)).Decode(&identity); err != nil ||
-		!validAppwriteID(identity.ID) || !identity.Status {
-		return account{}, errors.New("Appwrite returned an invalid or disabled account")
+		!validAppwriteID(identity.ID) || !identity.Status || !identity.EmailVerification {
+		return account{}, errors.New("Appwrite returned an invalid, disabled, or unverified account")
 	}
 	return identity, nil
 }

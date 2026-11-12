@@ -20,7 +20,7 @@ func TestFetchAccountSendsAppwriteProjectAndJWT(t *testing.T) {
 			t.Error("Appwrite JWT header missing")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"$id":"user_123","status":true}`))
+		_, _ = w.Write([]byte(`{"$id":"user_123","status":true,"emailVerification":true}`))
 	}))
 	defer server.Close()
 
@@ -30,15 +30,17 @@ func TestFetchAccountSendsAppwriteProjectAndJWT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ID != "user_123" || !got.Status {
+	if got.ID != "user_123" || !got.Status || !got.EmailVerification {
 		t.Fatalf("unexpected Appwrite account: %+v", got)
 	}
 }
 
 func TestFetchAccountRejectsDisabledOrInvalidAccounts(t *testing.T) {
 	for name, body := range map[string]string{
-		"disabled": `{"$id":"user_123","status":false}`,
-		"invalid id": `{"$id":" bad id","status":true}`,
+		"disabled": `{"$id":"user_123","status":false,"emailVerification":true}`,
+		"unverified": `{"$id":"user_123","status":true,"emailVerification":false}`,
+		"missing verification state": `{"$id":"user_123","status":true}`,
+		"invalid id": `{"$id":" bad id","status":true,"emailVerification":true}`,
 		"malformed": `{"$id":`,
 	} {
 		t.Run(name, func(t *testing.T) {
