@@ -104,6 +104,7 @@ func (s *server) uploadURL(w http.ResponseWriter, r *http.Request) {
 	if err != nil || tag.RowsAffected() != 1 { writeErr(w, 409, "object key already has an active lifecycle or upload grant"); return }
 	_, err = tx.Exec(ctx, `delete from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key)
 	if err == nil { _, err = tx.Exec(ctx, `insert into media_upload_grants(id,owner_id,namespace,object_key,max_bytes,expires_at) values($1,$2,$3,$4,$5,$6)`, id, in.OwnerID, in.Namespace, in.Key, in.SizeBytes, exp) }
+	if err == nil { _, err = tx.Exec(ctx, `insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome) values($1,$2,$3,$4,'upload_grant','issued')`, id, in.OwnerID, in.Namespace, in.Key) }
 	if err == nil { err = tx.Commit(ctx) }
 	if err != nil { writeErr(w, 503, "could not persist upload grant"); return }
 	writeJSON(w, 201, map[string]any{"intent_id": id, "upload_url": u, "expires_at": exp, "max_bytes": in.SizeBytes, "primary": "backblaze_b2"})
