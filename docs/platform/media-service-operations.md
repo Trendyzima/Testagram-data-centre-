@@ -41,3 +41,15 @@ It does **not** yet provide:
 - Production provider smoke tests using the actual account credentials.
 
 Do not treat an object as protected until its R2 read-back verification succeeds. Do not enable production media while any of these rollout gates remain open.
+
+
+## Optional live B2/R2 provider verification
+
+The ordinary CI runtime smoke deliberately uses placeholder endpoints and credentials. It does not write to a real bucket. To prove the S3-compatible adapters against actual staging accounts, configure these GitHub Actions repository secrets:
+
+- `MEDIA_SMOKE_B2_ENDPOINT`, `MEDIA_SMOKE_B2_REGION`, `MEDIA_SMOKE_B2_BUCKET`, `MEDIA_SMOKE_B2_ACCESS_KEY_ID`, `MEDIA_SMOKE_B2_SECRET_ACCESS_KEY`
+- `MEDIA_SMOKE_R2_ENDPOINT`, `MEDIA_SMOKE_R2_REGION`, `MEDIA_SMOKE_R2_BUCKET`, `MEDIA_SMOKE_R2_ACCESS_KEY_ID`, `MEDIA_SMOKE_R2_SECRET_ACCESS_KEY`
+
+Use dedicated, private, empty-or-test staging buckets and least-privilege keys that can only read, write and delete objects in those buckets. Do not reuse production bucket names or expose these values in chat or source control.
+
+Then run **Actions → Live media provider smoke → Run workflow**, and explicitly check `confirm_live_provider_writes`. The workflow writes a unique `ci-smoke/` object to each provider, reads it back and verifies exact length plus SHA-256, checks HEAD metadata, then deletes the object. Cleanup is attempted even after a failed assertion. A green run is the first evidence of real B2/R2 API compatibility; it still does not replace a full Backend-to-CDN staging upload/playback test.
