@@ -71,8 +71,10 @@ func main() {
 func (s *server) health(w http.ResponseWriter,r *http.Request){w.WriteHeader(200);_,_=w.Write([]byte("ok\n"))}
 func (s *server) ready(w http.ResponseWriter,r *http.Request){ctx,c:=context.WithTimeout(r.Context(),2*time.Second);defer c();if err:=s.db.Ping(ctx);err!=nil{http.Error(w,"database unavailable",503);return};w.WriteHeader(200);_,_=w.Write([]byte("ready\n"))}
 func (s *server) auth(w http.ResponseWriter,r *http.Request)bool{
-	got:=strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"),"Bearer "))
-	if got==""||subtle.ConstantTimeCompare([]byte(got),[]byte(s.cfg.token))!=1||r.Header.Get("X-Testagram-API-Version")!=apiVersion { writeErr(w,401,"unauthorized");return false };return true
+	authorization:=r.Header.Get("Authorization")
+	if !strings.HasPrefix(authorization,"Bearer ") { writeErr(w,401,"unauthorized");return false }
+	got:=strings.TrimSpace(strings.TrimPrefix(authorization,"Bearer "))
+	if got==""||strings.ContainsAny(got," \t\r\n")||subtle.ConstantTimeCompare([]byte(got),[]byte(s.cfg.token))!=1||r.Header.Get("X-Testagram-API-Version")!=apiVersion { writeErr(w,401,"unauthorized");return false };return true
 }
 func (s *server) uploadURL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost { method(w, "POST"); return }
