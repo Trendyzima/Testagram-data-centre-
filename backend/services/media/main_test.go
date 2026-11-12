@@ -12,6 +12,9 @@ func TestMediaAuthRequiresBothCredentialAndVersion(t *testing.T) {
 	for _, tc := range []struct{name, token, version string; want bool}{
 		{"both", "Bearer "+s.cfg.token, "1", true},
 		{"missing bearer", "", "1", false},
+		{"raw token without scheme", s.cfg.token, "1", false},
+		{"wrong scheme", "Basic "+s.cfg.token, "1", false},
+		{"whitespace token", "Bearer "+s.cfg.token+" extra", "1", false},
 		{"missing version", "Bearer "+s.cfg.token, "", false},
 		{"wrong version", "Bearer "+s.cfg.token, "2", false},
 		{"wrong token", "Bearer "+strings.Repeat("y", 40), "1", false},
