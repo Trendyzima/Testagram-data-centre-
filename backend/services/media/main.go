@@ -148,14 +148,14 @@ func (s *server) verify(w http.ResponseWriter,r *http.Request){
 func (s *server) status(w http.ResponseWriter,r *http.Request){
 	if r.Method!=http.MethodGet{method(w,"GET");return};if !s.auth(w,r){return}
 	owner,ns,key:=r.URL.Query().Get("owner_id"),r.URL.Query().Get("namespace"),r.URL.Query().Get("key")
-	if !validIdentity(owner)||!validNamespace(ns)||!validObjectKey(key){writeErr(w,400,"invalid status query");return}
+	if !validIdentity(owner)||!validNamespace(ns)||!validMediaKey(key,owner){writeErr(w,400,"invalid status query");return}
 	var o object;err:=s.db.QueryRow(r.Context(),`select owner_id,namespace,object_key,content_type,size_bytes,coalesce(sha256,''),status,primary_verified_at,replica_verified_at from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&o.OwnerID,&o.Namespace,&o.Key,&o.ContentType,&o.Size,&o.SHA,&o.Status,&o.PrimaryVerified,&o.ReplicaVerified)
 	if errors.Is(err,pgx.ErrNoRows){writeErr(w,404,"object not found");return};if err!=nil{writeErr(w,503,"media state unavailable");return}
 	writeJSON(w,200,map[string]any{"status":o.Status,"content_type":o.ContentType,"size_bytes":o.Size,"sha256":o.SHA,"primary_verified_at":o.PrimaryVerified,"replica_verified_at":o.ReplicaVerified})
 }
 func (s *server) downloadURL(w http.ResponseWriter,r *http.Request){
 	if r.Method!=http.MethodPost{method(w,"POST");return};if !s.auth(w,r){return}
-	var in downloadRequest;if !decode(w,r,&in)||!validIdentity(in.RequesterID)||!validIdentity(in.OwnerID)||!validNamespace(in.Namespace)||!validObjectKey(in.Key){writeErr(w,400,"invalid download request");return}
+	var in downloadRequest;if !decode(w,r,&in)||!validIdentity(in.RequesterID)||!validIdentity(in.OwnerID)||!validNamespace(in.Namespace)||!validMediaKey(in.Key,in.OwnerID){writeErr(w,400,"invalid download request");return}
 	var status string;err:=s.db.QueryRow(r.Context(),`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key).Scan(&status)
 	if err!=nil||status!="protected"{writeErr(w,404,"protected object not found");return}
 	u,err:=presign(s.cfg.replica,http.MethodGet,in.Key,s.cfg.downloadTTL,"");provider:=s.cfg.replica.name
@@ -260,7 +260,9 @@ func objectURL(s s3Store,key string)(*url.URL,error){
 func signingKey(secret,day,region string)[]byte{k:=hmacSHA([]byte("AWS4"+secret),day);k=hmacSHA(k,region);k=hmacSHA(k,"s3");return hmacSHA(k,"aws4_request")}
 func hmacSHA(key []byte,data string)[]byte{h:=hmac.New(sha256.New,key);_,_=h.Write([]byte(data));return h.Sum(nil)}
 func hashHex(b []byte)string{h:=sha256.Sum256(b);return hex.EncodeToString(h[:])}
-func validUpload(in uploadRequest)bool{return validIdentity(in.OwnerID)&&validNamespace(in.Namespace)&&validObjectKey(in.Key)&&in.ContentType!=""&&len(in.ContentType)<=160&&!strings.ContainsAny(in.ContentType,"\r\n")&&in.SizeBytes>0&&in.SizeBytes<=1<<40}
+func validUpload(in uploadRequest)bool{return validIdentity(in.OwnerID)&&validNamespace(in.Namespace)&&validMediaKey(in.Key,in.OwnerID)&&allowedMediaType(in.ContentType)&&in.SizeBytes>0&&in.SizeBytes<=5<<30}
+func allowedMediaType(v string)bool{switch v{case "image/jpeg","image/png","image/webp","image/gif","image/avif","video/mp4","video/webm":return true};return false}
+func validMediaKey(key,owner string)bool{if !validObjectKey(key)||!validIdentity(owner){return false};parts:=strings.Split(key,"/");if len(parts)!=3||parts[0]!="users"||parts[1]!=owner||len(parts[2])!=32{return false};_,err:=hex.DecodeString(parts[2]);return err==nil}
 func objectLockKey(owner,namespace,key string)string{return fmt.Sprintf("%d:%s:%d:%s:%s",len(owner),owner,len(namespace),namespace,key)}
 func validObjectKey(key string)bool{if key==""||len(key)>1024||strings.HasPrefix(key,"/")||strings.ContainsAny(key,"\\\x00\r\n"){return false};for _,part:=range strings.Split(key,"/"){if part==""||part=="."||part==".."{return false}};return true}
 func validIdentity(v string)bool{return strings.TrimSpace(v)!=""&&len(v)<=128&&!strings.ContainsAny(v,"\x00\r\n")}
