@@ -78,4 +78,4 @@ drop trigger if exists media_outbox_operation_journal on media_outbox;
 create trigger media_outbox_operation_journal after update of status on media_outbox
 for each row execute function media_record_outbox_operation();
 
-create unique index if not exists media_operations_operation_id_uidx on media_operations(operation_id);
+drop index if exists media_operations_operation_id_uidx;
