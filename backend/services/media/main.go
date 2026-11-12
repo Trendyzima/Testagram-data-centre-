@@ -153,19 +153,29 @@ func (s *server) status(w http.ResponseWriter,r *http.Request){
 	if errors.Is(err,pgx.ErrNoRows){writeErr(w,404,"object not found");return};if err!=nil{writeErr(w,503,"media state unavailable");return}
 	writeJSON(w,200,map[string]any{"status":o.Status,"content_type":o.ContentType,"size_bytes":o.Size,"sha256":o.SHA,"primary_verified_at":o.PrimaryVerified,"replica_verified_at":o.ReplicaVerified})
 }
-func (s *server) downloadURL(w http.ResponseWriter,r *http.Request){
-	if r.Method!=http.MethodPost{method(w,"POST");return};if !s.auth(w,r){return}
-	var in downloadRequest;if !decode(w,r,&in)||!validIdentity(in.RequesterID)||!validIdentity(in.OwnerID)||!validNamespace(in.Namespace)||!validMediaKey(in.Key,in.OwnerID){writeErr(w,400,"invalid download request");return}
-	var status string;err:=s.db.QueryRow(r.Context(),`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key).Scan(&status)
-	if err!=nil||status!="protected"{writeErr(w,404,"protected object not found");return}
-	u,err:=presign(s.cfg.replica,http.MethodGet,in.Key,s.cfg.downloadTTL,"");provider:=s.cfg.replica.name
-	if err!=nil{u,err=presign(s.cfg.primary,http.MethodGet,in.Key,s.cfg.downloadTTL,"");provider=s.cfg.primary.name}
-	if err!=nil{writeErr(w,503,"no verified origin can be signed");return}
-	writeJSON(w,200,map[string]string{"url":u,"provider":provider})
+func (s *server) downloadURL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost { method(w, "POST"); return }
+	if !s.auth(w, r) { return }
+	var in downloadRequest
+	if !decode(w, r, &in) || !validIdentity(in.RequesterID) || !validIdentity(in.OwnerID) || !validNamespace(in.Namespace) || !validMediaKey(in.Key, in.OwnerID) { writeErr(w, 400, "invalid download request"); return }
+	var status string; var size int64
+	err := s.db.QueryRow(r.Context(), `select status,size_bytes from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key).Scan(&status, &size)
+	if err != nil || status != "protected" { writeErr(w, 404, "protected object not found"); return }
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second); defer cancel()
+	for _, store := range []s3Store{s.cfg.replica, s.cfg.primary} {
+		resp, headErr := s.signedRequest(ctx, store, http.MethodHead, in.Key, nil, "")
+		if headErr != nil { continue }
+		present := resp.StatusCode == http.StatusOK && resp.ContentLength == size
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
+		if !present { continue }
+		u, signErr := presign(store, http.MethodGet, in.Key, s.cfg.downloadTTL, "")
+		if signErr == nil { writeJSON(w, 200, map[string]string{"url": u, "provider": store.name}); return }
+	}
+	writeErr(w, 503, "no verified origin is currently readable")
 }
 func (s *server) delete(w http.ResponseWriter,r *http.Request){
 	if r.Method!=http.MethodPost{method(w,"POST");return};if !s.auth(w,r){return}
-	var in deleteRequest;if !decode(w,r,&in)||!validIdentity(in.RequesterID)||!validIdentity(in.OwnerID)||!validNamespace(in.Namespace)||!validObjectKey(in.Key){writeErr(w,400,"invalid delete request");return}
+	var in deleteRequest;if !decode(w,r,&in)||!validIdentity(in.RequesterID)||!validIdentity(in.OwnerID)||!validNamespace(in.Namespace)||!validMediaKey(in.Key,in.OwnerID){writeErr(w,400,"invalid delete request");return}
 	ctx,c:=context.WithTimeout(r.Context(),5*time.Second);defer c()
 	tx,err:=s.db.Begin(ctx);if err!=nil{writeErr(w,503,"durable state unavailable");return};defer tx.Rollback(ctx)
 	var old string;err=tx.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3 for update`,in.OwnerID,in.Namespace,in.Key).Scan(&old)
