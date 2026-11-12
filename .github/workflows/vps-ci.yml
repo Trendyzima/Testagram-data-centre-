@@ -393,9 +393,9 @@ jobs:
           docker exec testagram-restore-source createdb -U postgres data_centre
           docker exec testagram-restore-source createdb -U postgres neon_social
           docker exec testagram-restore-source psql -U postgres -d data_centre -v ON_ERROR_STOP=1 \
-            -c 'CREATE TABLE restore_probe(id integer PRIMARY KEY, value text NOT NULL); INSERT INTO restore_probe VALUES (1, ''data-centre-ok'');'
+            -c "CREATE TABLE restore_probe(id integer PRIMARY KEY, value text NOT NULL); INSERT INTO restore_probe VALUES (1, 'data-centre-ok');"
           docker exec testagram-restore-source psql -U postgres -d neon_social -v ON_ERROR_STOP=1 \
-            -c 'CREATE TABLE restore_probe(id integer PRIMARY KEY, value text NOT NULL); INSERT INTO restore_probe VALUES (1, ''neon-social-ok'');'
+            -c "CREATE TABLE restore_probe(id integer PRIMARY KEY, value text NOT NULL); INSERT INTO restore_probe VALUES (1, 'neon-social-ok');"
 
           docker exec testagram-restore-source pg_dump -U postgres -Fc data_centre > "$stage/data-centre.dump"
           docker exec testagram-restore-source pg_dump -U postgres -Fc neon_social > "$stage/neon-social.dump"
