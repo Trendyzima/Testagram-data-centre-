@@ -7,9 +7,9 @@ info:
     authorization authority. Data Centre owns provider credentials, object
     verification, placement, replication and deletion. This contract is
     intentionally not a public client API.
-servers:
-  - url: http://control-plane:8787
-    description: Private platform network only
+description: |
+  Deployment note: host these routes on a dedicated private media service. Do not
+  mount them on the platform feature-flag service or the node control-plane API.
 security:
   # Both requirements are mandatory; separate list entries would mean OR.
   - BackendBearer: []
