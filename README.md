@@ -65,6 +65,22 @@ docker compose --env-file backend/.env -f backend/docker-compose.yml ps
   PostgreSQL/MinIO deployment. End-to-end Compose, Appwrite and media restore
   tests remain release gates.
 
+## Federation service credentials
+
+The Federation container receives two independent service credentials from
+`backend/.env`:
+
+- `FEDERATION_INTERNAL_TOKEN` authenticates Backend-to-Federation ingress and is injected as
+  `FEDERATION_INGRESS_TOKEN`.
+- `FEDERATION_BACKEND_INTERNAL_TOKEN` authenticates Federation-to-Backend actor/readiness requests and is injected as
+  `BACKEND_INTERNAL_TOKEN`.
+
+Generate both values independently (at least 32 random characters each). The
+Compose file requires both values and does not permit a shared legacy-token
+fallback. Missing either secret must prevent the corresponding private
+integration from authenticating. Keep public federation and delivery workers
+disabled until both directions are verified in staging.
+
 ## Backups and restore
 
 The VPS backup scripts currently cover the Data Centre infrastructure database
