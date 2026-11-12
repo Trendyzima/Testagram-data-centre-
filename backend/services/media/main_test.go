@@ -29,11 +29,13 @@ func TestMediaAuthRequiresBothCredentialAndVersion(t *testing.T) {
 func TestMediaUploadValidation(t *testing.T) {
 	base := uploadRequest{OwnerID:"owner-1", Namespace:"media-private", Key:"object/123", ContentType:"video/mp4", SizeBytes:1024}
 	if !validUpload(base) { t.Fatal("valid upload rejected") }
-	cases := []uploadRequest{base, base, base, base}
+	cases := []uploadRequest{base, base, base, base, base, base}
 	cases[0].Namespace = "public"
 	cases[1].Key = "../escape"
 	cases[2].ContentType = "video/mp4\r\nX-Evil: yes"
 	cases[3].SizeBytes = 0
+	cases[4].Key = "/absolute/key"
+	cases[5].Key = "users//object"
 	for i, in := range cases { if validUpload(in) { t.Fatalf("invalid upload case %d accepted", i) } }
 }
 
