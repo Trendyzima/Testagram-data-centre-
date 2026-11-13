@@ -8,7 +8,7 @@ services:
       HTTP_ADDR: :8092
       INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
     expose: ["8092"]
-    networks: [ranker]
+    networks: [ranker, platform]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8092/readyz"]
       interval: 10s
@@ -140,7 +140,7 @@ services:
       FEDERATION_OUTBOX_POLLER_ENABLED: ${FEDERATION_OUTBOX_POLLER_ENABLED:-false}
       FEDERATION_INBOX_WORKER_ENABLED: ${FEDERATION_INBOX_WORKER_ENABLED:-false}
     expose: ["8081"]
-    networks: [services, federation]
+    networks: [services, federation, platform]
     depends_on:
       # Federation has its own authenticated Backend readiness probe. Do not
       # gate it on the public API's full readiness, which also requires Algorithm.
