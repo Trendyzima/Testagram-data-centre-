@@ -56,7 +56,7 @@ func (s *server) reconcileProtectedBatch(parent context.Context, limit int) erro
 		from media_objects
 		where status='protected'
 		  and coalesce(reconciled_at,replica_verified_at,updated_at) <= now()-interval '24 hours'
-		  and (reconciliation_claimed_at is null or reconciliation_claimed_at < now()-interval '15 minutes')
+		  and (reconciliation_claimed_at is null or reconciliation_claimed_at < now()-interval '35 minutes')
 		order by coalesce(reconciled_at,replica_verified_at,updated_at),owner_id,object_key
 		limit $1 for update skip locked`, limit)
 	if err != nil {
