@@ -300,6 +300,17 @@ jobs:
             if [ "$migration" = "backend-source/migrations/20261109_threads_browsing_history.sql" ]; then
               continue
             fi
+            # The identity evidence migration references verification_sessions.
+            # Apply its canonical prerequisite at this point and skip its earlier
+            # lexical position so the dependency is explicit and visible in CI.
+            if [ "$migration" = "backend-source/migrations/20261114_native_identity_evidence.sql" ]; then
+              test -f backend-source/migrations/20261113_native_identity_verification.sql
+              docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/20261113_native_identity_verification.sql
+            fi
+            if [ "$migration" = "backend-source/migrations/20261113_native_identity_verification.sql" ]; then
+              continue
+            fi
+            echo "Applying canonical Backend migration: $migration"
             docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < "$migration"
           done
           docker exec testagram-postgres psql -U postgres -d testagram -Atqc "SELECT to_regclass('testagram_local.federation_outbox') IS NOT NULL AND to_regclass('testagram_local.communication_outbox') IS NOT NULL" | grep -qx t
