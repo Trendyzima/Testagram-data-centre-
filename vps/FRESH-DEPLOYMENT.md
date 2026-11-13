@@ -19,6 +19,10 @@ The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Fed
   or Supabase Storage migrations to this infrastructure database.
 - control-plane: Data Centre infrastructure state only. Its PostgreSQL URL
   must point to a dedicated TLS database, not the legacy Supabase project.
+- media: dedicated private B2-primary/R2-replica object lifecycle service,
+  enabled only with the `media` profile and backed by its own MEDIA_DATABASE_URL.
+  It is attached to both the local services network and the Backend-owned
+  `testagram-platform` network; it is not a public API.
 - edge: Caddy terminates TLS and forwards only api.testagram.site to Backend.
   The Federation hostname is deliberately absent from the public Caddy config.
 - federation-api: a private ActivityPub preview service on the internal
@@ -45,28 +49,39 @@ The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Fed
 8. Configure exact frontend HTTPS origins, Appwrite endpoint/project/database,
    independent Algorithm token and a separate TLS PostgreSQL database for the
    Data Centre control plane.
-9. Run docker compose --env-file vps/fresh.env -f vps/docker-compose.fresh.yml config
-   and inspect the rendered configuration for secrets and unexpected services.
-10. Provision Backblaze B2 as the durable primary object store and Cloudflare R2
-   as the delivery/replica store. Backend currently implements B2 signed uploads,
-   B2 SHA-256 verification, synchronous R2 copy/read-back verification, private
-   download URLs and repair logic. Set separate least-privilege S3-compatible
-   credentials and endpoints; never reuse keys between providers. Configure the
-   optional Cloudflare private-media Worker URL/signing secret as a pair.
-11. Keep FRESH_MEDIA_ENABLED=false until B2/R2 credentials, Appwrite metadata
-   schema, upload read-back verification, checksum-matched replica reconciliation
-   and an independent archive are staged.
+9. Start the Backend self-hosted stack first so it creates the internal
+   `testagram-platform` Docker network. The Data Centre Compose file joins that
+   existing network for the dedicated media service; do not publish port 8096.
+   Configure Backend with DATA_CENTRE_MEDIA_API_URL=http://media:8096 and the
+   same FRESH_DATA_CENTRE_INTERNAL_TOKEN used as MEDIA_INTERNAL_TOKEN by the
+   Data Centre media container. Keep FRESH_MEDIA_ENABLED=false during staging.
+10. Run docker compose --env-file vps/fresh.env -f vps/docker-compose.fresh.yml config
+    and inspect the rendered configuration for secrets and unexpected services.
+11. Provision Backblaze B2 as the durable primary and Cloudflare R2 as the
+    independent replica. Store B2/R2 credentials only in the Data Centre media
+    service environment; never pass provider credentials into Backend, Flutter,
+    the Algorithm, Federation or CDN. Use separate least-privilege credentials.
+12. Apply the dedicated media migration and start only the private media profile:
+    `docker compose --env-file vps/fresh.env -f vps/docker-compose.fresh.yml --profile media up -d media-migrate media`.
+    Verify `/healthz` and `/readyz` from the private network; do not expose 8096.
+13. Keep FRESH_MEDIA_ENABLED=false until real B2 PUT, independent SHA-256
+    read-back, R2 replica write/read-back, retry/reconciliation, delete and
+    restore tests pass. Also prove Backend -> Data Centre authentication and
+    CDN public/private cache isolation in staging.
 12. Keep retention disabled and dry-run true. Do not enable destructive jobs
    during initial deployment.
 13. Run staging auth, feed authorization, ranker outage, media, backup/restore,
     load and security tests before production DNS cutover.
 
 This compose file is a deployment foundation, not proof of production readiness.
-The private Backend-to-Federation actor and readiness contracts exist, but inbox
-activity application, Backend outbox polling, outbound delivery, follower fan-out
-and cross-repository end-to-end tests remain unfinished. Backend-to-Data-Centre
-node media placement, signed node object transfer, durable replication jobs,
-provider reconciliation scheduling and operational restore drills also remain
-release gates. Real B2/R2 credentials and live provider E2E tests have not yet
-been exercised by this repository's CI. Do not add public Federation routing until those
-contracts and tests are complete.
+The dedicated media service now implements the five Backend-facing lifecycle
+operations, durable verification/deletion outbox, retry workers and replica
+reconciliation. CI exercises service logic and isolated database restore, but
+real B2/R2 credentials, provider-backed write/read/hash/delete/restore drills and
+Backend-to-CDN-to-Flutter end-to-end delivery are still mandatory release gates.
+The Go CDN also needs its canonical deployment controller and external post-deploy
+smoke. The private Backend-to-Federation actor/readiness contracts exist, but
+inbox activity application, Backend outbox polling, outbound delivery, follower
+fan-out and cross-repository end-to-end tests remain unfinished. Do not enable
+fresh media or add public Federation routing until those contracts and tests
+are complete.
