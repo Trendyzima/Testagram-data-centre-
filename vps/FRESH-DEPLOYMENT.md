@@ -10,10 +10,10 @@ The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Fed
 
 - api: Backend's dedicated Dockerfile.fresh image. Verifies Appwrite JWTs,
   serves the public /v1 API, owns authorization and calls private services.
-- algorithm: private stateless ranker on the internal `ranker` network and the
-  Backend-owned `testagram-platform` network. Fresh API reaches it over `ranker`;
-  the legacy Backend reaches it over `testagram-platform`. Its bearer token is
-  never exposed to Flutter/web clients.
+- algorithm: private stateless ranker on the internal `ranker` network only.
+  Fresh API reaches it over `ranker`; the standard Backend deployment has its
+  own Algorithm service on `testagram-platform`. Its bearer token is never
+  exposed to Flutter/web clients.
 - migrate: applies only `001_vps.sql` and `006_hosting_control_plane.sql` to
   the dedicated Data Centre PostgreSQL database before control-plane starts.
   It deliberately does not apply product/video, notification, platform-event,
