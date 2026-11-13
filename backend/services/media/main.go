@@ -219,8 +219,14 @@ func (s *server) processOne(parent context.Context)error{
 		if stateErr==nil&&(objectStatus=="delete_pending"||objectStatus=="deleted") { _,cancelErr:=s.db.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete',updated_at=now() where id=$1 and status='processing'`,id);return cancelErr }
 		tag,updateErr:=s.db.Exec(ctx,`update media_outbox set status=case when attempts>=12 then 'dead' else 'retry' end,available_at=now()+make_interval(secs=>least(3600,power(2,least(attempts,10))::int)),locked_until=null,last_error=left($2,1000),updated_at=now() where id=$1 and status='processing'`,id,err.Error())
 		if updateErr!=nil{return updateErr};if tag.RowsAffected()==0{return nil}
-		if op=="replicate"||op=="verify"||op=="restore_primary" {
-			_,_=s.db.Exec(ctx,`update media_objects set status='replication_failed',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('replication_pending','restore_pending','uploaded')`,owner,ns,key)
+		if op=="replicate"||op=="verify" {
+			_,_=s.db.Exec(ctx,`update media_objects set status='replication_failed',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('replication_pending','uploaded')`,owner,ns,key)
+		} else if op=="restore_primary" {
+			// Keep the object quarantined and retryable while attempts remain.
+			// Only expose replication_failed after the durable outbox dead-letters it.
+			_,_=s.db.Exec(ctx,`update media_objects set status='replication_failed',updated_at=now()
+				where owner_id=$1 and namespace=$2 and object_key=$3 and status='restore_pending'
+				and exists(select 1 from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3 and operation='restore_primary' and status='dead')`,owner,ns,key)
 		}
 		return err
 	}
