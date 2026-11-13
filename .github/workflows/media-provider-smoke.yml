@@ -73,5 +73,4 @@ jobs:
       - name: Verify live B2/R2 provider lifecycle and replication recovery
         run: |
           set -euo pipefail
-          go test -count=1 -run '^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete)
- -v ./backend/services/media
+          go test -count=1 -run "^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete)$" -v ./backend/services/media
