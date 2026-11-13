@@ -283,7 +283,7 @@ func allowedMediaType(v string)bool{switch v{case "image/jpeg","image/png","imag
 func validMediaKey(key,owner string)bool{if !validObjectKey(key)||!validIdentity(owner){return false};parts:=strings.Split(key,"/");if len(parts)!=3||parts[0]!="users"||parts[1]!=owner||len(parts[2])!=32||strings.ToLower(parts[2])!=parts[2]{return false};_,err:=hex.DecodeString(parts[2]);return err==nil}
 func objectLockKey(owner,namespace,key string)string{return fmt.Sprintf("%d:%s:%d:%s:%s",len(owner),owner,len(namespace),namespace,key)}
 func validObjectKey(key string)bool{if key==""||len(key)>1024||strings.HasPrefix(key,"/")||strings.ContainsAny(key,"\\\x00\r\n"){return false};for _,part:=range strings.Split(key,"/"){if part==""||part=="."||part==".."{return false}};return true}
-func validIdentity(v string)bool{if len(v)<1||len(v)>128{return false};for _,r:=range v{if !(r>='a'&&r<='z'||r>='A'&&r<='Z'||r>='0'&&r<='9'||r=='-'){return false}};return true}
+func validIdentity(v string)bool{if len(v)<1||len(v)>128{return false};for _,r:=range v{if !(r>='a'&&r<='z'||r>='A'&&r<='Z'||r>='0'&&r<='9'||r=='-'||r=='_'||r=='.'){return false}};return true}
 func validNamespace(v string)bool{return v=="media-public"||v=="media-private"}
 func decode(w http.ResponseWriter,r *http.Request,v any)bool{r.Body=http.MaxBytesReader(w,r.Body,maxJSON);defer r.Body.Close();d:=json.NewDecoder(r.Body);d.DisallowUnknownFields();if d.Decode(v)!=nil{return false};var extra any;return d.Decode(&extra)==io.EOF}
 func writeErr(w http.ResponseWriter,status int,msg string){writeJSON(w,status,map[string]string{"error":msg})}
