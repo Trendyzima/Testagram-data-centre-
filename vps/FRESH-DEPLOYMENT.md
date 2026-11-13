@@ -77,6 +77,8 @@ The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Fed
 13. Run staging auth, feed authorization, ranker outage, media, backup/restore,
     load and security tests before production DNS cutover.
 
+IMPORTANT Fresh API media limitation: the `api` container here runs `cmd/fresh-api` from `Dockerfile.fresh`. That code still builds `freshstorage.FromEnv()` and currently requires direct B2/R2 providers when `FRESH_MEDIA_ENABLED=true`; it does not yet consume `DATA_CENTRE_MEDIA_API_URL` / `FRESH_DATA_CENTRE_INTERNAL_TOKEN`. The Backend `cmd/api` integration is a separate code path. Because provider credentials must remain only in the Data Centre media service, do not enable Fresh API media until the Data Centre-backed Fresh API adapter and canonical metadata-ledger reconciliation are implemented and tested. Keep `FRESH_MEDIA_ENABLED=false`.
+
 This compose file is a deployment foundation, not proof of production readiness.
 The dedicated media service now implements the five Backend-facing lifecycle
 operations, durable verification/deletion outbox, retry workers and replica
