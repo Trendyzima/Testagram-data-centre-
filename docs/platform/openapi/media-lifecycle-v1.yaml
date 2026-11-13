@@ -178,7 +178,7 @@ components:
       properties:
         owner_id: { type: string, minLength: 1, maxLength: 128 }
         namespace: { type: string, enum: [media-public, media-private] }
-        key: { type: string, pattern: '^users/[A-Za-z0-9-]{1,128}/[a-f0-9]{32}
+        key: { type: string, pattern: '^users/[A-Za-z0-9._-]{1,128}/[a-f0-9]{32}
         content_type: { type: string, enum: [image/jpeg, image/png, image/webp, image/gif, image/avif, video/mp4, video/webm] }
         size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5368709120 }
     UploadGrant:
@@ -224,7 +224,7 @@ components:
         requester_id: { type: string, minLength: 1, maxLength: 128 }
         owner_id: { type: string, minLength: 1, maxLength: 128 }
         namespace: { type: string, enum: [media-public, media-private] }
-        key: { type: string, pattern: '^users/[A-Za-z0-9-]{1,128}/[a-f0-9]{32}
+        key: { type: string, pattern: '^users/[A-Za-z0-9._-]{1,128}/[a-f0-9]{32}
         method: { type: string, enum: [GET, HEAD], default: GET, description: Signed provider URL method; HEAD is used by CDN origin metadata probes }
     DownloadGrant:
       type: object
