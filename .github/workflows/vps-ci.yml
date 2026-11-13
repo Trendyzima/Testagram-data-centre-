@@ -140,6 +140,10 @@ jobs:
           test -n "$FRESH_FEDERATION_INTERNAL_TOKEN"
           test "${#FRESH_FEDERATION_INTERNAL_TOKEN}" -ge 32
           docker compose -f backend/docker-compose.yml config
+          # Optional media profile must not make the default stack require media-only credentials.
+          env -u MEDIA_DATABASE_URL -u MEDIA_DATABASE_NAME docker compose -f backend/docker-compose.yml config --quiet
+          docker compose --profile media -f backend/docker-compose.yml config --quiet
+          grep -Fq '${MEDIA_DATABASE_URL:?Set MEDIA_DATABASE_URL}' backend/docker-compose.yml
           docker compose -f vps/docker-compose.fresh.yml config
           docker compose -f vps/docker-compose.yml config
           # Standard and Fresh stacks intentionally differ; validate each Compose model independently above.
