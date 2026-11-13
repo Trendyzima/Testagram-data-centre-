@@ -8,8 +8,8 @@ services:
       HTTP_ADDR: :8092
       INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
     expose: ["8092"]
-    # Algorithm is reachable only from Backend on the isolated ranking network.
-    networks: [ranker]
+    # Fresh API uses ranker; legacy Backend cmd/api uses the shared private platform network.
+    networks: [ranker, platform]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8092/readyz"]
       interval: 10s
