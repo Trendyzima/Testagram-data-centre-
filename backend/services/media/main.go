@@ -50,6 +50,8 @@ func main() {
 		uploadTTL: duration("MEDIA_UPLOAD_TTL", 45*time.Minute), downloadTTL: duration("MEDIA_DOWNLOAD_TTL", 5*time.Minute),
 	}
 	if len(cfg.token)<32 { log.Fatal("MEDIA_INTERNAL_TOKEN must be at least 32 characters") }
+	if cfg.uploadTTL < time.Minute || cfg.uploadTTL > time.Hour { log.Fatal("MEDIA_UPLOAD_TTL must be between 1 minute and 1 hour") }
+	if cfg.downloadTTL < time.Minute || cfg.downloadTTL > 15*time.Minute { log.Fatal("MEDIA_DOWNLOAD_TTL must be between 1 minute and 15 minutes") }
 	if err:=validateStore(cfg.primary);err!=nil{log.Fatalf("invalid B2 primary configuration: %v",err)}
 	if err:=validateStore(cfg.replica);err!=nil{log.Fatalf("invalid R2 replica configuration: %v",err)}
 	db,err:=pgxpool.New(context.Background(),required("MEDIA_DATABASE_URL")); if err!=nil { log.Fatal(err) }; defer db.Close()
@@ -162,14 +164,15 @@ func (s *server) downloadURL(w http.ResponseWriter, r *http.Request) {
 	var in downloadRequest
 	if !decode(w, r, &in) || !validIdentity(in.RequesterID) || !validIdentity(in.OwnerID) || !validNamespace(in.Namespace) || !validMediaKey(in.Key, in.OwnerID) { writeErr(w, 400, "invalid download request"); return }
 	if in.Method == "" { in.Method = http.MethodGet }; if in.Method != http.MethodGet && in.Method != http.MethodHead { writeErr(w, 400, "download method must be GET or HEAD"); return }
-	var status string; var size int64
-	err := s.db.QueryRow(r.Context(), `select status,size_bytes from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key).Scan(&status, &size)
+	var status, contentType string; var size int64
+	err := s.db.QueryRow(r.Context(), `select status,size_bytes,content_type from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key).Scan(&status, &size, &contentType)
 	if err != nil || status != "protected" { writeErr(w, 404, "protected object not found"); return }
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second); defer cancel()
 	for _, store := range []s3Store{s.cfg.replica, s.cfg.primary} {
 		resp, headErr := s.signedRequest(ctx, store, http.MethodHead, in.Key, nil, "")
 		if headErr != nil { continue }
-		present := resp.StatusCode == http.StatusOK && resp.ContentLength == size
+		gotType := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
+		present := resp.StatusCode == http.StatusOK && resp.ContentLength == size && (gotType == "" || gotType == contentType)
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
 		if !present { continue }
 		u, signErr := presign(store, in.Method, in.Key, s.cfg.downloadTTL, "")
