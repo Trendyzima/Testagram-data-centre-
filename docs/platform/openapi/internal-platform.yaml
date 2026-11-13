@@ -130,5 +130,5 @@ components:
         actor_id: {type: [string, 'null']}
         action: {type: string, minLength: 1, maxLength: 160}
         resource_type: {type: string, minLength: 1, maxLength: 160}
-        resource_id: {type: string}
+        resource_id: {type: string, minLength: 1}
         metadata: {type: object}
