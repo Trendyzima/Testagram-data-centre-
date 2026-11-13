@@ -160,6 +160,72 @@ services:
       timeout: 5s
       retries: 6
 
+  # Optional Backend media lifecycle service. The deploy workflow enables this
+  # profile only when both B2 and R2 provider configurations are complete.
+  media-migrate:
+    profiles: ["media"]
+    image: postgres:17-alpine
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: |
+      set -eu
+      : "${DATABASE_URL:?Set DATABASE_URL}"
+      : "${MEDIA_DATABASE_URL:?Set MEDIA_DATABASE_URL}"
+      name="${MEDIA_DATABASE_NAME:-testagram_media}"
+      case "$name" in ""|*[!A-Za-z0-9_]*)
+        echo "MEDIA_DATABASE_NAME must contain only letters, digits and underscores" >&2
+        exit 1
+        ;;
+      esac
+      if [ "$MEDIA_DATABASE_URL" = "$DATABASE_URL" ]; then
+        echo "Media lifecycle requires a separate database from the Backend database" >&2
+        exit 1
+      fi
+      exists="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc "SELECT 1 FROM pg_database WHERE datname = '$name'")"
+      if [ "$exists" != "1" ]; then
+        psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$name\""
+      fi
+      psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-}
+      MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}
+      MEDIA_DATABASE_NAME: ${MEDIA_DATABASE_NAME:-testagram_media}
+    volumes:
+      - ./services/media/migrations:/migrations:ro
+    networks: [platform]
+
+  media:
+    profiles: ["media"]
+    build:
+      context: ..
+      dockerfile: backend/services/media/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      media-migrate:
+        condition: service_completed_successfully
+    environment:
+      MEDIA_ADDR: :8096
+      MEDIA_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}
+      MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}
+      B2_S3_ENDPOINT: ${B2_S3_ENDPOINT:-}
+      B2_S3_REGION: ${B2_S3_REGION:-}
+      B2_S3_BUCKET: ${B2_S3_BUCKET:-}
+      B2_S3_ACCESS_KEY_ID: ${B2_S3_ACCESS_KEY_ID:-}
+      B2_S3_SECRET_ACCESS_KEY: ${B2_S3_SECRET_ACCESS_KEY:-}
+      CLOUDFLARE_R2_ENDPOINT: ${CLOUDFLARE_R2_ENDPOINT:-}
+      CLOUDFLARE_R2_REGION: ${CLOUDFLARE_R2_REGION:-auto}
+      CLOUDFLARE_R2_BUCKET: ${CLOUDFLARE_R2_BUCKET:-}
+      CLOUDFLARE_R2_ACCESS_KEY_ID: ${CLOUDFLARE_R2_ACCESS_KEY_ID:-}
+      CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}
+    expose: ["8096"]
+    networks: [platform]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8096/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
 networks:
   internal:
     internal: true
