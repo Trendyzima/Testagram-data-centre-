@@ -123,6 +123,47 @@ func TestInternalTokenStrength(t *testing.T) {
 	}
 }
 
+
+func TestPlatformRejectsNonObjectEventAndAuditPayloads(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	s := &server{internal: token}
+	cases := []struct {
+		name string
+		handler http.HandlerFunc
+		path string
+		body string
+	}{
+		{"event properties array", s.events, "/v1/events", `{"event_name":"test","properties":[]}`},
+		{"event properties null", s.events, "/v1/events", `{"event_name":"test","properties":null}`},
+		{"audit metadata array", s.audit, "/v1/audit", `{"action":"create","resource_type":"post","resource_id":"p1","metadata":[]}`},
+		{"audit blank resource", s.audit, "/v1/audit", `{"action":"create","resource_type":"post","resource_id":" ","metadata":{}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("Authorization", "Bearer "+token)
+			rec := httptest.NewRecorder()
+			tc.handler(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("got status=%d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestPlatformAuthorizationRequiresBearerScheme(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	s := &server{internal: token}
+	for _, header := range []string{token, "Basic " + token, "Bearer " + token + " extra"} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/events", nil)
+		req.Header.Set("Authorization", header)
+		rec := httptest.NewRecorder()
+		if s.authorize(rec, req) {
+			t.Errorf("authorize accepted malformed Authorization header %q", header)
+		}
+	}
+}
+
 func TestPlatformKeyValidation(t *testing.T) {
 	for _, tc := range []struct {
 		value string
