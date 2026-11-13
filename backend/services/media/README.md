@@ -24,4 +24,4 @@ Implements the five routes in `docs/platform/openapi/media-lifecycle-v1.yaml`. E
 - Reconciliation leases expire after 15 minutes so a crashed worker does not suppress future checks for a full day.
 - No public port is exposed; mount only on a private service network.
 
-This initial adapter targets S3-compatible B2 and R2. Instabox is intentionally not enabled until its supported API, authentication model and object consistency guarantees are verified. Do not set `FRESH_MEDIA_ENABLED=true` until live provider integration tests, staging and CDN/Flutter journeys pass.
+This initial adapter targets S3-compatible B2 and R2. **Instabox is not an object-storage provider**: its documented API manages cloud Linux machines, machine lifecycle, commands, files and snapshots. Do not treat an Instabox API key as an S3 credential or add an Instabox media-storage adapter. If adopted, integrate it separately as a compute/deployment provider for VPS workloads. See https://instabox.sh/docs/api.md and https://instabox.sh/docs/machines.md. Do not set `FRESH_MEDIA_ENABLED=true` until live provider integration tests, staging and CDN/Flutter journeys pass.
