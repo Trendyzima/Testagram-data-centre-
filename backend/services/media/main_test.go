@@ -32,6 +32,8 @@ func TestMediaAuthRequiresBothCredentialAndVersion(t *testing.T) {
 }
 
 func TestMediaUploadValidation(t *testing.T) {
+	if !validIdentity("appwrite.user_123") { t.Fatal("Appwrite owner IDs containing dot/underscore must be accepted") }
+	if !validMediaKey("users/appwrite.user_123/0123456789abcdef0123456789abcdef", "appwrite.user_123") { t.Fatal("canonical Appwrite owner-bound key rejected") }
 	base := uploadRequest{OwnerID:"owner-1", Namespace:"media-private", Key:"users/owner-1/0123456789abcdef0123456789abcdef", ContentType:"video/mp4", SizeBytes:1024}
 	if !validUpload(base) { t.Fatal("valid upload rejected") }
 	cases := []uploadRequest{base, base, base, base, base, base, base, base, base}
