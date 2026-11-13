@@ -84,6 +84,10 @@ func TestLiveProviderRoundTrip(t *testing.T) {
 				get.Body.Close()
 				t.Fatalf("GET returned HTTP %d", get.StatusCode)
 			}
+			if gotType := strings.TrimSpace(strings.Split(get.Header.Get("Content-Type"), ";")[0]); gotType != "application/octet-stream" {
+				get.Body.Close()
+				t.Fatalf("GET returned unexpected content type %q", gotType)
+			}
 			if !digestMatches(get.Body, int64(len(payload)), hashHex(payload)) {
 				get.Body.Close()
 				t.Fatal("provider GET read-back did not match the exact payload size and SHA-256")
@@ -98,7 +102,7 @@ func TestLiveProviderRoundTrip(t *testing.T) {
 			if head.StatusCode != http.StatusOK || head.ContentLength != int64(len(payload)) {
 				t.Fatalf("HEAD returned status=%d content-length=%d", head.StatusCode, head.ContentLength)
 			}
-			if gotType := strings.TrimSpace(strings.Split(head.Header.Get("Content-Type"), ";")[0]); gotType != "" && gotType != "application/octet-stream" {
+			if gotType := strings.TrimSpace(strings.Split(head.Header.Get("Content-Type"), ";")[0]); gotType != "application/octet-stream" {
 				t.Fatalf("HEAD returned unexpected content type %q", gotType)
 			}
 
