@@ -90,7 +90,7 @@ services:
       CLOUDFLARE_R2_ACCESS_KEY_ID: ${CLOUDFLARE_R2_ACCESS_KEY_ID:-}
       CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}
     expose: ["8096"]
-    networks: [services]
+    networks: [services, platform]
     depends_on:
       media-migrate:
         condition: service_completed_successfully
@@ -212,6 +212,11 @@ services:
 networks:
   edge: {}
   services: {}
+  # Join the Backend's private platform network so Backend can reach media:8096.
+  # Deploy the Backend stack first; it creates testagram-platform.
+  platform:
+    name: testagram-platform
+    external: true
   ranker:
     internal: true
   federation:
