@@ -8,7 +8,7 @@ services:
       HTTP_ADDR: :8092
       INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
     expose: ["8092"]
-    networks: [ranker]
+    networks: [ranker, platform]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8092/readyz"]
       interval: 10s
@@ -35,12 +35,50 @@ services:
       FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}
       ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
       ONSPACE_AI_API_KEY: ${ONSPACE_AI_API_KEY:-}
-      # B2 and R2 are independent full-copy stores; choose the direct-upload origin per reservation.
-      # Provider keys stay in Backend, never in XClone or node-agent containers.
+      # B2 and R2 are independent full-copy stores; Data Centre owns their credentials.
+      # Provider keys stay only in the dedicated media service, never in Backend or node-agent containers.
       FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}
-      FRESH_MEDIA_PRIMARY_PROVIDER: ${FRESH_MEDIA_PRIMARY_PROVIDER:-r2}
+      DATA_CENTRE_MEDIA_API_URL: ${DATA_CENTRE_MEDIA_API_URL:-}
+      FRESH_DATA_CENTRE_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}
+      FRESH_MEDIA_PRIMARY_PROVIDER: ${FRESH_MEDIA_PRIMARY_PROVIDER:-b2}
       TESTAGRAM_STORAGE_POOL_BYTES: ${TESTAGRAM_STORAGE_POOL_BYTES:-150000000000}
       TESTAGRAM_STORAGE_PER_USER_BYTES: ${TESTAGRAM_STORAGE_PER_USER_BYTES:-2147483648}
+      ARCHIVE_S3_ENDPOINT: ${ARCHIVE_S3_ENDPOINT:-}
+      ARCHIVE_S3_REGION: ${ARCHIVE_S3_REGION:-us-east-1}
+      ARCHIVE_S3_BUCKET: ${ARCHIVE_S3_BUCKET:-}
+      ARCHIVE_S3_ACCESS_KEY_ID: ${ARCHIVE_S3_ACCESS_KEY_ID:-}
+      ARCHIVE_S3_SECRET_ACCESS_KEY: ${ARCHIVE_S3_SECRET_ACCESS_KEY:-}
+      TESTAGRAM_RETENTION_ENABLED: "false"
+      TESTAGRAM_RETENTION_DRY_RUN: "true"
+    expose: ["8081"]
+    networks: [services, ranker]
+
+
+  # Dedicated object lifecycle service. Enable only with --profile media and
+  # a separate MEDIA_DATABASE_URL; never share the node control-plane database.
+  media-migrate:
+    profiles: ["media"]
+    image: ${POSTGRES_CLIENT_IMAGE:-postgres:17-alpine}
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command: |
+      psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql
+    environment:
+      MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}
+    volumes:
+      - ../backend/services/media/migrations:/migrations:ro
+    networks: [services]
+
+  media:
+    profiles: ["media"]
+    build:
+      context: ..
+      dockerfile: backend/services/media/Dockerfile
+    restart: unless-stopped
+    environment:
+      MEDIA_ADDR: :8096
+      MEDIA_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}
+      MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}
       B2_S3_ENDPOINT: ${B2_S3_ENDPOINT:-}
       B2_S3_REGION: ${B2_S3_REGION:-}
       B2_S3_BUCKET: ${B2_S3_BUCKET:-}
@@ -51,17 +89,17 @@ services:
       CLOUDFLARE_R2_BUCKET: ${CLOUDFLARE_R2_BUCKET:-}
       CLOUDFLARE_R2_ACCESS_KEY_ID: ${CLOUDFLARE_R2_ACCESS_KEY_ID:-}
       CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}
-      CLOUDFLARE_MEDIA_BASE_URL: ${CLOUDFLARE_MEDIA_BASE_URL:-}
-      CLOUDFLARE_MEDIA_SIGNING_SECRET: ${CLOUDFLARE_MEDIA_SIGNING_SECRET:-}
-      ARCHIVE_S3_ENDPOINT: ${ARCHIVE_S3_ENDPOINT:-}
-      ARCHIVE_S3_REGION: ${ARCHIVE_S3_REGION:-us-east-1}
-      ARCHIVE_S3_BUCKET: ${ARCHIVE_S3_BUCKET:-}
-      ARCHIVE_S3_ACCESS_KEY_ID: ${ARCHIVE_S3_ACCESS_KEY_ID:-}
-      ARCHIVE_S3_SECRET_ACCESS_KEY: ${ARCHIVE_S3_SECRET_ACCESS_KEY:-}
-      TESTAGRAM_RETENTION_ENABLED: "false"
-      TESTAGRAM_RETENTION_DRY_RUN: "true"
-    expose: ["8081"]
-    networks: [services, ranker]
+    expose: ["8096"]
+    networks: [services, platform]
+    depends_on:
+      media-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8096/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   federation-db:
     profiles: ["local"]
@@ -102,7 +140,7 @@ services:
       FEDERATION_OUTBOX_POLLER_ENABLED: ${FEDERATION_OUTBOX_POLLER_ENABLED:-false}
       FEDERATION_INBOX_WORKER_ENABLED: ${FEDERATION_INBOX_WORKER_ENABLED:-false}
     expose: ["8081"]
-    networks: [services, federation]
+    networks: [services, federation, platform]
     depends_on:
       # Federation has its own authenticated Backend readiness probe. Do not
       # gate it on the public API's full readiness, which also requires Algorithm.
@@ -174,6 +212,11 @@ services:
 networks:
   edge: {}
   services: {}
+  # Join the Backend's private platform network so Backend can reach media:8096.
+  # Deploy the Backend stack first; it creates testagram-platform.
+  platform:
+    name: testagram-platform
+    external: true
   ranker:
     internal: true
   federation:

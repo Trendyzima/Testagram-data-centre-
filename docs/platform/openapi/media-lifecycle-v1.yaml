@@ -1,0 +1,498 @@
+openapi: 3.1.0
+info:
+  title: Testagram Data Centre Media Lifecycle API
+  version: "1.0.0"
+  description: |
+    Private Backend-to-Data-Centre contract. Backend remains the sole product
+    authorization authority. Data Centre owns provider credentials, object
+    verification, placement, replication and deletion. This contract is
+    intentionally not a public client API.
+description: |
+  Deployment note: host these routes on a dedicated private media service. Do not
+  mount them on the platform feature-flag service or the node control-plane API.
+security:
+  # Both requirements are mandatory; separate list entries would mean OR.
+  - BackendBearer: []
+    ApiVersion: []
+paths:
+  /internal/v1/media/upload-url:
+    post:
+      operationId: createMediaUploadURL
+      summary: Create a short-lived bounded upload grant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadRequest'
+      responses:
+        '201':
+          description: Upload grant created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadGrant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Conflicting or duplicate active intent
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /internal/v1/media/verify:
+    post:
+      operationId: verifyMediaObject
+      summary: Queue primary read-back verification and replica protection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyRequest'
+      responses:
+        '202':
+          description: Verification is durably queued; the object remains unavailable until primary SHA-256 verification and replica read-back succeed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Verification'
+        '200':
+          description: Object already meets the configured protection policy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Verification'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: No active upload grant or matching object lifecycle exists
+        '409':
+          description: Upload grant was consumed or the object lifecycle conflicts with this verification request
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /internal/v1/media/status:
+    get:
+      operationId: getMediaStatus
+      summary: Read authoritative object and replica state
+      parameters:
+        - in: query
+          name: owner_id
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+        - in: query
+          name: namespace
+          required: true
+          schema: { type: string, enum: [media-public, media-private] }
+        - in: query
+          name: key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 1024 }
+      responses:
+        '200':
+          description: Current lifecycle state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Object not found
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /internal/v1/media/download-url:
+    post:
+      operationId: createMediaDownloadURL
+      summary: Create a short-lived provider delivery URL after Backend authorization
+      description: Data Centre validates object protection state but does not make social visibility or requester authorization decisions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DownloadRequest'
+      responses:
+        '200':
+          description: Short-lived download URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadGrant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Object unavailable or not protected
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /internal/v1/media/delete:
+    post:
+      operationId: deleteMediaObject
+      summary: Enqueue idempotent object deletion and replica cleanup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteRequest'
+      responses:
+        '200':
+          description: Already deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResult'
+        '202':
+          description: Deletion durably queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    BackendBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque service token
+    ApiVersion:
+      type: apiKey
+      in: header
+      name: X-Testagram-API-Version
+  schemas:
+    UploadRequest:
+      type: object
+      additionalProperties: false
+      required: [owner_id, namespace, key, content_type, size_bytes]
+      properties:
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, enum: [media-public, media-private] }
+        key: { type: string, pattern: '^users/[A-Za-z0-9._-]{1,128}/[a-f0-9]{32}$' }
+        content_type: { type: string, enum: [image/jpeg, image/png, image/webp, image/gif, image/avif, video/mp4, video/webm] }
+        size_bytes: { type: integer, format: int64, minimum: 1, maximum: 5368709120 }
+    UploadGrant:
+      type: object
+      additionalProperties: false
+      required: [intent_id, upload_url, expires_at, max_bytes, primary]
+      properties:
+        intent_id: { type: string }
+        upload_url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
+        max_bytes: { type: integer, format: int64, minimum: 1 }
+        primary: { type: string, const: backblaze_b2 }
+    VerifyRequest:
+      allOf:
+        - $ref: '#/components/schemas/UploadRequest'
+        - type: object
+          required: [sha256]
+          properties:
+            sha256: { type: string, pattern: '^[a-fA-F0-9]{64}$' }
+    Verification:
+      type: object
+      additionalProperties: false
+      required: [status, sha256]
+      properties:
+        status: { type: string, enum: [replication_pending, protected] }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    MediaStatus:
+      type: object
+      additionalProperties: false
+      required: [status, content_type, size_bytes, sha256]
+      properties:
+        status: { type: string, enum: [upload_pending, uploaded, replication_pending, protected, replication_failed, delete_pending, deleted] }
+        content_type: { type: string }
+        size_bytes: { type: integer, format: int64, minimum: 0 }
+        sha256: { type: string }
+        primary_verified_at: { type: [string, 'null'], format: date-time }
+        replica_verified_at: { type: [string, 'null'], format: date-time }
+    DownloadRequest:
+      type: object
+      additionalProperties: false
+      required: [requester_id, owner_id, namespace, key]
+      properties:
+        requester_id: { type: string, minLength: 1, maxLength: 128 }
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, enum: [media-public, media-private] }
+        key: { type: string, pattern: '^users/[A-Za-z0-9._-]{1,128}/[a-f0-9]{32}$' }
+        method: { type: string, enum: [GET, HEAD], default: GET, description: Signed provider URL method; HEAD is used by CDN origin metadata probes }
+    DownloadGrant:
+      type: object
+      additionalProperties: false
+      required: [url, provider]
+      properties:
+        url: { type: string, format: uri }
+        provider: { type: string, enum: [cloudflare_r2, backblaze_b2] }
+    DeleteRequest:
+      type: object
+      additionalProperties: false
+      required: [requester_id, owner_id, namespace, key]
+      properties:
+        requester_id: { type: string, minLength: 1, maxLength: 128 }
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, enum: [media-public, media-private] }
+        key: { type: string, minLength: 1, maxLength: 1024 }
+    DeleteResult:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [deleted, delete_pending] }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        request_id: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid Backend service credential
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unavailable:
+      description: Provider or durable state unavailable
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+, maxLength: 1024 }
+        content_type: { type: string, minLength: 1, maxLength: 160 }
+        size_bytes: { type: integer, format: int64, minimum: 1 }
+    UploadGrant:
+      type: object
+      additionalProperties: false
+      required: [intent_id, upload_url, expires_at, max_bytes, primary]
+      properties:
+        intent_id: { type: string }
+        upload_url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
+        max_bytes: { type: integer, format: int64, minimum: 1 }
+        primary: { type: string, const: backblaze_b2 }
+    VerifyRequest:
+      allOf:
+        - $ref: '#/components/schemas/UploadRequest'
+        - type: object
+          required: [sha256]
+          properties:
+            sha256: { type: string, pattern: '^[a-fA-F0-9]{64}$' }
+    Verification:
+      type: object
+      additionalProperties: false
+      required: [status, sha256]
+      properties:
+        status: { type: string, enum: [replication_pending, protected] }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    MediaStatus:
+      type: object
+      additionalProperties: false
+      required: [status, content_type, size_bytes, sha256]
+      properties:
+        status: { type: string, enum: [upload_pending, uploaded, replication_pending, protected, replication_failed, delete_pending, deleted] }
+        content_type: { type: string }
+        size_bytes: { type: integer, format: int64, minimum: 0 }
+        sha256: { type: string }
+        primary_verified_at: { type: [string, 'null'], format: date-time }
+        replica_verified_at: { type: [string, 'null'], format: date-time }
+    DownloadRequest:
+      type: object
+      additionalProperties: false
+      required: [requester_id, owner_id, namespace, key]
+      properties:
+        requester_id: { type: string, minLength: 1, maxLength: 128 }
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, enum: [media-public, media-private] }
+        key: { type: string, minLength: 1, maxLength: 1024 }
+        method: { type: string, enum: [GET, HEAD], default: GET, description: Signed provider URL method; HEAD is used by CDN origin metadata probes }
+    DownloadGrant:
+      type: object
+      additionalProperties: false
+      required: [url, provider]
+      properties:
+        url: { type: string, format: uri }
+        provider: { type: string, enum: [cloudflare_r2, backblaze_b2] }
+    DeleteRequest:
+      type: object
+      additionalProperties: false
+      required: [requester_id, owner_id, namespace, key]
+      properties:
+        requester_id: { type: string, minLength: 1, maxLength: 128 }
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, enum: [media-public, media-private] }
+        key: { type: string, minLength: 1, maxLength: 1024 }
+    DeleteResult:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [deleted, delete_pending] }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        request_id: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid Backend service credential
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unavailable:
+      description: Provider or durable state unavailable
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+, maxLength: 1024 }
+        method: { type: string, enum: [GET, HEAD], default: GET, description: Signed provider URL method; HEAD is used by CDN origin metadata probes }
+    DownloadGrant:
+      type: object
+      additionalProperties: false
+      required: [url, provider]
+      properties:
+        url: { type: string, format: uri }
+        provider: { type: string, enum: [cloudflare_r2, backblaze_b2] }
+    DeleteRequest:
+      type: object
+      additionalProperties: false
+      required: [requester_id, owner_id, namespace, key]
+      properties:
+        requester_id: { type: string, minLength: 1, maxLength: 128 }
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, enum: [media-public, media-private] }
+        key: { type: string, minLength: 1, maxLength: 1024 }
+    DeleteResult:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [deleted, delete_pending] }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        request_id: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid Backend service credential
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unavailable:
+      description: Provider or durable state unavailable
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+, maxLength: 1024 }
+        content_type: { type: string, minLength: 1, maxLength: 160 }
+        size_bytes: { type: integer, format: int64, minimum: 1 }
+    UploadGrant:
+      type: object
+      additionalProperties: false
+      required: [intent_id, upload_url, expires_at, max_bytes, primary]
+      properties:
+        intent_id: { type: string }
+        upload_url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
+        max_bytes: { type: integer, format: int64, minimum: 1 }
+        primary: { type: string, const: backblaze_b2 }
+    VerifyRequest:
+      allOf:
+        - $ref: '#/components/schemas/UploadRequest'
+        - type: object
+          required: [sha256]
+          properties:
+            sha256: { type: string, pattern: '^[a-fA-F0-9]{64}$' }
+    Verification:
+      type: object
+      additionalProperties: false
+      required: [status, sha256]
+      properties:
+        status: { type: string, enum: [replication_pending, protected] }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    MediaStatus:
+      type: object
+      additionalProperties: false
+      required: [status, content_type, size_bytes, sha256]
+      properties:
+        status: { type: string, enum: [upload_pending, uploaded, replication_pending, protected, replication_failed, delete_pending, deleted] }
+        content_type: { type: string }
+        size_bytes: { type: integer, format: int64, minimum: 0 }
+        sha256: { type: string }
+        primary_verified_at: { type: [string, 'null'], format: date-time }
+        replica_verified_at: { type: [string, 'null'], format: date-time }
+    DownloadRequest:
+      type: object
+      additionalProperties: false
+      required: [requester_id, owner_id, namespace, key]
+      properties:
+        requester_id: { type: string, minLength: 1, maxLength: 128 }
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, enum: [media-public, media-private] }
+        key: { type: string, minLength: 1, maxLength: 1024 }
+        method: { type: string, enum: [GET, HEAD], default: GET, description: Signed provider URL method; HEAD is used by CDN origin metadata probes }
+    DownloadGrant:
+      type: object
+      additionalProperties: false
+      required: [url, provider]
+      properties:
+        url: { type: string, format: uri }
+        provider: { type: string, enum: [cloudflare_r2, backblaze_b2] }
+    DeleteRequest:
+      type: object
+      additionalProperties: false
+      required: [requester_id, owner_id, namespace, key]
+      properties:
+        requester_id: { type: string, minLength: 1, maxLength: 128 }
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, enum: [media-public, media-private] }
+        key: { type: string, minLength: 1, maxLength: 1024 }
+    DeleteResult:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [deleted, delete_pending] }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        request_id: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid Backend service credential
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unavailable:
+      description: Provider or durable state unavailable
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

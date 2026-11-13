@@ -40,6 +40,19 @@ jobs:
       TESTAGRAM_AUTH_PROVIDER: appwrite
       FRESH_API_ALLOWED_ORIGINS: https://testagram.site,https://www.testagram.site
       FRESH_MEDIA_ENABLED: "false"
+      DATA_CENTRE_MEDIA_API_URL: http://media:8096
+      FRESH_DATA_CENTRE_INTERNAL_TOKEN: ci-media-internal-token-at-least-32-chars
+      MEDIA_DATABASE_URL: postgresql://postgres:testagram@db:5432/media?sslmode=disable
+      B2_S3_ENDPOINT: https://s3.us-west-004.backblazeb2.com
+      B2_S3_REGION: us-west-004
+      B2_S3_BUCKET: ci-media-primary
+      B2_S3_ACCESS_KEY_ID: ci-b2-access
+      B2_S3_SECRET_ACCESS_KEY: ci-b2-secret
+      CLOUDFLARE_R2_ENDPOINT: https://ci-account.r2.cloudflarestorage.com
+      CLOUDFLARE_R2_REGION: auto
+      CLOUDFLARE_R2_BUCKET: ci-media-replica
+      CLOUDFLARE_R2_ACCESS_KEY_ID: ci-r2-access
+      CLOUDFLARE_R2_SECRET_ACCESS_KEY: ci-r2-secret
       # Non-production credentials used only to render/validate the fresh Compose model in CI.
       # Production must supply one independently generated secret to both Backend and Federation.
       FRESH_FEDERATION_INTERNAL_TOKEN: ci-federation-backend-read-token-long-enough
@@ -79,14 +92,14 @@ jobs:
           go-version: "1.23"
           cache: false
       - name: Normalize Go formatting
-        run: gofmt -w control-plane node-agent internal backend/services/video backend/services/video-worker
+        run: gofmt -w control-plane node-agent internal backend/services/video backend/services/video-worker backend/services/media
       - name: Verify Go module graph
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
       - run: go test -race ./...
       - run: go vet ./...
-      - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker ./backend/services/platform
+      - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker ./backend/services/platform ./backend/services/media
       - name: Validate fresh platform boundary
         run: |
           set -euo pipefail
@@ -116,6 +129,11 @@ jobs:
             -v "$PWD:/workspace:ro" \
             postgres:17-alpine \
             sh -c 'for f in /workspace/migrations/*.sql; do psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
+          docker run --rm --network host \
+            -e PGPASSWORD=testagram \
+            -v "$PWD:/workspace:ro" \
+            postgres:17-alpine \
+            sh -ec 'createdb -h 127.0.0.1 -U postgres testagram_media_ci; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/001_media_lifecycle.sql; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/test_media_lifecycle.sql; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -Atqc "SELECT to_regclass(\$\$public.media_objects\$\$) IS NOT NULL AND to_regclass(\$\$public.media_outbox\$\$) IS NOT NULL AND to_regclass(\$\$public.media_operations\$\$) IS NOT NULL AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname=\$\$media_outbox_operation_journal\$\$ AND NOT tgisinternal)" | grep -qx t'
       - name: Validate Compose syntax
         run: |
           set -euo pipefail
@@ -128,6 +146,7 @@ jobs:
           ! grep -Eqi "supabase|SUPABASE" vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml
           # Both services must receive exactly the same non-empty private credential.
           docker compose --profile federation -f vps/docker-compose.fresh.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; fed=c["services"]["federation-api"]["environment"]; a=api.get("FRESH_FEDERATION_INTERNAL_TOKEN",""); b=fed.get("BACKEND_INTERNAL_TOKEN",""); ingress=fed.get("FEDERATION_INGRESS_TOKEN",""); assert a and b and a == b, "Federation-to-Backend read token mismatch"; assert ingress and ingress != b, "Backend-to-Federation ingress token must be distinct"'
+          docker compose --profile media -f vps/docker-compose.fresh.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; media=c["services"]["media"]["environment"]; migrate=c["services"]["media-migrate"]["environment"]; token=api.get("FRESH_DATA_CENTRE_INTERNAL_TOKEN",""); assert token and len(token)>=32 and media.get("MEDIA_INTERNAL_TOKEN")==token, "Backend/Data Centre media token mismatch"; assert media.get("MEDIA_DATABASE_URL")==migrate.get("MEDIA_DATABASE_URL") and media.get("MEDIA_DATABASE_URL"), "dedicated media DB mismatch"; assert all(media.get(k) for k in ("B2_S3_ENDPOINT","B2_S3_BUCKET","B2_S3_ACCESS_KEY_ID","B2_S3_SECRET_ACCESS_KEY","CLOUDFLARE_R2_ENDPOINT","CLOUDFLARE_R2_BUCKET","CLOUDFLARE_R2_ACCESS_KEY_ID","CLOUDFLARE_R2_SECRET_ACCESS_KEY")), "provider credentials must be wired only to media"; assert not any(k in api for k in ("B2_S3_ACCESS_KEY_ID","B2_S3_SECRET_ACCESS_KEY","CLOUDFLARE_R2_ACCESS_KEY_ID","CLOUDFLARE_R2_SECRET_ACCESS_KEY")), "Backend must not receive object-store credentials"; assert "ports" not in c["services"]["media"], "media API must remain private-only"'
           ! grep -qi 'supabase' vps/docker-compose.fresh.yml
           ! grep -Eq '/migrations/(002_video_platform|003_production_hardening|004_storage_buckets|005_platform|006_video_upload_safety|007_video_upload_safety)\.sql' vps/docker-compose.fresh.yml
           docker run --rm -e TLS_ADMIN_EMAIL=ci@example.invalid -v "$PWD/vps/fresh/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
@@ -206,6 +225,51 @@ jobs:
       - name: Build backend containers
         run: |
           docker compose -f backend/docker-compose.yml build platform video video-worker notification worker
+          docker build -f backend/services/media/Dockerfile -t testagram-media-ci .
+      - name: Dedicated media service runtime smoke test
+        run: |
+          set -euo pipefail
+          token=ci-media-internal-token-at-least-32-chars
+          docker run -d --name testagram-media-runtime-ci --network host \
+            -e MEDIA_ADDR=:8096 \
+            -e MEDIA_INTERNAL_TOKEN="$token" \
+            -e MEDIA_DATABASE_URL=postgresql://postgres:testagram@127.0.0.1:5432/testagram_media_ci?sslmode=disable \
+            -e B2_S3_ENDPOINT=https://b2.invalid \
+            -e B2_S3_REGION=us-west-004 -e B2_S3_BUCKET=ci-media-primary \
+            -e B2_S3_ACCESS_KEY_ID=ci-b2-access -e B2_S3_SECRET_ACCESS_KEY=ci-b2-secret \
+            -e CLOUDFLARE_R2_ENDPOINT=https://r2.invalid \
+            -e CLOUDFLARE_R2_REGION=auto -e CLOUDFLARE_R2_BUCKET=ci-media-replica \
+            -e CLOUDFLARE_R2_ACCESS_KEY_ID=ci-r2-access -e CLOUDFLARE_R2_SECRET_ACCESS_KEY=ci-r2-secret \
+            testagram-media-ci
+          trap 'docker rm -f testagram-media-runtime-ci >/dev/null 2>&1 || true' EXIT
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8096/readyz >/dev/null; then ready=1; break; fi
+            sleep 2
+          done
+          test "$ready" = 1
+          unauthorized="$(curl -sS -o /tmp/media-unauthorized.json -w '%{http_code}' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2F0123456789abcdef0123456789abcdef')"
+          test "$unauthorized" = 401
+          created="$(curl -sS -o /tmp/media-upload-grant.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123}')"
+          test "$created" = 201
+          python -c 'import json; d=json.load(open("/tmp/media-upload-grant.json")); assert d["primary"]=="backblaze_b2" and d["max_bytes"]==123 and d["upload_url"].startswith("https://")'
+          duplicate="$(curl -sS -o /tmp/media-duplicate.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123}')"
+          test "$duplicate" = 409
+          unsafe="$(curl -sS -o /tmp/media-unsafe.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/../secret","content_type":"video/mp4","size_bytes":123}')"
+          test "$unsafe" = 400
+          state="$(curl -sS -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2F0123456789abcdef0123456789abcdef')"
+          python -c 'import json,sys; assert json.loads(sys.argv[1])["status"]=="upload_pending"' "$state"
+          verified="$(curl -sS -o /tmp/media-verify.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/verify -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123,"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}')"
+          test "$verified" = 202
+          python -c 'import json; assert json.load(open("/tmp/media-verify.json"))["status"]=="replication_pending"'
+          state="$(curl -sS -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2F0123456789abcdef0123456789abcdef')"
+          python -c 'import json,sys; assert json.loads(sys.argv[1])["status"] in ("uploaded","replication_pending","replication_failed")' "$state"
+          unprotected="$(curl -sS -o /tmp/media-unprotected.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/download-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"requester_id":"owner-1","owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef"}')"
+          test "$unprotected" = 404
+          deleted="$(curl -sS -o /tmp/media-delete.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/delete -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"requester_id":"owner-1","owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef"}')"
+          test "$deleted" = 202
+          python -c 'import json; assert json.load(open("/tmp/media-delete.json"))["status"]=="delete_pending"'
+          echo "Dedicated media API auth, grant idempotency, path validation, verify queue, fail-closed delivery and durable deletion: PASS"
       - name: Backend runtime smoke test
         run: |
           set -euo pipefail

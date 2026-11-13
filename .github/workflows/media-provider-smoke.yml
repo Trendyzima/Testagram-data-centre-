@@ -1,0 +1,50 @@
+name: Live media provider smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_live_provider_writes:
+        description: Confirm this run writes and deletes temporary ci-smoke objects in the configured staging buckets.
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  provider-smoke:
+    if: inputs.confirm_live_provider_writes == true
+    runs-on: ubuntu-latest
+    env:
+      TESTAGRAM_LIVE_MEDIA_SMOKE: "true"
+      MEDIA_SMOKE_B2_ENDPOINT: ${{ secrets.MEDIA_SMOKE_B2_ENDPOINT }}
+      MEDIA_SMOKE_B2_REGION: ${{ secrets.MEDIA_SMOKE_B2_REGION }}
+      MEDIA_SMOKE_B2_BUCKET: ${{ secrets.MEDIA_SMOKE_B2_BUCKET }}
+      MEDIA_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_B2_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_B2_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_R2_ENDPOINT: ${{ secrets.MEDIA_SMOKE_R2_ENDPOINT }}
+      MEDIA_SMOKE_R2_REGION: ${{ secrets.MEDIA_SMOKE_R2_REGION }}
+      MEDIA_SMOKE_R2_BUCKET: ${{ secrets.MEDIA_SMOKE_R2_BUCKET }}
+      MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_R2_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26.11"
+          cache: true
+      - name: Verify staging-only provider configuration
+        run: |
+          set -euo pipefail
+          for name in MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION MEDIA_SMOKE_B2_BUCKET MEDIA_SMOKE_B2_ACCESS_KEY_ID MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_ENDPOINT MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_BUCKET MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY; do
+            if [ -z "${!name:-}" ]; then echo "Missing required GitHub secret: $name" >&2; exit 1; fi
+          done
+          for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_R2_BUCKET"; do
+            if [[ "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]]; then
+              echo "Use dedicated staging buckets, not production buckets." >&2
+              exit 1
+            fi
+          done
+      - name: Write, read-back hash, HEAD and delete on B2 and R2
+        run: go test -count=1 -run '^TestLiveProviderRoundTrip$' -v ./backend/services/media
