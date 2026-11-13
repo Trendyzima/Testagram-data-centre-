@@ -22,16 +22,20 @@ grep -Fq 'profiles: ["nodes"]' vps/docker-compose.fresh.yml
 
 # The private service URLs only work when the containers share the intended
 # internal Docker networks. Keep the shared Federation token wired identically
-# into the Backend and Federation worker, and keep Algorithm on its isolated
-# ranking network with the Backend attached as its sole caller.
+# into the Backend and Federation worker. Fresh API reaches Algorithm on ranker;
+# Backend reaches Algorithm, Federation and media over testagram-platform.
 algorithm_block="$(sed -n '/^  algorithm:/,/^  api:/p' vps/docker-compose.fresh.yml)"
 federation_block="$(sed -n '/^  federation-api:/,/^  migrate:/p' vps/docker-compose.fresh.yml)"
 grep -Fq 'networks: [services, ranker]' <<< "$api_block"
-grep -Fq 'networks: [ranker]' <<< "$algorithm_block"
+grep -Fq 'networks: [ranker, platform]' <<< "$algorithm_block"
 grep -Fq 'INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}' <<< "$algorithm_block"
-grep -Fq 'networks: [services, federation]' <<< "$federation_block"
+grep -Fq 'networks: [services, federation, platform]' <<< "$federation_block"
 grep -Fq 'BACKEND_INTERNAL_URL: http://api:8081' <<< "$federation_block"
 grep -Fq 'BACKEND_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}' <<< "$federation_block"
+media_block="$(sed -n '/^  media:/,/^  federation-db:/p' vps/docker-compose.fresh.yml)"
+grep -Fq 'networks: [services, platform]' <<< "$media_block"
+grep -Fq 'DATA_CENTRE_MEDIA_API_URL: ${DATA_CENTRE_MEDIA_API_URL:-}' <<< "$api_block"
+grep -Fq 'FRESH_DATA_CENTRE_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}' <<< "$api_block"
 for file in vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml; do
   if grep -Eqi 'supabase' "$file"; then
     echo "Retired provider reference remains in active runtime path: $file" >&2
