@@ -26,11 +26,13 @@ grep -Fq 'profiles: ["nodes"]' vps/docker-compose.fresh.yml
 # - Federation and media attach to platform for their documented integration;
 #   Algorithm must never join that shared platform network.
 algorithm_block="$(sed -n '/^  algorithm:/,/^  api:/p' vps/docker-compose.fresh.yml)"
+active_algorithm_block="$(sed -n '/^  algorithm:/,/^  api:/p' vps/docker-compose.yml)"
 federation_block="$(sed -n '/^  federation-api:/,/^  migrate:/p' vps/docker-compose.fresh.yml)"
 grep -Fq 'networks: [services, ranker]' <<< "$api_block"
 grep -Fq 'networks: [ranker]' <<< "$algorithm_block"
-if grep -Fq 'platform' <<< "$algorithm_block"; then
-  echo "Algorithm must remain isolated from the shared platform network." >&2
+grep -Fq 'networks: [ranker]' <<< "$active_algorithm_block"
+if grep -Fq 'platform' <<< "$algorithm_block" || grep -Fq 'platform' <<< "$active_algorithm_block"; then
+  echo "Algorithm must remain isolated from the shared platform network in both Fresh Compose entry points." >&2
   exit 1
 fi
 grep -Fq 'INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}' <<< "$algorithm_block"
