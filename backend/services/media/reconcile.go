@@ -123,6 +123,8 @@ func (s *server) reconcileOne(ctx context.Context, item reconcileItem) error {
 		return err
 	case primaryOK && !replicaOK:
 		return s.requeueReplica(ctx, item)
+	case !primaryOK && replicaOK:
+		return s.requeuePrimaryRestore(ctx, item)
 	default:
 		_, err := s.db.Exec(ctx, `update media_objects set status='replication_failed',reconciled_at=now(),reconciliation_claimed_at=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
 		if err == nil { log.Printf("media reconciliation quarantined object owner=%s namespace=%s key=%s primary_ok=false replica_ok=%t", item.owner, item.namespace, item.key, replicaOK) }
@@ -145,6 +147,34 @@ func (s *server) originMatches(ctx context.Context, store s3Store, item reconcil
 		return false, nil
 	}
 	return digestMatches(resp.Body, item.size, item.expectedSHA), nil
+}
+
+// requeuePrimaryRestore quarantines the object from reads until the primary has
+// been rebuilt from a fully verified replica and the restored primary passes read-back.
+func (s *server) requeuePrimaryRestore(ctx context.Context, item reconcileItem) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil { return err }
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `update media_objects set status='restore_pending',reconciled_at=null,
+		reconciliation_claimed_at=null,updated_at=now()
+		where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`,
+		item.owner,item.namespace,item.key)
+	if err != nil || tag.RowsAffected()==0 { return err }
+	_, err = tx.Exec(ctx, `insert into media_outbox(owner_id,namespace,object_key,operation,status,attempts,available_at,locked_until,last_error)
+		values($1,$2,$3,'restore_primary','pending',0,now(),null,'primary failed periodic integrity verification')
+		on conflict(owner_id,namespace,object_key,operation) do update
+		set status='pending',attempts=0,available_at=now(),locked_until=null,last_error='primary failed periodic integrity verification',updated_at=now()`,
+		item.owner,item.namespace,item.key)
+	if err == nil {
+		eventID,idErr := randomID()
+		if idErr != nil { err = idErr } else {
+			_,err = tx.Exec(ctx, `insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome,detail)
+				values($1,$2,$3,$4,'restore_primary','queued',$5)`,
+				eventID,item.owner,item.namespace,item.key,"scheduled after primary origin integrity failure")
+		}
+	}
+	if err == nil { err = tx.Commit(ctx) }
+	return err
 }
 
 func (s *server) requeueReplica(ctx context.Context, item reconcileItem) error {
