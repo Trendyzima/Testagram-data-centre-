@@ -38,6 +38,14 @@ The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Fed
 
 ## Before deployment
 
+The Fresh installer reads its runtime values from the VPS-local `vps/fresh.env`
+file (or the path selected by `TESTAGRAM_FRESH_ENV_FILE`). Adding
+`FRESH_FEDERATION_INTERNAL_TOKEN` to GitHub Actions Secrets alone does not
+inject it into that file: the current Data Centre workflows validate/build
+this stack but do not deploy the Fresh runtime. Provision the same dedicated
+secret in the VPS runtime environment through your secure deployment process;
+keep the file mode at 0600 and never commit it.
+
 1. Publish the fresh Backend image using Backend container-release.yml and pin
    the resulting GHCR digest in TESTAGRAM_FRESH_BACKEND_IMAGE.
 2. Publish Algorithm and pin its digest in TESTAGRAM_ALGORITHM_IMAGE.
