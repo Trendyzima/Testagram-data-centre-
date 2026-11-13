@@ -296,9 +296,10 @@ jobs:
             if [ "$migration" = "backend-source/migrations/20261109_threads_browsing_history.sql" ]; then
               continue
             fi
-            # Native identity evidence references verification_sessions, but "evidence"
-            # sorts before "verification" in the date-prefixed migration glob.
-            if [ "$migration" = "backend-source/migrations/20261113_native_identity_evidence.sql" ]; then
+            # The canonical Backend mainline currently names the dependent evidence
+            # migration 20261114_native_identity_evidence.sql. It sorts before the
+            # 20261113 verification migration, so apply the prerequisite first.
+            if [ "$migration" = "backend-source/migrations/20261114_native_identity_evidence.sql" ]; then
               docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/20261113_native_identity_verification.sql
             fi
             if [ "$migration" = "backend-source/migrations/20261113_native_identity_verification.sql" ]; then
