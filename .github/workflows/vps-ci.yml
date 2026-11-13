@@ -30,7 +30,7 @@ jobs:
       DATA_CENTRE_DATABASE_URL: postgresql://postgres:testagram@db:5432/data_centre?sslmode=disable
       # Compose validation fixtures for the independent Data Centre service stack.
       DATABASE_URL: postgresql://postgres:testagram@db:5432/postgres?sslmode=disable
-      PLATFORM_INTERNAL_TOKEN: ci-platform-internal-token-long-enough
+      PLATFORM_INTERNAL_TOKEN: ci-platform-internal-token-2026-strong-2026-strong
       VIDEO_SIGNING_SECRET: ci-video-signing-secret-at-least-32-bytes
       NOTIFICATION_INTERNAL_TOKEN: ci-notification-internal-token-long-enough
       APPWRITE_ENDPOINT: https://fra.cloud.appwrite.io/v1
@@ -305,7 +305,7 @@ jobs:
           export VIDEO_SIGNING_SECRET=ci-test-signing-secret-at-least-32-bytes
           export NOTIFICATION_JWT_SECRET=ci-test-jwt-secret
           export NOTIFICATION_INTERNAL_TOKEN=ci-test-internal-token
-          export PLATFORM_INTERNAL_TOKEN=ci-platform-internal-token
+          export PLATFORM_INTERNAL_TOKEN=ci-platform-internal-token-2026-strong
           export TESTAGRAM_NETWORK=testagram-platform
           docker run -d --name testagram-api --network testagram-platform --network-alias api \
             -e LISTEN_ADDR=:8080 \
@@ -341,10 +341,10 @@ jobs:
             sleep 2
           done
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - http://127.0.0.1:8095/readyz
-          docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"key":"ci.flag","enabled":true,"public":true,"value":{"mode":"green"}}' http://127.0.0.1:8095/v1/config/set || { echo "feature-flag write failed; platform logs follow"; docker compose -f backend/docker-compose.yml logs --no-color platform; exit 1; }
+          docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token-2026-strong" --header="Content-Type: application/json" --post-data='{"key":"ci.flag","enabled":true,"public":true,"value":{"mode":"green"}}' http://127.0.0.1:8095/v1/config/set || { echo "feature-flag write failed; platform logs follow"; docker compose -f backend/docker-compose.yml logs --no-color platform; exit 1; }
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - http://127.0.0.1:8095/v1/config/ci.flag | grep -Eq '"mode"[[:space:]]*:[[:space:]]*"green"'
-          docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"event_name":"ci.smoke","properties":{"status":"green"}}' http://127.0.0.1:8095/v1/events
-          docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token" --header="Content-Type: application/json" --post-data='{"action":"ci.smoke","resource_type":"workflow","resource_id":"platform","metadata":{"status":"green"}}' http://127.0.0.1:8095/v1/audit
+          docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token-2026-strong" --header="Content-Type: application/json" --post-data='{"event_name":"ci.smoke","properties":{"status":"green"}}' http://127.0.0.1:8095/v1/events
+          docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token-2026-strong" --header="Content-Type: application/json" --post-data='{"action":"ci.smoke","resource_type":"workflow","resource_id":"platform","metadata":{"status":"green"}}' http://127.0.0.1:8095/v1/audit
           docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz
           for i in $(seq 1 30); do
             docker compose -f backend/docker-compose.yml exec -T notification wget -q -O - http://127.0.0.1:8090/readyz >/dev/null 2>&1 && break
