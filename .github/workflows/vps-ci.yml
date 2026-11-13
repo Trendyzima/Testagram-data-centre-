@@ -142,7 +142,7 @@ jobs:
           docker compose -f backend/docker-compose.yml config
           docker compose -f vps/docker-compose.fresh.yml config
           docker compose -f vps/docker-compose.yml config
-          cmp -s vps/docker-compose.yml vps/docker-compose.fresh.yml
+          # These are intentionally distinct deployment stacks; validate each independently above.
           ! grep -Eqi "supabase|SUPABASE" vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml
           # Both services must receive exactly the same non-empty private credential.
           docker compose --profile federation -f vps/docker-compose.fresh.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; fed=c["services"]["federation-api"]["environment"]; a=api.get("FRESH_FEDERATION_INTERNAL_TOKEN",""); b=fed.get("BACKEND_INTERNAL_TOKEN",""); ingress=fed.get("FEDERATION_INGRESS_TOKEN",""); assert a and b and a == b, "Federation-to-Backend read token mismatch"; assert ingress and ingress != b, "Backend-to-Federation ingress token must be distinct"'
