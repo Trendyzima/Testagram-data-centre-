@@ -10,10 +10,10 @@ The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Fed
 
 - api: Backend's dedicated Dockerfile.fresh image. Verifies Appwrite JWTs,
   serves the public /v1 API, owns authorization and calls private services.
-- algorithm: private stateless ranker on the internal `ranker` network and the
-  Backend-owned `testagram-platform` network. Fresh API reaches it over `ranker`;
-  the legacy Backend reaches it over `testagram-platform`. Its bearer token is
-  never exposed to Flutter/web clients.
+- algorithm: private stateless ranker on the internal `ranker` network only.
+  Fresh API reaches it over `ranker`; the standard Backend deployment has its
+  own Algorithm service on `testagram-platform`. Its bearer token is never
+  exposed to Flutter/web clients.
 - migrate: applies only `001_vps.sql` and `006_hosting_control_plane.sql` to
   the dedicated Data Centre PostgreSQL database before control-plane starts.
   It deliberately does not apply product/video, notification, platform-event,
@@ -37,6 +37,14 @@ The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Fed
   or Caddy routing until the remaining federation release gates pass.
 
 ## Before deployment
+
+The Fresh installer reads its runtime values from the VPS-local `vps/fresh.env`
+file (or the path selected by `TESTAGRAM_FRESH_ENV_FILE`). Adding
+`FRESH_FEDERATION_INTERNAL_TOKEN` to GitHub Actions Secrets alone does not
+inject it into that file: the current Data Centre workflows validate/build
+this stack but do not deploy the Fresh runtime. Provision the same dedicated
+secret in the VPS runtime environment through your secure deployment process;
+keep the file mode at 0600 and never commit it.
 
 1. Publish the fresh Backend image using Backend container-release.yml and pin
    the resulting GHCR digest in TESTAGRAM_FRESH_BACKEND_IMAGE.
