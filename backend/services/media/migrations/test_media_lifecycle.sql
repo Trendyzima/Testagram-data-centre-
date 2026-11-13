@@ -43,7 +43,7 @@ update media_outbox set status='done'
 where owner_id='ci-user' and namespace='media-public'
   and object_key='users/ci-user/0123456789abcdef0123456789abcdef' and operation='restore_primary';
 
-do $
+do $$
 declare event_count integer; restore_event_count integer;
 begin
   select count(*) into event_count from media_operations
@@ -58,6 +58,6 @@ begin
   if restore_event_count <> 1 then
     raise exception 'expected one durable primary-restore journal event; got %', restore_event_count;
   end if;
-end $;
+end $$;
 
 rollback;
