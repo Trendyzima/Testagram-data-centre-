@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -96,6 +97,30 @@ func TestLiveProviderRoundTrip(t *testing.T) {
 			head.Body.Close()
 			if head.StatusCode != http.StatusOK || head.ContentLength != int64(len(payload)) {
 				t.Fatalf("HEAD returned status=%d content-length=%d", head.StatusCode, head.ContentLength)
+			}
+			if gotType := strings.TrimSpace(strings.Split(head.Header.Get("Content-Type"), ";")[0]); gotType != "" && gotType != "application/octet-stream" {
+				t.Fatalf("HEAD returned unexpected content type %q", gotType)
+			}
+
+			// Prove deletion is observable at the provider, not merely accepted by
+			// the DELETE endpoint. The deferred cleanup remains as a retry guard.
+			del, err := s.signedRequest(ctx, store, http.MethodDelete, key, nil, "")
+			if err != nil {
+				t.Fatalf("DELETE returned transport error: %v", err)
+			}
+			io.Copy(io.Discard, io.LimitReader(del.Body, 4096))
+			del.Body.Close()
+			if del.StatusCode != http.StatusOK && del.StatusCode != http.StatusNoContent {
+				t.Fatalf("DELETE returned HTTP %d", del.StatusCode)
+			}
+			afterDelete, err := s.signedRequest(ctx, store, http.MethodHead, key, nil, "")
+			if err != nil {
+				t.Fatalf("HEAD after DELETE returned transport error: %v", err)
+			}
+			io.Copy(io.Discard, io.LimitReader(afterDelete.Body, 4096))
+			afterDelete.Body.Close()
+			if afterDelete.StatusCode != http.StatusNotFound {
+				t.Fatalf("HEAD after DELETE returned HTTP %d, want 404", afterDelete.StatusCode)
 			}
 		})
 	}
