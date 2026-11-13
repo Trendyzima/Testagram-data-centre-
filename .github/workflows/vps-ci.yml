@@ -104,6 +104,8 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           workflow = Path(".github/workflows/media-provider-smoke.yml").read_text()
+          compose = Path("backend/docker-compose.yml").read_text()
+          assert "002_primary_origin_restore.sql" in compose, "deployment media-migrate must apply the primary restoration migration"
           for required in (
               "confirm_live_provider_writes",
               "MEDIA_DATABASE_URL",
