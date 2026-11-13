@@ -99,6 +99,23 @@ jobs:
           git diff --exit-code -- go.mod go.sum
       - run: go test -race ./...
       - run: go vet ./...
+      - name: Guard live B2/R2 lifecycle acceptance workflow
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          workflow = Path(".github/workflows/media-provider-smoke.yml").read_text()
+          for required in (
+              "confirm_live_provider_writes",
+              "MEDIA_DATABASE_URL",
+              "MEDIA_INTERNAL_TOKEN",
+              "001_media_lifecycle.sql",
+              "002_primary_origin_restore.sql",
+              "TestLiveProviderRoundTrip",
+              "TestLiveMediaReplicationRestoreDelete",
+          ):
+              assert required in workflow, f"live media acceptance workflow is missing {required}"
+          assert "services:" in workflow and "postgres:17-alpine" in workflow, "live lifecycle test must use isolated PostgreSQL"
+          PY
       - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker ./backend/services/platform ./backend/services/media
       - name: Validate fresh platform boundary
         run: |
