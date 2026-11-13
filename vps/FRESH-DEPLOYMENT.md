@@ -10,9 +10,10 @@ The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Fed
 
 - api: Backend's dedicated Dockerfile.fresh image. Verifies Appwrite JWTs,
   serves the public /v1 API, owns authorization and calls private services.
-- algorithm: private stateless ranker on an internal-only Docker network. Only
-  Backend can reach it; its bearer token is not exposed to XClone. Backend has
-  a second egress-capable network for Appwrite and object-provider access.
+- algorithm: private stateless ranker on the internal `ranker` network and the
+  Backend-owned `testagram-platform` network. Fresh API reaches it over `ranker`;
+  the legacy Backend reaches it over `testagram-platform`. Its bearer token is
+  never exposed to Flutter/web clients.
 - migrate: applies only `001_vps.sql` and `006_hosting_control_plane.sql` to
   the dedicated Data Centre PostgreSQL database before control-plane starts.
   It deliberately does not apply product/video, notification, platform-event,
@@ -29,7 +30,9 @@ The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Fed
   services/federation networks, backed by its dedicated PostgreSQL database.
   It resolves opted-in actors through Backend and verifies/persists signed inbox
   deliveries, but it does not yet process inbox activities or execute outbound
-  delivery/follower-fanout workers. Its canonical actor origin is
+  delivery/follower-fanout workers. It is attached to `testagram-platform` so
+  the legacy Backend can reach its private ingress; it is not publicly routed.
+  Its canonical actor origin is
   https://federation.testagram.site; that hostname must not receive public DNS
   or Caddy routing until the remaining federation release gates pass.
 
@@ -51,7 +54,8 @@ The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Fed
    Data Centre control plane.
 9. Start the Backend self-hosted stack first so it creates the internal
    `testagram-platform` Docker network. The Data Centre Compose file joins that
-   existing network for the dedicated media service; do not publish port 8096.
+   existing network for Algorithm, Federation and media private service paths.
+   Do not publish media port 8096 or the Federation ingress port 8081.
    Configure Backend with DATA_CENTRE_MEDIA_API_URL=http://media:8096 and the
    same FRESH_DATA_CENTRE_INTERNAL_TOKEN used as MEDIA_INTERNAL_TOKEN by the
    Data Centre media container. Keep FRESH_MEDIA_ENABLED=false during staging.
