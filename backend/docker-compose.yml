@@ -169,27 +169,27 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command: |
       set -eu
-      : "${DATABASE_URL:?Set DATABASE_URL}"
-      : "${MEDIA_DATABASE_URL:?Set MEDIA_DATABASE_URL}"
-      name="${MEDIA_DATABASE_NAME:-testagram_media}"
-      case "$name" in ""|*[!A-Za-z0-9_]*)
+      : "$${DATABASE_URL:?Set DATABASE_URL}"
+      : "$${MEDIA_DATABASE_URL:?Set MEDIA_DATABASE_URL}"
+      name="$${MEDIA_DATABASE_NAME:-testagram_media}"
+      case "$$name" in ""|*[!A-Za-z0-9_]*)
         echo "MEDIA_DATABASE_NAME must contain only letters, digits and underscores" >&2
         exit 1
         ;;
       esac
-      if [ "$MEDIA_DATABASE_URL" = "$DATABASE_URL" ]; then
+      if [ "$$MEDIA_DATABASE_URL" = "$$DATABASE_URL" ]; then
         echo "Media lifecycle requires a separate database from the Backend database" >&2
         exit 1
       fi
-      exists="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc "SELECT 1 FROM pg_database WHERE datname = '$name'")"
-      if [ "$exists" != "1" ]; then
-        psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$name\""
+      exists="$$(psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc "SELECT 1 FROM pg_database WHERE datname = '$$name'")"
+      if [ "$$exists" != "1" ]; then
+        psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$$name\""
       fi
-      psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql
+      psql "$$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql
     environment:
-      DATABASE_URL: ${DATABASE_URL:-}
-      MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}
-      MEDIA_DATABASE_NAME: ${MEDIA_DATABASE_NAME:-testagram_media}
+      DATABASE_URL: $${DATABASE_URL:-}
+      MEDIA_DATABASE_URL: $${MEDIA_DATABASE_URL:-}
+      MEDIA_DATABASE_NAME: $${MEDIA_DATABASE_NAME:-testagram_media}
     volumes:
       - ./services/media/migrations:/migrations:ro
     networks: [platform]
