@@ -210,7 +210,7 @@ components:
       additionalProperties: false
       required: [status, content_type, size_bytes, sha256]
       properties:
-        status: { type: string, enum: [upload_pending, uploaded, replication_pending, protected, replication_failed, delete_pending, deleted] }
+        status: { type: string, enum: [upload_pending, uploaded, replication_pending, protected, replication_failed, restore_pending, delete_pending, deleted] }
         content_type: { type: string }
         size_bytes: { type: integer, format: int64, minimum: 0 }
         sha256: { type: string }
