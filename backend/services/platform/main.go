@@ -51,6 +51,9 @@ func main() {
 	ctx := context.Background()
 	dbURL := required("DATABASE_URL")
 	internal := required("PLATFORM_INTERNAL_TOKEN")
+	if !validInternalToken(internal) {
+		log.Fatal("PLATFORM_INTERNAL_TOKEN must contain at least 32 non-whitespace characters")
+	}
 	db, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
 		log.Fatal(err)
@@ -75,11 +78,13 @@ func main() {
 	log.Printf("testagram platform listening on %s", addr)
 	log.Fatal((&http.Server{Addr: addr, Handler: requestLog(mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}).ListenAndServe())
 }
-func (s *server) health(w http.ResponseWriter, _ *http.Request) {
+func (s *server) health(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) { return }
 	w.WriteHeader(200)
 	_, _ = w.Write([]byte("ok\n"))
 }
 func (s *server) readyz(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) { return }
 	if !s.ready.Load() {
 		http.Error(w, "not ready", 503)
 		return
@@ -90,21 +95,25 @@ func (s *server) readyz(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = w.Write([]byte("ready\n"))
 }
-func (s *server) metrics(w http.ResponseWriter, _ *http.Request) {
+func (s *server) metrics(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) { return }
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	fmt.Fprintf(w, "testagram_platform_config_writes_total %d\n", s.configWrites.Load())
 	fmt.Fprintf(w, "testagram_platform_events_stored_total %d\n", s.eventsStored.Load())
 	fmt.Fprintf(w, "testagram_platform_audit_writes_total %d\n", s.auditWrites.Load())
 }
 func (s *server) authorize(w http.ResponseWriter, r *http.Request) bool {
-	got := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(s.internal)) != 1 {
+	parts := strings.Fields(r.Header.Get("Authorization"))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") ||
+		!validInternalToken(s.internal) ||
+		subtle.ConstantTimeCompare([]byte(parts[1]), []byte(s.internal)) != 1 {
 		http.Error(w, "unauthorized", 401)
 		return false
 	}
 	return true
 }
 func (s *server) configSet(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) { return }
 	if !s.authorize(w, r) {
 		return
 	}
@@ -119,15 +128,16 @@ func (s *server) configSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.configWrites.Add(1)
-	writeJSON(w, map[string]bool{"ok": true})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) events(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) { return }
 	if !s.authorize(w, r) {
 		return
 	}
 	var in eventRequest
-	if !decodeJSON(w, r, &in) || len(in.EventName) < 1 || len(in.EventName) > 160 || !json.Valid(in.Properties) {
+	if !decodeJSON(w, r, &in) || len(in.EventName) < 1 || len(in.EventName) > 160 || !validJSONObject(in.Properties) {
 		http.Error(w, "invalid request", 400)
 		return
 	}
@@ -145,11 +155,12 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) audit(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) { return }
 	if !s.authorize(w, r) {
 		return
 	}
 	var in auditRequest
-	if !decodeJSON(w, r, &in) || len(in.Action) < 1 || len(in.Action) > 160 || len(in.ResourceType) < 1 || len(in.ResourceType) > 160 || !json.Valid(in.Metadata) {
+	if !decodeJSON(w, r, &in) || len(in.Action) < 1 || len(in.Action) > 160 || len(in.ResourceType) < 1 || len(in.ResourceType) > 160 || !validJSONObject(in.Metadata) || strings.TrimSpace(in.ResourceID) == "" {
 		http.Error(w, "invalid request", 400)
 		return
 	}
@@ -167,6 +178,7 @@ func (s *server) audit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) publicConfig(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) { return }
 	key := strings.TrimPrefix(r.URL.Path, "/v1/config/")
 	if !validKey(key) {
 		http.Error(w, "invalid key", 400)
@@ -198,9 +210,22 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	var trailing any
 	return d.Decode(&trailing) == io.EOF
 }
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+func validJSONObject(raw json.RawMessage) bool {
+	if len(raw) == 0 || !json.Valid(raw) { return false }
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil { return false }
+	return true
+}
+
+func validInternalToken(token string) bool {
+	return len(token) >= 32 && strings.TrimSpace(token) == token && !strings.ContainsAny(token, " \t\r\n")
+}
+
+func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
+	if r.Method == method { return true }
+	w.Header().Set("Allow", method)
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return false
 }
 func validKey(s string) bool {
 	if len(s) < 1 || len(s) > 160 {
