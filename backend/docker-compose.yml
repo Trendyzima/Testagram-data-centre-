@@ -187,9 +187,9 @@ services:
       fi
       psql "$$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql
     environment:
-      DATABASE_URL: $${DATABASE_URL:-}
-      MEDIA_DATABASE_URL: $${MEDIA_DATABASE_URL:-}
-      MEDIA_DATABASE_NAME: $${MEDIA_DATABASE_NAME:-testagram_media}
+      DATABASE_URL: ${DATABASE_URL:-}
+      MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}
+      MEDIA_DATABASE_NAME: ${MEDIA_DATABASE_NAME:-testagram_media}
     volumes:
       - ./services/media/migrations:/migrations:ro
     networks: [platform]
