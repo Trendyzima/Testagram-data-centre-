@@ -21,16 +21,15 @@ grep -Fq 'profiles: ["federation"]' vps/docker-compose.fresh.yml
 grep -Fq 'profiles: ["nodes"]' vps/docker-compose.fresh.yml
 
 # Keep service-to-service reachability explicit and least-privilege:
-# - API and Algorithm share only the isolated ranker network.
+# - Fresh API reaches Algorithm over ranker; legacy Backend cmd/api reaches it over platform.
 # - API, Federation and media share the in-stack services network.
-# - Federation and media also attach to platform for their documented
-#   cross-stack integration; Algorithm must never join that network.
+# - Algorithm stays off services/federation and has no published port.
 algorithm_block="$(sed -n '/^  algorithm:/,/^  api:/p' vps/docker-compose.fresh.yml)"
 federation_block="$(sed -n '/^  federation-api:/,/^  migrate:/p' vps/docker-compose.fresh.yml)"
 grep -Fq 'networks: [services, ranker]' <<< "$api_block"
-grep -Fq 'networks: [ranker]' <<< "$algorithm_block"
-if grep -Fq 'platform' <<< "$algorithm_block"; then
-  echo "Algorithm must remain isolated from the shared platform network." >&2
+grep -Fq 'networks: [ranker, platform]' <<< "$algorithm_block"
+if grep -Eq 'networks:.*(services|federation)' <<< "$algorithm_block"; then
+  echo "Algorithm must not join the public-facing services or Federation networks." >&2
   exit 1
 fi
 grep -Fq 'INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}' <<< "$algorithm_block"
