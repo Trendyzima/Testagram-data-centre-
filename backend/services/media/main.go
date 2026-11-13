@@ -124,16 +124,21 @@ func (s *server) verify(w http.ResponseWriter,r *http.Request){
 	err=s.db.QueryRow(ctx,`select exists(select 1 from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3 and max_bytes=$4 and expires_at>now() and consumed_at is null)`,in.OwnerID,in.Namespace,in.Key,in.SizeBytes).Scan(&grant)
 	if err!=nil{writeErr(w,503,"upload grant state unavailable");return}
 	if !grant {
-		var currentStatus,currentSHA string;var primaryVerified *time.Time
-		stateErr:=s.db.QueryRow(ctx,`select status,coalesce(sha256,''),primary_verified_at from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key).Scan(&currentStatus,&currentSHA,&primaryVerified)
+		var currentStatus,currentSHA string;var primaryVerified,replicaVerified *time.Time
+		stateErr:=s.db.QueryRow(ctx,`select status,coalesce(sha256,''),primary_verified_at,replica_verified_at from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key).Scan(&currentStatus,&currentSHA,&primaryVerified,&replicaVerified)
 		if stateErr==nil&&currentSHA==expected {
 			if currentStatus=="protected"{writeJSON(w,200,map[string]string{"status":"protected","sha256":currentSHA});return}
-			if currentStatus=="uploaded"||currentStatus=="replication_pending"||currentStatus=="replication_failed" {
+			if currentStatus=="uploaded"||currentStatus=="replication_pending"||currentStatus=="replication_failed"||currentStatus=="restore_pending" {
 				if currentStatus=="replication_failed" {
 					op:="verify";nextStatus:="uploaded"
-					if primaryVerified!=nil{op="replicate";nextStatus="replication_pending"}
-					_,_=s.db.Exec(ctx,`update media_objects set status=$4,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key,nextStatus)
-					_,_=s.db.Exec(ctx,`update media_outbox set status='retry',attempts=0,available_at=now(),locked_until=null,last_error=null where owner_id=$1 and namespace=$2 and object_key=$3 and operation=$4`,in.OwnerID,in.Namespace,in.Key,op)
+					if primaryVerified!=nil { op="replicate";nextStatus="replication_pending" }
+					if primaryVerified!=nil && replicaVerified!=nil { op="restore_primary";nextStatus="restore_pending" }
+					_,_=s.db.Exec(ctx,`update media_objects set status=$4,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status='replication_failed'`,in.OwnerID,in.Namespace,in.Key,nextStatus)
+					_,_=s.db.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,attempts,available_at,locked_until,last_error)
+						values($1,$2,$3,$4,'pending',0,now(),null,null)
+						on conflict(owner_id,namespace,object_key,operation) do update
+						set status='pending',attempts=0,available_at=now(),locked_until=null,last_error=null,updated_at=now()`,
+						in.OwnerID,in.Namespace,in.Key,op)
 				}
 				writeJSON(w,202,map[string]string{"status":"replication_pending","sha256":currentSHA});return
 			}
@@ -190,7 +195,7 @@ func (s *server) delete(w http.ResponseWriter,r *http.Request){
 	if old=="deleted"{writeJSON(w,200,map[string]string{"status":"deleted"});return}
 	if old=="delete_pending" { var jobStatus string; if err=tx.QueryRow(ctx,`select status from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete'`,in.OwnerID,in.Namespace,in.Key).Scan(&jobStatus);err!=nil{writeErr(w,503,"deletion job state unavailable");return};if jobStatus=="dead"{_,err=tx.Exec(ctx,`update media_outbox set status='retry',attempts=0,available_at=now(),locked_until=null,last_error=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete' and status='dead'`,in.OwnerID,in.Namespace,in.Key);if err!=nil{writeErr(w,503,"could not retry dead-letter deletion");return};if err=tx.Commit(ctx);err!=nil{writeErr(w,503,"could not persist deletion retry");return}};writeJSON(w,202,map[string]string{"status":"delete_pending"});return }
 	_,err=tx.Exec(ctx,`update media_objects set status='delete_pending',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key)
-	if err==nil{_,err=tx.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete' where owner_id=$1 and namespace=$2 and object_key=$3 and operation in ('verify','replicate') and status in ('pending','retry')`,in.OwnerID,in.Namespace,in.Key)}
+	if err==nil{_,err=tx.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete' where owner_id=$1 and namespace=$2 and object_key=$3 and operation in ('verify','replicate','restore_primary') and status in ('pending','retry')`,in.OwnerID,in.Namespace,in.Key)}
 	if err==nil{_,err=tx.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'delete','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),last_error=null`,in.OwnerID,in.Namespace,in.Key)}
 	if err==nil{eventID,idErr:=randomID();if idErr!=nil{err=idErr}else{_,err=tx.Exec(ctx,`insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome) values($1,$2,$3,$4,'delete','queued')`,eventID,in.OwnerID,in.Namespace,in.Key)}}
 	if err==nil{err=tx.Commit(ctx)};if err!=nil{writeErr(w,503,"could not queue durable deletion");return}
@@ -207,14 +212,22 @@ func (s *server) processOne(parent context.Context)error{
 	err=tx.QueryRow(ctx,`select o.id,o.owner_id,o.namespace,o.object_key,o.operation from media_outbox o where o.status in ('pending','retry','processing') and o.available_at<=now() and (o.locked_until is null or o.locked_until<now()) and not exists (select 1 from media_outbox active where active.owner_id=o.owner_id and active.namespace=o.namespace and active.object_key=o.object_key and active.status='processing' and active.id<>o.id) order by o.id for update of o skip locked limit 1`).Scan(&id,&owner,&ns,&key,&op)
 	if errors.Is(err,pgx.ErrNoRows){return nil};if err!=nil{return err}
 	_,err=tx.Exec(ctx,`update media_outbox set status='processing',locked_until=now()+interval '35 minutes',attempts=attempts+1 where id=$1`,id);if err!=nil{return err};if err=tx.Commit(ctx);err!=nil{return err}
-	switch op{case "verify":err=s.verifyPrimary(ctx,owner,ns,key);case "replicate":err=s.replicate(ctx,owner,ns,key);case "delete":err=s.deleteOrigins(ctx,owner,ns,key);default:err=fmt.Errorf("unknown outbox operation %q",op)}
+	switch op{case "verify":err=s.verifyPrimary(ctx,owner,ns,key);case "replicate":err=s.replicate(ctx,owner,ns,key);case "restore_primary":err=s.restorePrimary(ctx,owner,ns,key);case "delete":err=s.deleteOrigins(ctx,owner,ns,key);default:err=fmt.Errorf("unknown outbox operation %q",op)}
 	if err!=nil{
 		var objectStatus string
 		stateErr:=s.db.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&objectStatus)
 		if stateErr==nil&&(objectStatus=="delete_pending"||objectStatus=="deleted") { _,cancelErr:=s.db.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete',updated_at=now() where id=$1 and status='processing'`,id);return cancelErr }
 		tag,updateErr:=s.db.Exec(ctx,`update media_outbox set status=case when attempts>=12 then 'dead' else 'retry' end,available_at=now()+make_interval(secs=>least(3600,power(2,least(attempts,10))::int)),locked_until=null,last_error=left($2,1000),updated_at=now() where id=$1 and status='processing'`,id,err.Error())
 		if updateErr!=nil{return updateErr};if tag.RowsAffected()==0{return nil}
-		if op=="replicate"||op=="verify"{_,_=s.db.Exec(ctx,`update media_objects set status='replication_failed',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status not in ('delete_pending','deleted')`,owner,ns,key)}
+		if op=="replicate"||op=="verify" {
+			_,_=s.db.Exec(ctx,`update media_objects set status='replication_failed',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('replication_pending','uploaded')`,owner,ns,key)
+		} else if op=="restore_primary" {
+			// Keep the object quarantined and retryable while attempts remain.
+			// Only expose replication_failed after the durable outbox dead-letters it.
+			_,_=s.db.Exec(ctx,`update media_objects set status='replication_failed',updated_at=now()
+				where owner_id=$1 and namespace=$2 and object_key=$3 and status='restore_pending'
+				and exists(select 1 from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3 and operation='restore_primary' and status='dead')`,owner,ns,key)
+		}
 		return err
 	}
 	tag,err:=s.db.Exec(ctx,`update media_outbox set status='done',locked_until=null,last_error=null,updated_at=now() where id=$1 and status='processing'`,id);if err!=nil{return err};if tag.RowsAffected()==0{return nil};return nil
@@ -245,6 +258,46 @@ func (s *server) replicate(ctx context.Context,owner,ns,key string)error{
 	h2:=sha256.New();n,err:=io.Copy(h2,io.LimitReader(check.Body,size+1));if err!=nil||n!=size||hex.EncodeToString(h2.Sum(nil))!=want{return errors.New("replica read-back SHA-256 or size mismatch")}
 	now:=time.Now().UTC();_,err=s.db.Exec(ctx,`update media_objects set status='protected',replica_verified_at=$4,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('replication_pending','replication_failed')`,owner,ns,key,now);return err
 }
+// restorePrimary rebuilds a missing or corrupt primary only from a replica that
+// independently matches the durable size and SHA-256. The object remains restore_pending
+// (and therefore unavailable for download) until the restored primary passes a full read-back.
+// The outbox's per-object processing lease serializes this with deletion and other repairs.
+func (s *server) restorePrimary(ctx context.Context,owner,ns,key string)error{
+	var size int64
+	var typ,want,status string
+	if err:=s.db.QueryRow(ctx,`select size_bytes,content_type,sha256,status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&size,&typ,&want,&status);err!=nil{return err}
+	if status=="delete_pending"||status=="deleted"{return nil}
+	if status!="restore_pending"{return fmt.Errorf("primary restore refused for lifecycle state %q",status)}
+	item:=reconcileItem{owner:owner,namespace:ns,key:key,contentType:typ,size:size,expectedSHA:want}
+	// Verify the source completely before overwriting the primary.
+	ok,err:=s.originMatches(ctx,s.cfg.replica,item)
+	if err!=nil{return fmt.Errorf("verify replica before primary restore: %w",err)}
+	if !ok{return errors.New("replica failed size, content-type or SHA-256 verification; primary restore refused")}
+	source,err:=s.signedRequest(ctx,s.cfg.replica,http.MethodGet,key,nil,"")
+	if err!=nil{return err}
+	if source.StatusCode!=http.StatusOK{source.Body.Close();return fmt.Errorf("replica GET status %d during primary restore",source.StatusCode)}
+	if source.ContentLength>=0&&source.ContentLength!=size{source.Body.Close();return errors.New("replica size changed after preflight verification")}
+	if got:=strings.TrimSpace(strings.Split(source.Header.Get("Content-Type"),";")[0]);got!=""&&got!=typ{source.Body.Close();return errors.New("replica content type changed after preflight verification")}
+	h:=sha256.New()
+	reader:=&lengthReader{Reader:io.TeeReader(io.LimitReader(source.Body,size+1),h),n:size}
+	put,putErr:=s.signedRequest(ctx,s.cfg.primary,http.MethodPut,key,reader,typ)
+	closeErr:=source.Body.Close()
+	if putErr!=nil{return putErr}
+	if closeErr!=nil{put.Body.Close();return closeErr}
+	if put.StatusCode<200||put.StatusCode>=300{put.Body.Close();return fmt.Errorf("primary restore PUT status %d",put.StatusCode)}
+	io.Copy(io.Discard,io.LimitReader(put.Body,4096));put.Body.Close()
+	if hex.EncodeToString(h.Sum(nil))!=want{return errors.New("replica bytes changed during primary restore; restored object not trusted")}
+	// Verify the actual primary by a fresh full GET, not merely the PUT response.
+	ok,err=s.originMatches(ctx,s.cfg.primary,item)
+	if err!=nil{return fmt.Errorf("primary read-back after restore: %w",err)}
+	if !ok{return errors.New("restored primary failed size, content-type or SHA-256 read-back")}
+	tag,err:=s.db.Exec(ctx,`update media_objects set status='protected',primary_verified_at=now(),reconciled_at=now(),reconciliation_claimed_at=null,updated_at=now()
+		where owner_id=$1 and namespace=$2 and object_key=$3 and status='restore_pending' and size_bytes=$4 and sha256=$5`,owner,ns,key,size,want)
+	if err!=nil{return err}
+	if tag.RowsAffected()!=1{return errors.New("object lifecycle or checksum changed before primary restore could be committed")}
+	return nil
+}
+
 func (s *server) deleteOrigins(ctx context.Context,owner,ns,key string)error{
 	for _,store:=range []s3Store{s.cfg.primary,s.cfg.replica}{resp,err:=s.signedRequest(ctx,store,http.MethodDelete,key,nil,"");if err!=nil{return err};io.Copy(io.Discard,io.LimitReader(resp.Body,4096));resp.Body.Close();if resp.StatusCode!=200&&resp.StatusCode!=204&&resp.StatusCode!=404{return fmt.Errorf("%s delete status %d",store.name,resp.StatusCode)}}
 	_,err:=s.db.Exec(ctx,`update media_objects set status='deleted',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key);return err
