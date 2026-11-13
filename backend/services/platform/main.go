@@ -137,7 +137,12 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in eventRequest
-	if !decodeJSON(w, r, &in) || len(in.EventName) < 1 || len(in.EventName) > 160 || !validJSONObject(in.Properties) {
+	if !decodeJSON(w, r, &in) {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	in.EventName = strings.TrimSpace(in.EventName)
+	if len(in.EventName) < 1 || len(in.EventName) > 160 || !validJSONObject(in.Properties) {
 		http.Error(w, "invalid request", 400)
 		return
 	}
@@ -160,7 +165,14 @@ func (s *server) audit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in auditRequest
-	if !decodeJSON(w, r, &in) || len(in.Action) < 1 || len(in.Action) > 160 || len(in.ResourceType) < 1 || len(in.ResourceType) > 160 || !validJSONObject(in.Metadata) || strings.TrimSpace(in.ResourceID) == "" {
+	if !decodeJSON(w, r, &in) {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	in.Action = strings.TrimSpace(in.Action)
+	in.ResourceType = strings.TrimSpace(in.ResourceType)
+	in.ResourceID = strings.TrimSpace(in.ResourceID)
+	if len(in.Action) < 1 || len(in.Action) > 160 || len(in.ResourceType) < 1 || len(in.ResourceType) > 160 || in.ResourceID == "" || !validJSONObject(in.Metadata) {
 		http.Error(w, "invalid request", 400)
 		return
 	}
