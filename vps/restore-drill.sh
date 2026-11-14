@@ -29,6 +29,13 @@ tar -xzf "$STAGE/backup.tar.gz" -C "$STAGE"
 test -s "$STAGE/data-centre.dump"
 test -s "$STAGE/neon-social.dump"
 
+test -s "$STAGE/components.sha256" || { echo "Per-database checksum manifest missing" >&2; exit 1; }
+(cd "$STAGE" && sha256sum -c components.sha256)
+grep -qx 'backup_scope=database_only' "$STAGE/metadata.txt" || { echo "Backup scope is not explicitly database_only" >&2; exit 1; }
+grep -qx 'cross_database_atomic=false' "$STAGE/metadata.txt" || { echo "Cross-database consistency is not attested" >&2; exit 1; }
+grep -qx 'media_bytes_included=false' "$STAGE/metadata.txt" || { echo "Unexpected media backup scope metadata" >&2; exit 1; }
+grep -qx 'appwrite_documents_included=false' "$STAGE/metadata.txt" || { echo "Unexpected Appwrite backup scope metadata" >&2; exit 1; }
+
 # Restore into a network-isolated disposable database. No public port is bound.
 docker run -d --name "$CONTAINER" --network none -e "POSTGRES_PASSWORD=$PASS" "$RESTORE_IMAGE" >/dev/null
 ready=0
@@ -47,6 +54,6 @@ for database in postgres neon_restore; do
   test "$count" -gt 0 || { echo "Restore contains no user tables in $database" >&2; exit 1; }
 done
 
-echo "RESTORE DRILL PASSED"
+echo "DATABASE-ONLY RESTORE DRILL PASSED"
 echo "Both Data Centre and Neon PostgreSQL archives restored in an isolated, network-disabled container."
-echo "This validates database archive integrity only; Appwrite documents and B2/R2 media need separate recovery drills."
+echo "Scope is explicitly database-only: cross-database atomicity, Appwrite documents and B2/R2 media bytes are NOT restored by this drill."

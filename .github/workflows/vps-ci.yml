@@ -125,6 +125,7 @@ jobs:
           set -euo pipefail
           bash -n vps/backup.sh
           bash -n vps/restore-drill.sh
+          python3 scripts/test-backup-scope-contract.py
           bash scripts/validate-testagram-platform-contracts.sh
           python -m pip install --disable-pip-version-check PyYAML
           python scripts/validate-platform-openapi.py
@@ -517,7 +518,15 @@ jobs:
           test -s "$stage/data-centre.dump"
           test -s "$stage/neon-social.dump"
 
-          tar -czf "$stage/testagram-ci-backup.tar.gz" -C "$stage" data-centre.dump neon-social.dump
+          # Match the production archive contract: per-dump checksums and explicit scope metadata.
+          (cd "$stage" && sha256sum data-centre.dump neon-social.dump > components.sha256)
+          cat > "$stage/metadata.txt" <<'EOF'
+          backup_scope=database_only
+          cross_database_atomic=false
+          media_bytes_included=false
+          appwrite_documents_included=false
+          EOF
+          tar -czf "$stage/testagram-ci-backup.tar.gz" -C "$stage" data-centre.dump neon-social.dump components.sha256 metadata.txt
           age-keygen -o "$stage/restore-identity.txt"
           chmod 600 "$stage/restore-identity.txt"
           recipient="$(age-keygen -y "$stage/restore-identity.txt")"
