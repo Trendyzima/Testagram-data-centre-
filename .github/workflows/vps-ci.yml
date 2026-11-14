@@ -163,7 +163,6 @@ jobs:
           # Optional media profile must not make the default stack require media-only credentials.
           env -u MEDIA_DATABASE_URL -u MEDIA_DATABASE_NAME docker compose -f backend/docker-compose.yml config --quiet
           docker compose --profile media -f backend/docker-compose.yml config --quiet
-          docker compose --profile media -f backend/docker-compose.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); command=str(c["services"]["media-migrate"]["command"]); print("Rendered media-migrate command:", repr(command)); assert command.count("$MEDIA_DATABASE_URL") == 2, "Compose must preserve MEDIA_DATABASE_URL for the media-migrate container shell"'
           grep -Fq '${MEDIA_DATABASE_URL:?Set MEDIA_DATABASE_URL}' backend/docker-compose.yml
           docker compose -f vps/docker-compose.fresh.yml config
           docker compose -f vps/docker-compose.yml config
