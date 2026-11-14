@@ -54,10 +54,10 @@ jobs:
             if [ -z "${!name:-}" ]; then echo "Missing required GitHub secret: $name" >&2; exit 1; fi
           done
           for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_R2_BUCKET"; do
-            if [[ "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]]; then
-              echo "Use dedicated staging buckets, not production buckets." >&2
-              exit 1
-            fi
+            case "$bucket" in
+              *staging*|*smoke*) ;;
+              *) echo "Bucket names must explicitly identify staging/smoke resources; refusing production or ambiguous buckets." >&2; exit 1 ;;
+            esac
           done
       - name: Apply isolated media lifecycle migrations
         run: |
