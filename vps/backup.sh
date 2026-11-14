@@ -46,6 +46,11 @@ docker run --rm --network host -e "DATABASE_URL=$NEON_DATABASE_URL" "$POSTGRES_I
 test -s "$STAGE/data-centre.dump"
 test -s "$STAGE/neon-social.dump"
 
+# Verify each component independently inside the encrypted archive. The outer
+# archive checksum alone cannot identify which database dump is damaged.
+(cd "$STAGE" && sha256sum data-centre.dump neon-social.dump > components.sha256)
+test -s "$STAGE/components.sha256"
+
 if [ -d /var/lib/testagram/storage/nodes ]; then
   tar -C /var/lib/testagram/storage -czf "$STAGE/node-state.tar.gz" nodes
 fi
@@ -54,6 +59,10 @@ created_at_utc=$STAMP
 repository_commit=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
 data_centre_database=pg_dump-custom
 neon_social_database=pg_dump-custom
+backup_scope=database_only
+cross_database_atomic=false
+media_bytes_included=false
+appwrite_documents_included=false
 media_bytes=retained_in_private_B2_and_R2; not duplicated in this database archive
 appwrite_identity_and_documents=not_exported_by_this_script
 EOF
