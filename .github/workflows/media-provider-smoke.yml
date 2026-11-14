@@ -16,8 +16,21 @@ jobs:
   provider-smoke:
     if: inputs.confirm_live_provider_writes == true
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: ci-media-smoke-password
+          POSTGRES_DB: media_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d media_smoke"
+          --health-interval=5s --health-timeout=5s --health-retries=20
     env:
       TESTAGRAM_LIVE_MEDIA_SMOKE: "true"
+      MEDIA_DATABASE_URL: postgresql://postgres:ci-media-smoke-password@127.0.0.1:5432/media_smoke?sslmode=disable
+      MEDIA_INTERNAL_TOKEN: ci-live-media-smoke-internal-token-32-characters
       MEDIA_SMOKE_B2_ENDPOINT: ${{ secrets.MEDIA_SMOKE_B2_ENDPOINT }}
       MEDIA_SMOKE_B2_REGION: ${{ secrets.MEDIA_SMOKE_B2_REGION }}
       MEDIA_SMOKE_B2_BUCKET: ${{ secrets.MEDIA_SMOKE_B2_BUCKET }}
@@ -41,10 +54,23 @@ jobs:
             if [ -z "${!name:-}" ]; then echo "Missing required GitHub secret: $name" >&2; exit 1; fi
           done
           for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_R2_BUCKET"; do
-            if [[ "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]]; then
-              echo "Use dedicated staging buckets, not production buckets." >&2
-              exit 1
-            fi
+            case "$bucket" in
+              *staging*|*smoke*) ;;
+              *) echo "Bucket names must explicitly identify staging/smoke resources; refusing production or ambiguous buckets." >&2; exit 1 ;;
+            esac
           done
-      - name: Write, read-back hash, HEAD and delete on B2 and R2
-        run: go test -count=1 -run '^TestLiveProviderRoundTrip$' -v ./backend/services/media
+      - name: Apply isolated media lifecycle migrations
+        run: |
+          set -euo pipefail
+          docker run --rm --network host \
+            -e PGPASSWORD=ci-media-smoke-password \
+            -v "$PWD/backend/services/media/migrations:/migrations:ro" \
+            postgres:17-alpine sh -ec '
+              until pg_isready -h 127.0.0.1 -U postgres -d media_smoke; do sleep 1; done
+              psql -h 127.0.0.1 -U postgres -d media_smoke -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql
+              psql -h 127.0.0.1 -U postgres -d media_smoke -v ON_ERROR_STOP=1 -f /migrations/002_primary_origin_restore.sql
+            '
+      - name: Verify live B2/R2 provider lifecycle and replication recovery
+        run: |
+          set -euo pipefail
+          go test -count=1 -run "^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete)$" -v ./backend/services/media
