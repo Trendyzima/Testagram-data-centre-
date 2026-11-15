@@ -136,7 +136,7 @@ func (s *Server) watchdogNodeID(r *http.Request) (string, bool) {
 	defer cancel()
 	var id string
 	err := s.db.QueryRow(ctx, `select id::text from public.vps_nodes
-		where token_hash=$1 and status='online' and last_seen_at>now()-interval '45 seconds'
+		where token_hash=$1 and status='online' and last_seen_at>now()-interval '5 minutes'
 		and capabilities @> '{"watchdogActivation":true}'::jsonb`, crypto.HashToken(token)).Scan(&id)
 	return id, err == nil
 }
