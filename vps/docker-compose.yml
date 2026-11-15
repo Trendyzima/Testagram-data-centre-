@@ -163,7 +163,8 @@ services:
       # Never apply the product/video, notification, retired object-storage, or
       # platform migrations from this deployment path.
       psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_vps.sql
-      psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/006_hosting_control_plane.sql
+      psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/006_hosting_control_plane.sql
+      psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/008_user_activity_watchdog.sql
     environment:
       DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:-}
     volumes:
@@ -180,6 +181,7 @@ services:
       DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:?Set a dedicated TLS PostgreSQL URL for Data Centre infrastructure state}
       VPS_INTERNAL_TOKEN: ${VPS_INTERNAL_TOKEN:-}
       VPS_NODE_BOOTSTRAP_TOKEN: ${VPS_NODE_BOOTSTRAP_TOKEN:-}
+      VPS_WATCHDOG_INTERNAL_TOKEN: ${VPS_WATCHDOG_INTERNAL_TOKEN:-}
       TESTAGRAM_BASE_DOMAIN: ${TESTAGRAM_BASE_DOMAIN:-}
       TESTAGRAM_DOMAIN_TARGETS: ${TESTAGRAM_DOMAIN_TARGETS:-}
       TESTAGRAM_PUBLIC_DNS_TARGET: ${TESTAGRAM_PUBLIC_DNS_TARGET:-}
@@ -187,7 +189,7 @@ services:
       VPS_CONTROL_PLANE_ADDR: :8787
     ports:
       - "127.0.0.1:8787:8787"
-    networks: [services]
+    networks: [services, platform]
     depends_on:
       migrate:
         condition: service_completed_successfully
