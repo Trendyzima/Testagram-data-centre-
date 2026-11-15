@@ -406,10 +406,11 @@ type watchdogAckRequest struct {
 }
 
 type composeTarget struct {
-	Stack   string
-	Project string
-	Profile string
-	Service string
+	Stack            string
+	Project          string
+	Profile          string
+	Service          string
+	MigrationService string
 }
 
 // The event queue can request only these fixed deployment targets. It cannot
@@ -419,7 +420,7 @@ func watchdogTarget(service string) (composeTarget, bool) {
 	case "algorithm":
 		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"ranking",Service:"algorithm"},true
 	case "data-centre":
-		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"media",Service:"media"},true
+		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"media",Service:"media",MigrationService:"media-migrate"},true
 	case "cdn":
 		return composeTarget{Stack:"cdn",Project:"testagram-cdn",Service:"edge"},true
 	case "federation":
@@ -449,6 +450,17 @@ func (a *Agent) ackWatchdog(id int64, success bool, cause error) error {
 	return err
 }
 
+func runComposeCommand(args []string, timeout time.Duration) error {
+	ctx,cancel:=context.WithTimeout(context.Background(),timeout)
+	defer cancel()
+	cmd:=exec.CommandContext(ctx,"docker",args...)
+	output,err:=cmd.CombinedOutput()
+	if err==nil { return nil }
+	message:=strings.TrimSpace(string(output))
+	if len(message)>1200 { message=message[:1200] }
+	return fmt.Errorf("%w: %s",err,message)
+}
+
 func (a *Agent) activateWatchdogImpulse(impulse watchdogImpulse) error {
 	if !a.watchdogEnabled { return errors.New("watchdog activation is disabled on this node") }
 	if impulse.ID<1 || len(impulse.Services)==0 || len(impulse.Services)>5 { return errors.New("invalid watchdog impulse") }
@@ -462,17 +474,18 @@ func (a *Agent) activateWatchdogImpulse(impulse watchdogImpulse) error {
 		if !filepath.IsAbs(composeFile) { return fmt.Errorf("watchdog compose file for %s must be an absolute path",target.Stack) }
 		info,err:=os.Stat(composeFile)
 		if err!=nil || !info.Mode().IsRegular() { return fmt.Errorf("watchdog compose file for %s is unavailable",target.Stack) }
-		args:=[]string{"compose","--project-name",target.Project,"--project-directory",filepath.Dir(composeFile),"-f",composeFile}
-		if target.Profile!="" { args=append(args,"--profile",target.Profile) }
-		args=append(args,"up","--no-build","--pull","never","-d",target.Service)
-		ctx,cancel:=context.WithTimeout(context.Background(),2*time.Minute)
-		cmd:=exec.CommandContext(ctx,"docker",args...)
-		output,runErr:=cmd.CombinedOutput()
-		cancel()
-		if runErr!=nil {
-			message:=strings.TrimSpace(string(output)); if len(message)>1200 { message=message[:1200] }
-			return fmt.Errorf("activate %s failed: %w: %s",service,runErr,message)
+		baseArgs:=[]string{"compose","--project-name",target.Project,"--project-directory",filepath.Dir(composeFile),"-f",composeFile}
+		if target.Profile!="" { baseArgs=append(baseArgs,"--profile",target.Profile) }
+		if target.MigrationService!="" {
+			// Run the idempotent media schema migration explicitly. --no-deps is
+			// essential: the Data Centre overlay also contains a legacy API service.
+			migrationArgs:=append(append([]string{},baseArgs...),"run","--rm","--no-deps",target.MigrationService)
+			if err:=runComposeCommand(migrationArgs,2*time.Minute); err!=nil { return fmt.Errorf("prepare %s failed: %w",service,err) }
 		}
+		// Never follow Compose depends_on for this activation path: it could
+		// unexpectedly start a legacy API or a persistent database dependency.
+		upArgs:=append(append([]string{},baseArgs...),"up","--no-deps","--no-build","--pull","never","-d",target.Service)
+		if err:=runComposeCommand(upArgs,2*time.Minute); err!=nil { return fmt.Errorf("activate %s failed: %w",service,err) }
 		log.Printf("watchdog activated service=%s project=%s",service,target.Project)
 	}
 	return nil
