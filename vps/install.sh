@@ -44,9 +44,89 @@ if [ "${#FRESH_FEDERATION_INTERNAL_TOKEN}" -lt 32 ] || [ "${#ALGORITHM_INTERNAL_
   echo "Federation, Algorithm, control-plane and node bootstrap tokens must contain at least 32 characters." >&2
   exit 2
 fi
-if [[ "$VPS_NODE_BOOTSTRAP_TOKEN" == *$'\n'* || "$VPS_NODE_BOOTSTRAP_TOKEN" == *$'\r'* ]]; then
+if [[ "$VPS_NODE_BOOTSTRAP_TOKEN" == *if grep -Eq 'REPLACE_WITH|REPLACE_PASSWORD|REPLACE_WITH_64_HEX_DIGEST|ops@example.com' "$ENV_FILE"; then
+  echo "Fresh env still contains placeholders. Set real secrets and immutable image digests before deployment." >&2
+  exit 2
+fi
+
+mkdir -p "$STORAGE_ROOT/nodes" "$ROOT/bin" /etc/testagram
+chmod 0750 "$STORAGE_ROOT" "$STORAGE_ROOT/nodes"
+docker compose --env-file "$ENV_FILE" --profile nodes -f "$ROOT/vps/docker-compose.yml" config -q
+docker compose --env-file "$ENV_FILE" --profile nodes -f "$ROOT/vps/docker-compose.yml" up -d --wait
+
+if command -v go >/dev/null 2>&1; then
+  (cd "$ROOT" && go build -trimpath -ldflags="-s -w" -o "$ROOT/bin/node-agent" ./node-agent)
+else
+  docker run --rm -v "$ROOT:/src" -w /src golang:1.27.2-alpine sh -c 'go build -trimpath -ldflags="-s -w" -o /src/bin/node-agent ./node-agent'
+fi
+
+cat > /etc/testagram/node-agent.env <<EOF
+VPS_CONTROL_PLANE_URL=http://127.0.0.1:8787
+VPS_NODE_BOOTSTRAP_TOKEN=$VPS_NODE_BOOTSTRAP_TOKEN
+VPS_ALLOWED_WORKLOAD_IMAGES=${VPS_ALLOWED_WORKLOAD_IMAGES:-}
+VPS_NODE_NAME=$(hostname)-node
+VPS_NODE_ENDPOINT=outbound-only
+VPS_VOLUME_ROOT=$STORAGE_ROOT/nodes
+VPS_NODE_STATE_FILE=$STORAGE_ROOT/nodes/node-state.json
+VPS_ENABLE_WATCHDOG_ACTIVATION=${VPS_ENABLE_WATCHDOG_ACTIVATION:-false}
+VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE=${VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE:-$ROOT/vps/docker-compose.yml}
+VPS_WATCHDOG_CDN_COMPOSE_FILE=${VPS_WATCHDOG_CDN_COMPOSE_FILE:-}
+EOF
+chmod 0600 /etc/testagram/node-agent.env
+install -m 0644 "$ROOT/vps/node-agent.service" /etc/systemd/system/testagram-node-agent.service
+systemctl daemon-reload
+systemctl enable --now testagram-node-agent.service
+
+docker compose --env-file "$ENV_FILE" -f "$ROOT/vps/docker-compose.yml" ps
+systemctl --no-pager --full status testagram-node-agent.service
+\n'* || "$VPS_NODE_BOOTSTRAP_TOKEN" == *if grep -Eq 'REPLACE_WITH|REPLACE_PASSWORD|REPLACE_WITH_64_HEX_DIGEST|ops@example.com' "$ENV_FILE"; then
+  echo "Fresh env still contains placeholders. Set real secrets and immutable image digests before deployment." >&2
+  exit 2
+fi
+
+mkdir -p "$STORAGE_ROOT/nodes" "$ROOT/bin" /etc/testagram
+chmod 0750 "$STORAGE_ROOT" "$STORAGE_ROOT/nodes"
+docker compose --env-file "$ENV_FILE" -f "$ROOT/vps/docker-compose.yml" config -q
+docker compose --env-file "$ENV_FILE" -f "$ROOT/vps/docker-compose.yml" up -d --wait
+
+if command -v go >/dev/null 2>&1; then
+  (cd "$ROOT" && go build -trimpath -ldflags="-s -w" -o "$ROOT/bin/node-agent" ./node-agent)
+else
+  docker run --rm -v "$ROOT:/src" -w /src golang:1.27.2-alpine sh -c 'go build -trimpath -ldflags="-s -w" -o /src/bin/node-agent ./node-agent'
+fi
+
+cat > /etc/testagram/node-agent.env <<EOF
+VPS_CONTROL_PLANE_URL=http://127.0.0.1:8787
+VPS_NODE_BOOTSTRAP_TOKEN=$VPS_NODE_BOOTSTRAP_TOKEN
+VPS_ALLOWED_WORKLOAD_IMAGES=${VPS_ALLOWED_WORKLOAD_IMAGES:-}
+VPS_NODE_NAME=$(hostname)-node
+VPS_NODE_ENDPOINT=outbound-only
+VPS_VOLUME_ROOT=$STORAGE_ROOT/nodes
+VPS_NODE_STATE_FILE=$STORAGE_ROOT/nodes/node-state.json
+EOF
+chmod 0600 /etc/testagram/node-agent.env
+install -m 0644 "$ROOT/vps/node-agent.service" /etc/systemd/system/testagram-node-agent.service
+systemctl daemon-reload
+systemctl enable --now testagram-node-agent.service
+
+docker compose --env-file "$ENV_FILE" -f "$ROOT/vps/docker-compose.yml" ps
+systemctl --no-pager --full status testagram-node-agent.service
+\r'* ]]; then
   echo "Node bootstrap token must be a single line." >&2
   exit 2
+fi
+if [ "${VPS_ENABLE_WATCHDOG_ACTIVATION:-false}" = "true" ]; then
+  if [ -z "${VPS_WATCHDOG_INTERNAL_TOKEN:-}" ] || [ "${#VPS_WATCHDOG_INTERNAL_TOKEN}" -lt 32 ]; then
+    echo "Watchdog activation requires a dedicated VPS_WATCHDOG_INTERNAL_TOKEN of at least 32 characters." >&2
+    exit 2
+  fi
+  for key in VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE VPS_WATCHDOG_CDN_COMPOSE_FILE; do
+    value="${!key:-}"
+    if [[ "$value" != /* ]] || [ ! -f "$value" ]; then
+      echo "Watchdog activation requires an existing absolute path in $key." >&2
+      exit 2
+    fi
+  done
 fi
 if grep -Eq 'REPLACE_WITH|REPLACE_PASSWORD|REPLACE_WITH_64_HEX_DIGEST|ops@example.com' "$ENV_FILE"; then
   echo "Fresh env still contains placeholders. Set real secrets and immutable image digests before deployment." >&2
