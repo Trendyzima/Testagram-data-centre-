@@ -123,6 +123,11 @@ systemctl --no-pager --full status testagram-node-agent.service
   exit 2
 fi
 if [ "${VPS_ENABLE_WATCHDOG_ACTIVATION:-false}" = "true" ]; then
+  compose_version="$(docker compose version --short | sed 's/^v//')"
+  if ! printf '2.17.0\n%s\n' "$compose_version" | sort -V -C; then
+    echo "Watchdog activation requires Docker Compose v2.17.0 or newer for health-wait support." >&2
+    exit 2
+  fi
   if [ -z "${VPS_WATCHDOG_INTERNAL_TOKEN:-}" ] || [ "${#VPS_WATCHDOG_INTERNAL_TOKEN}" -lt 32 ]; then
     echo "Watchdog activation requires a dedicated VPS_WATCHDOG_INTERNAL_TOKEN of at least 32 characters." >&2
     exit 2
