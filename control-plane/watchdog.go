@@ -9,7 +9,6 @@ import (
 
 	"github.com/Trendyzima/Testagram-data-centre-/internal/crypto"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const watchdogLeaseDuration = 10 * time.Minute
@@ -217,7 +216,6 @@ func (s *Server) watchdogNodeAckImpulse(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
-	var tag pgconn.CommandTag
 	err := s.db.QueryRow(ctx, `update testagram_watchdog.impulses set
 		status=case when $2 then 'completed' when attempts<5 then 'queued' else 'failed' end,
 		available_at=case when $2 then available_at else now()+make_interval(secs=>least(300,power(2,least(attempts,8))::int)) end,
