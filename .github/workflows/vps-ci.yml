@@ -255,6 +255,8 @@ jobs:
         run: |
           set -euo pipefail
           token=ci-media-internal-token-at-least-32-chars
+          trap 'status=$?; echo "Dedicated media runtime failed; container state and logs follow"; docker inspect testagram-media-runtime-ci --format "{{json .State}}" 2>/dev/null || true; docker logs testagram-media-runtime-ci 2>&1 || true; exit "$status"' ERR
+          trap 'docker rm -f testagram-media-runtime-ci >/dev/null 2>&1 || true' EXIT
           docker run -d --name testagram-media-runtime-ci --network host \
             -e MEDIA_ADDR=:8096 \
             -e MEDIA_INTERNAL_TOKEN="$token" \
@@ -265,8 +267,12 @@ jobs:
             -e CLOUDFLARE_R2_ENDPOINT=https://r2.invalid \
             -e CLOUDFLARE_R2_REGION=auto -e CLOUDFLARE_R2_BUCKET=ci-media-replica \
             -e CLOUDFLARE_R2_ACCESS_KEY_ID=ci-r2-access -e CLOUDFLARE_R2_SECRET_ACCESS_KEY=ci-r2-secret \
+            -e VPS_MINIO_ENDPOINT=http://object-storage:9000 \
+            -e VPS_MINIO_REGION=us-east-1 -e VPS_MINIO_METADATA_BUCKET=ci-media-metadata \
+            -e VPS_MINIO_METADATA_ACCESS_KEY_ID=ci-minio-metadata-access \
+            -e VPS_MINIO_METADATA_SECRET_ACCESS_KEY=ci-minio-metadata-secret \
+            -e CLOUDFLARE_R2_METADATA_BUCKET=ci-media-metadata-replica \
             testagram-media-ci
-          trap 'docker rm -f testagram-media-runtime-ci >/dev/null 2>&1 || true' EXIT
           ready=0
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8096/readyz >/dev/null; then ready=1; break; fi
