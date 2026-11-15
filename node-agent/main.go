@@ -480,7 +480,7 @@ func (a *Agent) activateWatchdogImpulse(impulse watchdogImpulse) error {
 		// legacy Data Centre API and persistent databases can never be started.
 		upArgs:=append([]string{},baseArgs...)
 		if target.NoDeps { upArgs=append(upArgs,"--no-deps") }
-		upArgs=append(upArgs,"up","--no-build","--pull","never","-d",target.Service)
+		upArgs=append(upArgs,"up","--no-build","--pull","never","--wait","--wait-timeout","90","-d",target.Service)
 		if err:=runComposeCommand(upArgs,2*time.Minute); err!=nil { return fmt.Errorf("activate %s failed: %w",service,err) }
 		log.Printf("watchdog activated service=%s project=%s",service,target.Project)
 	}
