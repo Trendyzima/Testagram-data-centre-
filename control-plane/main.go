@@ -21,6 +21,7 @@ type Server struct {
 	db        *pgxpool.Pool
 	internal  string
 	bootstrap string
+	watchdogInternal string
 }
 
 type Registration struct {
@@ -408,7 +409,7 @@ func main() {
 	}
 	defer db.Close()
 
-	s := &Server{db: db, internal: internal, bootstrap: bootstrap}
+	s := &Server{db: db, internal: internal, bootstrap: bootstrap, watchdogInternal: os.Getenv("VPS_WATCHDOG_INTERNAL_TOKEN")}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/readyz", s.ready)
@@ -418,6 +419,7 @@ func main() {
 	mux.HandleFunc("/v1/workloads", s.schedule)
 	mux.HandleFunc("/v1/workloads/", s.result)
 	s.registerHostingRoutes(mux)
+	s.registerWatchdogRoutes(mux)
 
 	addr := os.Getenv("VPS_CONTROL_PLANE_ADDR")
 	if addr == "" {
