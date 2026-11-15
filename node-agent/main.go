@@ -430,11 +430,29 @@ func watchdogTarget(service string) (composeTarget, bool) {
 	}
 }
 
+func composeWaitSupported(version string) bool {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return false
+	}
+	major, errMajor := strconv.Atoi(parts[0])
+	minor, errMinor := strconv.Atoi(parts[1])
+	if errMajor != nil || errMinor != nil {
+		return false
+	}
+	return major > 2 || (major == 2 && minor >= 17)
+}
+
 func dockerComposeAvailable() bool {
-	docker,err:=exec.LookPath("docker")
-	if err!=nil { return false }
-	ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second); defer cancel()
-	return exec.CommandContext(ctx,docker,"compose","version").Run()==nil
+	docker, err := exec.LookPath("docker")
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, docker, "compose", "version", "--short").Output()
+	return err == nil && composeWaitSupported(string(output))
 }
 
 func (a *Agent) pollWatchdog() ([]watchdogImpulse,error) {
