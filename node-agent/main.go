@@ -420,11 +420,11 @@ func watchdogTarget(service string) (composeTarget, bool) {
 	case "algorithm":
 		return composeTarget{Stack:"data-centre",Project:"testagram-fresh",Profile:"ranking",Service:"algorithm",NoDeps:true},true
 	case "data-centre":
-		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"media",Service:"media",NoDeps:false},true
+		return composeTarget{Stack:"data-centre",Project:"testagram-fresh",Profile:"media",Service:"media",NoDeps:false},true
 	case "cdn":
-		return composeTarget{Stack:"cdn",Project:"testagram-cdn",Service:"edge"},true
+		return composeTarget{Stack:"cdn",Project:"testagram-cdn",Service:"edge",NoDeps:true},true
 	case "federation":
-		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"federation",Service:"federation-api",NoDeps:true},true
+		return composeTarget{Stack:"data-centre",Project:"testagram-fresh",Profile:"federation",Service:"federation-api",NoDeps:true},true
 	default:
 		return composeTarget{},false
 	}
