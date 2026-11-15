@@ -166,12 +166,14 @@ func (a *Agent) processWatchdogImpulse(impulse watchdogImpulse) error {
 func (a *Agent) pollWatchdog() error {
 	impulses,err:=a.claimWatchdogImpulses()
 	if err!=nil{return err}
+	var firstErr error
 	for _,impulse:=range impulses {
 		activationErr:=a.processWatchdogImpulse(impulse)
 		if ackErr:=a.acknowledgeWatchdogImpulse(impulse.ID,activationErr==nil,activationErr);ackErr!=nil {
-			return fmt.Errorf("acknowledge impulse %d: %w",impulse.ID,ackErr)
+			if firstErr==nil { firstErr=fmt.Errorf("acknowledge impulse %d: %w",impulse.ID,ackErr) }
+			continue
 		}
-		if activationErr!=nil { return fmt.Errorf("impulse %d activation: %w",impulse.ID,activationErr) }
+		if activationErr!=nil && firstErr==nil { firstErr=fmt.Errorf("impulse %d activation: %w",impulse.ID,activationErr) }
 	}
-	return nil
+	return firstErr
 }
