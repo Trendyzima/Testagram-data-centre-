@@ -51,6 +51,13 @@ fi
 
 mkdir -p "$STORAGE_ROOT/nodes" "$ROOT/bin" /etc/testagram
 chmod 0750 "$STORAGE_ROOT" "$STORAGE_ROOT/nodes"
+# Backend owns and creates the private shared networks. Deploy its Compose stack first.
+for network in testagram-platform testagram-ranker; do
+  if ! docker network inspect "$network" >/dev/null 2>&1; then
+    echo "Required private Docker network $network is missing. Start the Backend self-hosted Compose stack first." >&2
+    exit 2
+  fi
+done
 docker compose --env-file "$ENV_FILE" --profile nodes -f "$ROOT/vps/docker-compose.yml" config -q
 docker compose --env-file "$ENV_FILE" --profile nodes -f "$ROOT/vps/docker-compose.yml" up -d --wait
 
