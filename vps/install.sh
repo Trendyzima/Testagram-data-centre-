@@ -44,11 +44,34 @@ if [ "${#FRESH_FEDERATION_INTERNAL_TOKEN}" -lt 32 ] || [ "${#ALGORITHM_INTERNAL_
   echo "Federation, Algorithm, control-plane and node bootstrap tokens must contain at least 32 characters." >&2
   exit 2
 fi
-if [[ "$VPS_NODE_BOOTSTRAP_TOKEN" == *if grep -Eq 'REPLACE_WITH|REPLACE_PASSWORD|REPLACE_WITH_64_HEX_DIGEST|ops@example.com' "$ENV_FILE"; then
-  echo "Fresh env still contains placeholders. Set real secrets and immutable image digests before deployment." >&2
+if [[ "$VPS_NODE_BOOTSTRAP_TOKEN" == *$'\n'* || "$VPS_NODE_BOOTSTRAP_TOKEN" == *$'\r'* ]]; then
+  echo "Node bootstrap token must be a single line." >&2
   exit 2
 fi
 
+if [ "${VPS_ENABLE_WATCHDOG_ACTIVATION:-false}" = "true" ]; then
+  compose_version="$(docker compose version --short | sed 's/^v//')"
+  if ! printf '2.17.0\n%s\n' "$compose_version" | sort -V -C; then
+    echo "Watchdog activation requires Docker Compose v2.17.0 or newer for health-wait support." >&2
+    exit 2
+  fi
+  if [ -z "${VPS_WATCHDOG_INTERNAL_TOKEN:-}" ] || [ "${#VPS_WATCHDOG_INTERNAL_TOKEN}" -lt 32 ]; then
+    echo "Watchdog activation requires a dedicated VPS_WATCHDOG_INTERNAL_TOKEN of at least 32 characters." >&2
+    exit 2
+  fi
+  for key in VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE VPS_WATCHDOG_CDN_COMPOSE_FILE; do
+    value="${!key:-}"
+    if [[ "$value" != /* ]] || [ ! -f "$value" ]; then
+      echo "Watchdog activation requires an existing absolute path in $key." >&2
+      exit 2
+    fi
+  done
+fi
+
+if grep -Eq 'REPLACE_WITH|REPLACE_PASSWORD|REPLACE_WITH_64_HEX_DIGEST|ops@example.com' "$ENV_FILE"; then
+  echo "Fresh env still contains placeholders. Set real secrets and immutable image digests before deployment." >&2
+  exit 2
+fi
 mkdir -p "$STORAGE_ROOT/nodes" "$ROOT/bin" /etc/testagram
 chmod 0750 "$STORAGE_ROOT" "$STORAGE_ROOT/nodes"
 # Backend owns and creates the private shared networks. Deploy its Compose stack first.
