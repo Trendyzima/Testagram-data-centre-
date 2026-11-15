@@ -17,6 +17,7 @@ ProtectHome=true
 ReadWritePaths=/var/lib/testagram/storage/nodes
 ReadWritePaths=/srv/testagram-media
 ReadWritePaths=/opt/testagram
+ReadWritePaths=/run/docker.sock
 CapabilityBoundingSet=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
