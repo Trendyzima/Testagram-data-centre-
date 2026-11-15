@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -31,6 +32,8 @@ type config struct {
 	addr string
 	primary s3Store
 	replica s3Store
+	metadataPrimary s3Store
+	metadataReplica s3Store
 	uploadTTL time.Duration
 	downloadTTL time.Duration
 }
@@ -47,6 +50,8 @@ func main() {
 		token: required("MEDIA_INTERNAL_TOKEN"), addr: env("MEDIA_ADDR", ":8096"),
 		primary: s3Store{name:"backblaze_b2", endpoint:required("B2_S3_ENDPOINT"), region:required("B2_S3_REGION"), bucket:required("B2_S3_BUCKET"), access:required("B2_S3_ACCESS_KEY_ID"), secret:required("B2_S3_SECRET_ACCESS_KEY")},
 		replica: s3Store{name:"cloudflare_r2", endpoint:required("CLOUDFLARE_R2_ENDPOINT"), region:env("CLOUDFLARE_R2_REGION","auto"), bucket:required("CLOUDFLARE_R2_BUCKET"), access:required("CLOUDFLARE_R2_ACCESS_KEY_ID"), secret:required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")},
+		metadataPrimary: s3Store{name:"instabox_vps_metadata", endpoint:required("VPS_MINIO_ENDPOINT"), region:env("VPS_MINIO_REGION","us-east-1"), bucket:required("VPS_MINIO_METADATA_BUCKET"), access:required("VPS_MINIO_METADATA_ACCESS_KEY_ID"), secret:required("VPS_MINIO_METADATA_SECRET_ACCESS_KEY")},
+		metadataReplica: s3Store{name:"cloudflare_r2_metadata", endpoint:required("CLOUDFLARE_R2_ENDPOINT"), region:env("CLOUDFLARE_R2_REGION","auto"), bucket:required("CLOUDFLARE_R2_METADATA_BUCKET"), access:required("CLOUDFLARE_R2_ACCESS_KEY_ID"), secret:required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")},
 		uploadTTL: duration("MEDIA_UPLOAD_TTL", 45*time.Minute), downloadTTL: duration("MEDIA_DOWNLOAD_TTL", 5*time.Minute),
 	}
 	if len(cfg.token)<32 { log.Fatal("MEDIA_INTERNAL_TOKEN must be at least 32 characters") }
@@ -54,6 +59,8 @@ func main() {
 	if cfg.downloadTTL < time.Minute || cfg.downloadTTL > 15*time.Minute { log.Fatal("MEDIA_DOWNLOAD_TTL must be between 1 minute and 15 minutes") }
 	if err:=validateStore(cfg.primary);err!=nil{log.Fatalf("invalid B2 primary configuration: %v",err)}
 	if err:=validateStore(cfg.replica);err!=nil{log.Fatalf("invalid R2 replica configuration: %v",err)}
+	if err:=validateStore(cfg.metadataPrimary);err!=nil{log.Fatalf("invalid VPS metadata store configuration: %v",err)}
+	if err:=validateStore(cfg.metadataReplica);err!=nil{log.Fatalf("invalid R2 metadata store configuration: %v",err)}
 	db,err:=pgxpool.New(context.Background(),required("MEDIA_DATABASE_URL")); if err!=nil { log.Fatal(err) }; defer db.Close()
 	ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second); defer cancel()
 	if err=db.Ping(ctx); err!=nil { log.Fatalf("media database unavailable: %v",err) }
@@ -71,6 +78,52 @@ func main() {
 	log.Printf("dedicated media service listening on %s",cfg.addr)
 	log.Fatal(srv.ListenAndServe())
 }
+
+type mediaMetadataManifest struct {
+	SchemaVersion string `json:"schema_version"`
+	OwnerID string `json:"owner_id"`
+	Namespace string `json:"namespace"`
+	ObjectKey string `json:"object_key"`
+	SizeBytes int64 `json:"size_bytes"`
+	ContentType string `json:"content_type"`
+	SHA256 string `json:"sha256"`
+}
+
+func (s *server) writeMetadataSidecars(ctx context.Context, item reconcileItem) error {
+	manifest := mediaMetadataManifest{SchemaVersion:"instabox.media-metadata.v1", OwnerID:item.owner, Namespace:item.namespace, ObjectKey:item.key, SizeBytes:item.size, ContentType:item.contentType, SHA256:strings.ToLower(item.expectedSHA)}
+	body, err := json.Marshal(manifest)
+	if err != nil { return fmt.Errorf("encode media metadata sidecar: %w", err) }
+	key := item.key + ".metadata.json"
+	for _, store := range []s3Store{s.cfg.metadataPrimary, s.cfg.metadataReplica} {
+		reader := &lengthReader{Reader:bytes.NewReader(body), n:int64(len(body))}
+		resp, err := s.signedRequest(ctx, store, http.MethodPut, key, reader, "application/json")
+		if err != nil { return fmt.Errorf("%s metadata PUT: %w", store.name, err) }
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 { return fmt.Errorf("%s metadata PUT status %d", store.name, resp.StatusCode) }
+		check, err := s.signedRequest(ctx, store, http.MethodGet, key, nil, "")
+		if err != nil { return fmt.Errorf("%s metadata read-back: %w", store.name, err) }
+		if check.StatusCode != http.StatusOK { check.Body.Close(); return fmt.Errorf("%s metadata read-back status %d", store.name, check.StatusCode) }
+		if check.ContentLength >= 0 && check.ContentLength != int64(len(body)) { check.Body.Close(); return fmt.Errorf("%s metadata sidecar size mismatch", store.name) }
+		if got := strings.TrimSpace(strings.Split(check.Header.Get("Content-Type"), ";")[0]); got != "" && got != "application/json" { check.Body.Close(); return fmt.Errorf("%s metadata sidecar content type mismatch", store.name) }
+		h := sha256.New()
+		n, readErr := io.Copy(h, io.LimitReader(check.Body, int64(len(body))+1))
+		check.Body.Close()
+		if readErr != nil || n != int64(len(body)) || hex.EncodeToString(h.Sum(nil)) != hashHex(body) { return fmt.Errorf("%s metadata sidecar SHA-256 read-back mismatch", store.name) }
+	}
+	return nil
+}
+
+func (s *server) deleteMetadataSidecars(ctx context.Context, key string) error {
+	metadataKey := key + ".metadata.json"
+	for _, store := range []s3Store{s.cfg.metadataPrimary, s.cfg.metadataReplica} {
+		resp, err := s.signedRequest(ctx, store, http.MethodDelete, metadataKey, nil, "")
+		if err != nil { return fmt.Errorf("%s metadata delete: %w", store.name, err) }
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound { return fmt.Errorf("%s metadata delete status %d", store.name, resp.StatusCode) }
+	}
+	return nil
+}
+
 func (s *server) health(w http.ResponseWriter,r *http.Request){w.WriteHeader(200);_,_=w.Write([]byte("ok\n"))}
 func (s *server) ready(w http.ResponseWriter,r *http.Request){ctx,c:=context.WithTimeout(r.Context(),2*time.Second);defer c();if err:=s.db.Ping(ctx);err!=nil{http.Error(w,"database unavailable",503);return};w.WriteHeader(200);_,_=w.Write([]byte("ready\n"))}
 func (s *server) auth(w http.ResponseWriter,r *http.Request)bool{
@@ -256,6 +309,7 @@ func (s *server) replicate(ctx context.Context,owner,ns,key string)error{
 	if hex.EncodeToString(h.Sum(nil))!=want{return errors.New("primary object changed during replication")}
 	check,err:=s.signedRequest(ctx,s.cfg.replica,http.MethodGet,key,nil,"");if err!=nil{return err};defer check.Body.Close();if check.StatusCode!=200{return fmt.Errorf("replica read-back status %d",check.StatusCode)}
 	h2:=sha256.New();n,err:=io.Copy(h2,io.LimitReader(check.Body,size+1));if err!=nil||n!=size||hex.EncodeToString(h2.Sum(nil))!=want{return errors.New("replica read-back SHA-256 or size mismatch")}
+	if err:=s.writeMetadataSidecars(ctx,reconcileItem{owner:owner,namespace:ns,key:key,contentType:typ,size:size,expectedSHA:want});err!=nil{return err}
 	now:=time.Now().UTC();_,err=s.db.Exec(ctx,`update media_objects set status='protected',replica_verified_at=$4,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('replication_pending','replication_failed')`,owner,ns,key,now);return err
 }
 // restorePrimary rebuilds a missing or corrupt primary only from a replica that
@@ -291,6 +345,7 @@ func (s *server) restorePrimary(ctx context.Context,owner,ns,key string)error{
 	ok,err=s.originMatches(ctx,s.cfg.primary,item)
 	if err!=nil{return fmt.Errorf("primary read-back after restore: %w",err)}
 	if !ok{return errors.New("restored primary failed size, content-type or SHA-256 read-back")}
+	if err:=s.writeMetadataSidecars(ctx,item);err!=nil{return err}
 	tag,err:=s.db.Exec(ctx,`update media_objects set status='protected',primary_verified_at=now(),reconciled_at=now(),reconciliation_claimed_at=null,updated_at=now()
 		where owner_id=$1 and namespace=$2 and object_key=$3 and status='restore_pending' and size_bytes=$4 and sha256=$5`,owner,ns,key,size,want)
 	if err!=nil{return err}
@@ -300,6 +355,7 @@ func (s *server) restorePrimary(ctx context.Context,owner,ns,key string)error{
 
 func (s *server) deleteOrigins(ctx context.Context,owner,ns,key string)error{
 	for _,store:=range []s3Store{s.cfg.primary,s.cfg.replica}{resp,err:=s.signedRequest(ctx,store,http.MethodDelete,key,nil,"");if err!=nil{return err};io.Copy(io.Discard,io.LimitReader(resp.Body,4096));resp.Body.Close();if resp.StatusCode!=200&&resp.StatusCode!=204&&resp.StatusCode!=404{return fmt.Errorf("%s delete status %d",store.name,resp.StatusCode)}}
+	if err:=s.deleteMetadataSidecars(ctx,key);err!=nil{return err}
 	_,err:=s.db.Exec(ctx,`update media_objects set status='deleted',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key);return err
 }
 func (s *server) signedRequest(ctx context.Context,store s3Store,method,key string,body io.Reader,contentType string)(*http.Response,error){
@@ -323,7 +379,8 @@ func presign(store s3Store,method,key string,ttl time.Duration,contentType strin
 }
 type lengthReader struct{io.Reader;n int64}
 func(r *lengthReader)Len64()int64{return r.n}
-func validateStore(s s3Store)error{u,err:=url.Parse(strings.TrimSpace(s.endpoint));if err!=nil||u.Scheme!="https"||u.Host==""||u.User!=nil||u.RawQuery!=""||u.Fragment!=""||(u.Path!=""&&u.Path!="/"){return errors.New("S3 endpoint must be an HTTPS origin without credentials, path, query or fragment")};if s.region==""||len(s.region)>64||strings.ContainsAny(s.region,"/\\\r\n")||s.bucket==""||len(s.bucket)>255||strings.ContainsAny(s.bucket,"/\\\r\n")||s.access==""||s.secret==""||strings.ContainsAny(s.access+s.secret,"\r\n"){return errors.New("S3 region, bucket and credentials must be valid non-empty single-line values")};return nil}
+func validateStore(s s3Store)error{u,err:=url.Parse(strings.TrimSpace(s.endpoint));privateHTTP := u != nil && u.Scheme=="http" && (u.Hostname()=="object-storage" || u.Hostname()=="localhost" || u.Hostname()=="127.0.0.1")
+	if err!=nil||u.Host==""||(!privateHTTP&&u.Scheme!="https")||u.User!=nil||u.RawQuery!=""||u.Fragment!=""||(u.Path!=""&&u.Path!="/"){return errors.New("S3 endpoint must be HTTPS, or private Docker object-storage HTTP, without credentials, path, query or fragment")};if s.region==""||len(s.region)>64||strings.ContainsAny(s.region,"/\\\r\n")||s.bucket==""||len(s.bucket)>255||strings.ContainsAny(s.bucket,"/\\\r\n")||s.access==""||s.secret==""||strings.ContainsAny(s.access+s.secret,"\r\n"){return errors.New("S3 region, bucket and credentials must be valid non-empty single-line values")};return nil}
 func objectURL(s s3Store,key string)(*url.URL,error){
 	if err:=validateStore(s);err!=nil{return nil,err};if !validObjectKey(key){return nil,errors.New("invalid object key")};base,err:=url.Parse(strings.TrimRight(s.endpoint,"/"));if err!=nil{return nil,err}
 	base.Path="/"+s.bucket+"/"+key;return base,nil

@@ -62,3 +62,10 @@ Readiness must fail if required database or provider configuration is invalid. L
 - Do not expose B2/R2 presigned URLs as stable public media URLs.
 - Do not enable fresh-media feature flags or change the active media hostname until staging acceptance and explicit operator approval.
 - Do not use Render.
+
+
+## Private metadata sidecars
+
+The dedicated Data Centre media path keeps Backblaze B2 as its media primary and Cloudflare R2 as its media replica. Once both media copies pass size/content-type/SHA-256 verification, it writes the same deterministic JSON sidecar into the dedicated private InstaBox VPS MinIO metadata bucket and Cloudflare R2 metadata bucket. Each sidecar is independently read back and SHA-256 checked before the media object becomes `protected`. Deletion removes the two sidecars alongside the B2/R2 media objects; reconciliation repairs missing sidecars for already protected media.
+
+PostgreSQL remains authoritative for owner, lifecycle, checksum, quota and authorization. The sidecar is a recoverable metadata mirror, not an alternate authorization database. The VPS metadata key must be restricted to the single metadata bucket; do not reuse the MinIO root key.

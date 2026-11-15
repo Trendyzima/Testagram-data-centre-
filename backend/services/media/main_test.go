@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
+	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -105,4 +109,37 @@ func TestDigestMatchesExactSizeAndSHA256(t *testing.T) {
 	if digestMatches(strings.NewReader(payload), int64(len(payload)), strings.Repeat("0",64)) {
 		t.Fatal("wrong digest accepted")
 	}
+}
+
+
+func TestPrivateDockerMinIOEndpointAllowsHTTPOnlyForObjectStorage(t *testing.T) {
+	store := s3Store{name:"instabox_vps_metadata",endpoint:"http://object-storage:9000",region:"us-east-1",bucket:"testagram-media-metadata",access:"metadata-key",secret:strings.Repeat("s",40)}
+	if err:=validateStore(store);err!=nil{t.Fatalf("private Docker MinIO endpoint rejected: %v",err)}
+	store.endpoint="http://external.example.invalid"
+	if err:=validateStore(store);err==nil{t.Fatal("non-private plaintext S3 endpoint accepted")}
+}
+
+func TestMetadataSidecarsWriteReadBackAndDeleteOnVPSAndR2(t *testing.T) {
+	objects := map[string][]byte{}
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
+		key:=r.URL.Path
+		switch r.Method {
+		case http.MethodPut:
+			body,err:=io.ReadAll(r.Body);if err!=nil{http.Error(w,"read failed",500);return};objects[key]=body;w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			body,ok:=objects[key];if !ok{http.NotFound(w,r);return};w.Header().Set("Content-Type","application/json");w.Header().Set("Content-Length",strconv.Itoa(len(body)));_,_=w.Write(body)
+		case http.MethodDelete:
+			delete(objects,key);w.WriteHeader(http.StatusNoContent)
+		default: http.Error(w,"method not allowed",405)
+		}
+	}))
+	defer ts.Close()
+	store:=func(name,bucket string)s3Store{return s3Store{name:name,endpoint:ts.URL,region:"us-east-1",bucket:bucket,access:"metadata-key",secret:strings.Repeat("s",40)}}
+	s:=&server{cfg:config{metadataPrimary:store("instabox_vps_metadata","vps-metadata"),metadataReplica:store("cloudflare_r2_metadata","r2-metadata")},http:ts.Client()}
+	item:=reconcileItem{owner:"owner-1",namespace:"media-private",key:"users/owner-1/0123456789abcdef0123456789abcdef",contentType:"image/webp",size:123,expectedSHA:strings.Repeat("a",64)}
+	if err:=s.writeMetadataSidecars(context.Background(),item);err!=nil{t.Fatalf("write metadata sidecars: %v",err)}
+	metadataKey:=item.key+".metadata.json"
+	for _,bucket:=range []string{"vps-metadata","r2-metadata"}{if len(objects["/"+bucket+"/"+metadataKey])==0{t.Fatalf("metadata missing from %s",bucket)}}
+	if err:=s.deleteMetadataSidecars(context.Background(),item.key);err!=nil{t.Fatalf("delete metadata sidecars: %v",err)}
+	for _,bucket:=range []string{"vps-metadata","r2-metadata"}{if _,ok:=objects["/"+bucket+"/"+metadataKey];ok{t.Fatalf("metadata remains in %s",bucket)}}
 }
