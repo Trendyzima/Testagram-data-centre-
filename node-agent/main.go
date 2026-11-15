@@ -24,6 +24,8 @@ import (
 
 type Agent struct {
 	control, bootstrap, nodeToken, nodeID, name, endpoint, volumeRoot, storageRoot, stateFile string
+	watchdogControl, watchdogToken, watchdogDataCentreCompose, watchdogBackendCompose string
+	watchdogEnabled bool
 	workloadTimeout                                                                           time.Duration
 	computeEnabled                                                                            bool
 	storageEnabled                                                                            bool
@@ -593,8 +595,22 @@ func validImageDigest(v string) bool {
 func main() {
 	control := os.Getenv("VPS_CONTROL_PLANE_URL")
 	bootstrap := os.Getenv("VPS_NODE_BOOTSTRAP_TOKEN")
+	watchdogEnabled := envEnabled("VPS_ENABLE_ACTIVITY_WATCHDOG")
+	watchdogControl := strings.TrimSpace(os.Getenv("VPS_WATCHDOG_CONTROL_URL"))
+	watchdogToken := strings.TrimSpace(os.Getenv("VPS_WATCHDOG_TOKEN"))
+	watchdogDataCentreCompose := strings.TrimSpace(os.Getenv("VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE"))
+	watchdogBackendCompose := strings.TrimSpace(os.Getenv("VPS_WATCHDOG_BACKEND_COMPOSE_FILE"))
 	if err := validateControlPlaneURL(control); err != nil {
 		log.Fatalf("invalid VPS_CONTROL_PLANE_URL: %v", err)
+	}
+	if watchdogEnabled {
+		if err := validateControlPlaneURL(watchdogControl); err != nil { log.Fatalf("invalid VPS_WATCHDOG_CONTROL_URL: %v", err) }
+		if len(watchdogToken) < 32 || strings.TrimSpace(watchdogToken) != watchdogToken || strings.ContainsAny(watchdogToken, "\r\n") { log.Fatal("VPS_WATCHDOG_TOKEN must be a single-line secret of at least 32 characters") }
+		for name, path := range map[string]string{"VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE":watchdogDataCentreCompose,"VPS_WATCHDOG_BACKEND_COMPOSE_FILE":watchdogBackendCompose} {
+			info, err := os.Stat(path)
+			if !filepath.IsAbs(path) || err != nil || !info.Mode().IsRegular() { log.Fatalf("%s must point to an existing absolute Compose file", name) }
+		}
+		if _, err := exec.LookPath("docker"); err != nil { log.Fatal("Docker CLI is required when VPS_ENABLE_ACTIVITY_WATCHDOG=true") }
 	}
 	if len(bootstrap) < 32 || strings.TrimSpace(bootstrap) != bootstrap || strings.ContainsAny(bootstrap, "\r\n") {
 		log.Fatal("VPS_NODE_BOOTSTRAP_TOKEN must be a single-line secret of at least 32 characters")
@@ -602,6 +618,8 @@ func main() {
 
 	a := &Agent{
 		control: control, bootstrap: bootstrap,
+		watchdogEnabled: watchdogEnabled, watchdogControl: watchdogControl, watchdogToken: watchdogToken,
+		watchdogDataCentreCompose: watchdogDataCentreCompose, watchdogBackendCompose: watchdogBackendCompose,
 		name:           os.Getenv("VPS_NODE_NAME"),
 		endpoint:       os.Getenv("VPS_NODE_ENDPOINT"),
 		volumeRoot:     os.Getenv("VPS_VOLUME_ROOT"),
@@ -705,6 +723,9 @@ func main() {
 					log.Printf("workload %s failed: %v", work.ID, err)
 				}
 			}
+		}
+		if a.watchdogEnabled {
+			if err := a.pollWatchdog(); err != nil { log.Printf("activity watchdog: %v", err) }
 		}
 
 		time.Sleep(3 * time.Second)
