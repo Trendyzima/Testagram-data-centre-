@@ -218,7 +218,7 @@ networks:
     external: true
   ranker:
     name: testagram-ranker
-    internal: true
+    external: true
   federation:
     internal: true
 
