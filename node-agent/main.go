@@ -479,7 +479,7 @@ func (a *Agent) activateWatchdogImpulse(impulse watchdogImpulse) error {
 		if target.MigrationService!="" {
 			// Run the idempotent media schema migration explicitly. --no-deps is
 			// essential: the Data Centre overlay also contains a legacy API service.
-			migrationArgs:=append(append([]string{},baseArgs...),"run","--rm","--no-deps",target.MigrationService)
+			migrationArgs:=append(append([]string{},baseArgs...),"run","--rm","--no-deps","--pull","never",target.MigrationService)
 			if err:=runComposeCommand(migrationArgs,2*time.Minute); err!=nil { return fmt.Errorf("prepare %s failed: %w",service,err) }
 		}
 		// Never follow Compose depends_on for this activation path: it could
