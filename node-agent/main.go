@@ -454,11 +454,10 @@ func runComposeCommand(args []string, timeout time.Duration) error {
 	ctx,cancel:=context.WithTimeout(context.Background(),timeout)
 	defer cancel()
 	cmd:=exec.CommandContext(ctx,"docker",args...)
-	output,err:=cmd.CombinedOutput()
-	if err==nil { return nil }
-	message:=strings.TrimSpace(string(output))
-	if len(message)>1200 { message=message[:1200] }
-	return fmt.Errorf("%w: %s",err,message)
+	if err:=cmd.Run(); err!=nil {
+		return fmt.Errorf("docker compose activation command failed: %w",err)
+	}
+	return nil
 }
 
 func (a *Agent) activateWatchdogImpulse(impulse watchdogImpulse) error {
