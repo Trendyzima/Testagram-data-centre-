@@ -240,9 +240,9 @@ func TestValidateControlPlaneURL(t *testing.T) {
 func TestWatchdogTargetIsStrictlyAllowlisted(t *testing.T) {
 	want:=map[string]composeTarget{
 		"algorithm":{Stack:"data-centre",Project:"testagram-fresh",Profile:"ranking",Service:"algorithm",NoDeps:true},
-		"data-centre":{Stack:"data-centre",Project:"testagram-datacentre",Profile:"media",Service:"media",NoDeps:false},
-		"cdn":{Stack:"cdn",Project:"testagram-cdn",Service:"edge"},
-		"federation":{Stack:"data-centre",Project:"testagram-datacentre",Profile:"federation",Service:"federation-api",NoDeps:true},
+		"data-centre":{Stack:"data-centre",Project:"testagram-fresh",Profile:"media",Service:"media",NoDeps:false},
+		"cdn":{Stack:"cdn",Project:"testagram-cdn",Service:"edge",NoDeps:true},
+		"federation":{Stack:"data-centre",Project:"testagram-fresh",Profile:"federation",Service:"federation-api",NoDeps:true},
 	}
 	for name,expected:=range want {
 		got,ok:=watchdogTarget(name)
