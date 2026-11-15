@@ -30,10 +30,10 @@ The service allowlist is compiled into the agent; queue data cannot provide a co
 
 | Impulse service | Compose project/service | Profile |
 |---|---|---|
-| algorithm | testagram-datacentre / algorithm | ranking |
-| data-centre | testagram-datacentre / media | media |
+| algorithm | testagram-fresh / algorithm | ranking |
+| data-centre | testagram-fresh / media | media |
 | cdn | testagram-cdn / edge | none |
-| federation | testagram-datacentre / federation-api | federation |
+| federation | testagram-fresh / federation-api | federation |
 
 Activation uses `docker compose up --no-build --pull never -d`; images must already be installed by the normal reviewed deployment pipeline. No `down`, stop or prune operation is issued. Backend, PostgreSQL, authentication, public ingress, control plane and persistent data services are never stopped by idle timers. CDN and Federation are deliberately start-only in this first release because public delivery and inbound federation may arrive without a fresh local user request.
 
