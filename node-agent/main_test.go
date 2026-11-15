@@ -240,7 +240,7 @@ func TestValidateControlPlaneURL(t *testing.T) {
 func TestWatchdogTargetIsStrictlyAllowlisted(t *testing.T) {
 	want:=map[string]composeTarget{
 		"algorithm":{Stack:"data-centre",Project:"testagram-datacentre",Profile:"ranking",Service:"algorithm"},
-		"data-centre":{Stack:"data-centre",Project:"testagram-datacentre",Profile:"media",Service:"media"},
+		"data-centre":{Stack:"data-centre",Project:"testagram-datacentre",Profile:"media",Service:"media",MigrationService:"media-migrate"},
 		"cdn":{Stack:"cdn",Project:"testagram-cdn",Service:"edge"},
 		"federation":{Stack:"data-centre",Project:"testagram-datacentre",Profile:"federation",Service:"federation-api"},
 	}
