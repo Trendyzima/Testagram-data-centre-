@@ -18,7 +18,7 @@ A computer node's CPU/RAM is advertised for scheduling, but compute is scheduled
 
 The optional activation worker is disabled by default. It uses the existing enrolled node token (not the public user session or Backend internal bearer) to claim and acknowledge impulses from the VPS control plane.
 
-Deploy the Backend self-hosted Compose stack first: it creates the private `testagram-platform` and `testagram-ranker` Docker networks. The Data Centre installer checks that both exist before starting. Then enable it only on a trusted Linux compute node with Docker Compose v2 and the reviewed deployment files mounted locally:
+Deploy the Backend self-hosted Compose stack first: it creates the private `testagram-platform` and `testagram-ranker` Docker networks. The Data Centre installer checks that both exist before starting. Then enable it only on a trusted Linux compute node with Docker Compose v2.17.0+ and the reviewed deployment files mounted locally:
 
 - `VPS_ENABLE_WATCHDOG_ACTIVATION=true`
 - `VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE=/opt/testagram/data-centre/vps/docker-compose.yml`
