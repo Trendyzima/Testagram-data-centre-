@@ -30,7 +30,7 @@ test -s "$STAGE/data-centre.dump"
 
 test -s "$STAGE/components.sha256" || { echo "Per-database checksum manifest missing" >&2; exit 1; }
 (cd "$STAGE" && sha256sum -c components.sha256)
-grep -qx 'backup_scope=data_centre_infrastructure_only' "$STAGE/metadata.txt" || { echo "Backup scope is not explicitly database_only" >&2; exit 1; }
+grep -qx 'backup_scope=data_centre_infrastructure_only' "$STAGE/metadata.txt" || { echo "Backup scope is not explicitly Data Centre infrastructure-only" >&2; exit 1; }
 grep -qx 'neon_database_required=false' "$STAGE/metadata.txt" || { echo "Legacy Neon database dependency is still present" >&2; exit 1; }
 grep -qx 'media_bytes_included=false' "$STAGE/metadata.txt" || { echo "Unexpected media backup scope metadata" >&2; exit 1; }
 grep -qx 'appwrite_documents_included=false' "$STAGE/metadata.txt" || { echo "Unexpected Appwrite backup scope metadata" >&2; exit 1; }
@@ -51,7 +51,7 @@ for database in testagram_data_centre_restore; do
   test "$count" -gt 0 || { echo "Restore contains no user tables in $database" >&2; exit 1; }
 done
 
-echo "DATABASE-ONLY RESTORE DRILL PASSED"
+echo "DATA CENTRE INFRASTRUCTURE RESTORE DRILL PASSED"
 echo "Data Centre infrastructure PostgreSQL archive restored in an isolated, network-disabled container."
 echo "Backend product PostgreSQL is restored separately by the Backend repository's self-hosted restore drill."
 echo "Appwrite identity/configuration and B2/R2 media bytes require their own provider-backed recovery drills."
