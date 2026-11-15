@@ -8,7 +8,7 @@ services:
       HTTP_ADDR: :8092
       INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
     expose: ["8092"]
-    networks: [ranker]
+    networks: [ranker, platform]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8092/readyz"]
       interval: 10s
@@ -133,7 +133,7 @@ services:
       SERVICE_ACTOR_NAME: Testagram
       SERVICE_ACTOR_SUMMARY: Testagram federated social network
       FEDERATION_DATABASE_URL: ${FEDERATION_DATABASE_URL:-}
-      BACKEND_INTERNAL_URL: http://api:8081
+      BACKEND_INTERNAL_URL: http://testagram-backend-api:8082
       BACKEND_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}
       FEDERATION_INGRESS_TOKEN: ${FEDERATION_INGRESS_TOKEN:-}
       FEDERATION_DELIVERY_WORKER_ENABLED: ${FEDERATION_DELIVERY_WORKER_ENABLED:-false}
@@ -141,11 +141,8 @@ services:
       FEDERATION_INBOX_WORKER_ENABLED: ${FEDERATION_INBOX_WORKER_ENABLED:-false}
     expose: ["8081"]
     networks: [services, federation, platform]
-    depends_on:
-      # Federation has its own authenticated Backend readiness probe. Do not
-      # gate it on the public API's full readiness, which also requires Algorithm.
-      api:
-        condition: service_started
+    # Backend is reached over the shared private platform network; do not
+    # depend on the legacy Data Centre "api" container or start it implicitly.
     healthcheck:
       test: ["CMD", "/federation-api", "--healthcheck"]
       interval: 10s
