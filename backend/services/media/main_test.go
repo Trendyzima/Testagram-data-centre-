@@ -121,7 +121,7 @@ func TestPrivateDockerMinIOEndpointAllowsHTTPOnlyForObjectStorage(t *testing.T) 
 
 func TestMetadataSidecarsWriteReadBackAndDeleteOnVPSAndR2(t *testing.T) {
 	objects := map[string][]byte{}
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
 		key:=r.URL.Path
 		switch r.Method {
 		case http.MethodPut:
@@ -133,9 +133,9 @@ func TestMetadataSidecarsWriteReadBackAndDeleteOnVPSAndR2(t *testing.T) {
 		default: http.Error(w,"method not allowed",405)
 		}
 	}))
-	defer server.Close()
-	store:=func(name,bucket string)s3Store{return s3Store{name:name,endpoint:server.URL,region:"us-east-1",bucket:bucket,access:"metadata-key",secret:strings.Repeat("s",40)}}
-	s:=&server{cfg:config{metadataPrimary:store("instabox_vps_metadata","vps-metadata"),metadataReplica:store("cloudflare_r2_metadata","r2-metadata")},http:server.Client()}
+	defer ts.Close()
+	store:=func(name,bucket string)s3Store{return s3Store{name:name,endpoint:ts.URL,region:"us-east-1",bucket:bucket,access:"metadata-key",secret:strings.Repeat("s",40)}}
+	s:=&server{cfg:config{metadataPrimary:store("instabox_vps_metadata","vps-metadata"),metadataReplica:store("cloudflare_r2_metadata","r2-metadata")},http:ts.Client()}
 	item:=reconcileItem{owner:"owner-1",namespace:"media-private",key:"users/owner-1/0123456789abcdef0123456789abcdef",contentType:"image/webp",size:123,expectedSHA:strings.Repeat("a",64)}
 	if err:=s.writeMetadataSidecars(context.Background(),item);err!=nil{t.Fatalf("write metadata sidecars: %v",err)}
 	metadataKey:=item.key+".metadata.json"
