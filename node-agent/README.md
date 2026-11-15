@@ -21,7 +21,7 @@ The optional activity worker is disabled unless `VPS_ENABLE_ACTIVITY_WATCHDOG=tr
 
 Required settings in `/etc/testagram/node-agent.env`:
 
-- `VPS_WATCHDOG_CONTROL_URL`: HTTPS origin for the Backend control plane.
+- `VPS_WATCHDOG_CONTROL_URL`: Backend control-plane loopback origin, normally `http://127.0.0.1:8788` (the Backend Compose stack binds this port to loopback only).
 - `VPS_WATCHDOG_TOKEN`: dedicated 32+ character secret matching Backend `VPS_WATCHDOG_TOKEN`; distinct from `VPS_NODE_BOOTSTRAP_TOKEN` and node registration token.
 - `VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE`: absolute path to the deployed Data Centre `backend/docker-compose.yml`.
 - `VPS_WATCHDOG_BACKEND_COMPOSE_FILE`: absolute path to the deployed Backend `deploy/self-hosted/docker-compose.yml`.
