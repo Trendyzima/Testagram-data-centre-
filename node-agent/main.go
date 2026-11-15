@@ -410,7 +410,7 @@ type composeTarget struct {
 	Project          string
 	Profile          string
 	Service          string
-	MigrationService string
+	NoDeps           bool
 }
 
 // The event queue can request only these fixed deployment targets. It cannot
@@ -418,13 +418,13 @@ type composeTarget struct {
 func watchdogTarget(service string) (composeTarget, bool) {
 	switch service {
 	case "algorithm":
-		return composeTarget{Stack:"data-centre",Project:"testagram-fresh",Profile:"ranking",Service:"algorithm"},true
+		return composeTarget{Stack:"data-centre",Project:"testagram-fresh",Profile:"ranking",Service:"algorithm",NoDeps:true},true
 	case "data-centre":
-		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"media",Service:"media",MigrationService:"media-migrate"},true
+		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"media",Service:"media",NoDeps:false},true
 	case "cdn":
 		return composeTarget{Stack:"cdn",Project:"testagram-cdn",Service:"edge"},true
 	case "federation":
-		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"federation",Service:"federation-api"},true
+		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"federation",Service:"federation-api",NoDeps:true},true
 	default:
 		return composeTarget{},false
 	}
@@ -476,15 +476,12 @@ func (a *Agent) activateWatchdogImpulse(impulse watchdogImpulse) error {
 		if err!=nil || !info.Mode().IsRegular() { return fmt.Errorf("watchdog compose file for %s is unavailable",target.Stack) }
 		baseArgs:=[]string{"compose","--project-name",target.Project,"--project-directory",filepath.Dir(composeFile),"-f",composeFile}
 		if target.Profile!="" { baseArgs=append(baseArgs,"--profile",target.Profile) }
-		if target.MigrationService!="" {
-			// Run the idempotent media schema migration explicitly. --no-deps is
-			// essential: the Data Centre overlay also contains a legacy API service.
-			migrationArgs:=append(append([]string{},baseArgs...),"run","--rm","--no-deps","--pull","never",target.MigrationService)
-			if err:=runComposeCommand(migrationArgs,2*time.Minute); err!=nil { return fmt.Errorf("prepare %s failed: %w",service,err) }
-		}
-		// Never follow Compose depends_on for this activation path: it could
-		// unexpectedly start a legacy API or a persistent database dependency.
-		upArgs:=append(append([]string{},baseArgs...),"up","--no-deps","--no-build","--pull","never","-d",target.Service)
+		// Follow dependencies only for media, whose sole dependency is the
+		// idempotent media-migrate job. All other targets use --no-deps so the
+		// legacy Data Centre API and persistent databases can never be started.
+		upArgs:=append([]string{},baseArgs...)
+		if target.NoDeps { upArgs=append(upArgs,"--no-deps") }
+		upArgs=append(upArgs,"up","--no-build","--pull","never","-d",target.Service)
 		if err:=runComposeCommand(upArgs,2*time.Minute); err!=nil { return fmt.Errorf("activate %s failed: %w",service,err) }
 		log.Printf("watchdog activated service=%s project=%s",service,target.Project)
 	}
