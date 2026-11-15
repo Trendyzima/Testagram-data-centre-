@@ -80,7 +80,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: Trendyzima/Testagram-backend-
-          ref: fix/private-readiness-metrics-listener-20261115
+          ref: de78071a67998df5dd32cc7e8e1122f3e2dd0398
           path: backend-source
           persist-credentials: false
       - name: Verify canonical Backend Federation schema contract
