@@ -119,6 +119,7 @@ func (s *server) reconcileOne(ctx context.Context, item reconcileItem) error {
 	}
 	switch {
 	case primaryOK && replicaOK:
+		if err := s.writeMetadataSidecars(ctx, item); err != nil { return err }
 		_, err := s.db.Exec(ctx, `update media_objects set reconciled_at=now(),reconciliation_claimed_at=null where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
 		return err
 	case primaryOK && !replicaOK:
