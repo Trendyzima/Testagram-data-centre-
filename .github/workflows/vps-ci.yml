@@ -507,26 +507,22 @@ jobs:
           docker exec testagram-restore-source pg_isready -U postgres -d postgres
 
           docker exec testagram-restore-source createdb -U postgres data_centre
-          docker exec testagram-restore-source createdb -U postgres neon_social
           docker exec testagram-restore-source psql -U postgres -d data_centre -v ON_ERROR_STOP=1 \
             -c "CREATE TABLE restore_probe(id integer PRIMARY KEY, value text NOT NULL); INSERT INTO restore_probe VALUES (1, 'data-centre-ok');"
-          docker exec testagram-restore-source psql -U postgres -d neon_social -v ON_ERROR_STOP=1 \
-            -c "CREATE TABLE restore_probe(id integer PRIMARY KEY, value text NOT NULL); INSERT INTO restore_probe VALUES (1, 'neon-social-ok');"
 
           docker exec testagram-restore-source pg_dump -U postgres -Fc data_centre > "$stage/data-centre.dump"
-          docker exec testagram-restore-source pg_dump -U postgres -Fc neon_social > "$stage/neon-social.dump"
           test -s "$stage/data-centre.dump"
-          test -s "$stage/neon-social.dump"
 
-          # Match the production archive contract: per-dump checksums and explicit scope metadata.
-          (cd "$stage" && sha256sum data-centre.dump neon-social.dump > components.sha256)
+          # Match the production infrastructure-only archive contract.
+          (cd "$stage" && sha256sum data-centre.dump > components.sha256)
           cat > "$stage/metadata.txt" <<'EOF'
-          backup_scope=database_only
-          cross_database_atomic=false
+          backup_scope=data_centre_infrastructure_only
+          neon_database_required=false
+          cross_database_atomic=not_applicable
           media_bytes_included=false
           appwrite_documents_included=false
           EOF
-          tar -czf "$stage/testagram-ci-backup.tar.gz" -C "$stage" data-centre.dump neon-social.dump components.sha256 metadata.txt
+          tar -czf "$stage/testagram-ci-backup.tar.gz" -C "$stage" data-centre.dump components.sha256 metadata.txt
           age-keygen -o "$stage/restore-identity.txt"
           chmod 600 "$stage/restore-identity.txt"
           recipient="$(age-keygen -y "$stage/restore-identity.txt")"
@@ -534,7 +530,7 @@ jobs:
           (cd "$stage" && sha256sum testagram-ci-backup.tar.gz.age > testagram-ci-backup.tar.gz.age.sha256)
           test -s "$stage/testagram-ci-backup.tar.gz.age"
 
-      - name: Restore both encrypted database archives in network-isolated PostgreSQL
+      - name: Restore encrypted Data Centre archive in network-isolated PostgreSQL
         env:
           STAGE: ${{ steps.fixture.outputs.stage }}
           RESTORE_IMAGE: ${{ steps.fixture.outputs.restore_image }}
