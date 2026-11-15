@@ -27,6 +27,8 @@ type Agent struct {
 	workloadTimeout                                                                           time.Duration
 	computeEnabled                                                                            bool
 	storageEnabled                                                                            bool
+	watchdogEnabled                                                                           bool
+	watchdogComposeFiles                                                                      map[string]string
 	mu                                                                                        sync.RWMutex
 	storageStatsMu                                                                            sync.Mutex
 	storageStatsAt                                                                            time.Time
@@ -230,6 +232,7 @@ func (a *Agent) capabilities() map[string]any {
 		"storageNode":           a.storageEnabled,
 		"storageOnly":           a.storageEnabled && !a.computeEnabled,
 		"workloadExecution":     a.computeEnabled,
+		"watchdogActivation":    a.watchdogEnabled,
 		"mediaStorageBytes":     mediaTotal,
 		"mediaStorageFreeBytes": mediaFree,
 	}
@@ -383,6 +386,96 @@ func (a *Agent) poll() (*pollResponse, error) {
 func (a *Agent) report(id string, success bool) error {
 	_, err := a.post("/v1/workloads/"+id+"/result", map[string]bool{"success": success}, nil)
 	return err
+}
+
+type watchdogImpulse struct {
+	ID        int64    `json:"id"`
+	EventType string   `json:"eventType"`
+	Services  []string `json:"services"`
+	Attempts  int      `json:"attempts"`
+}
+
+type watchdogClaimResponse struct {
+	Impulses []watchdogImpulse `json:"impulses"`
+}
+
+type watchdogAckRequest struct {
+	ID      int64  `json:"id"`
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
+
+type composeTarget struct {
+	Stack   string
+	Project string
+	Profile string
+	Service string
+}
+
+// The event queue can request only these fixed deployment targets. It cannot
+// supply a compose path, project, service name, image, command or environment.
+func watchdogTarget(service string) (composeTarget, bool) {
+	switch service {
+	case "algorithm":
+		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"ranking",Service:"algorithm"},true
+	case "data-centre":
+		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"media",Service:"media"},true
+	case "cdn":
+		return composeTarget{Stack:"cdn",Project:"testagram-cdn",Service:"edge"},true
+	case "federation":
+		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"federation",Service:"federation-api"},true
+	default:
+		return composeTarget{},false
+	}
+}
+
+func dockerComposeAvailable() bool {
+	docker,err:=exec.LookPath("docker")
+	if err!=nil { return false }
+	ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second); defer cancel()
+	return exec.CommandContext(ctx,docker,"compose","version").Run()==nil
+}
+
+func (a *Agent) pollWatchdog() ([]watchdogImpulse,error) {
+	var out watchdogClaimResponse
+	_,err:=a.post("/v1/nodes/watchdog/claim?limit=10",map[string]any{},&out)
+	return out.Impulses,err
+}
+
+func (a *Agent) ackWatchdog(id int64, success bool, cause error) error {
+	in:=watchdogAckRequest{ID:id,Success:success}
+	if cause!=nil { in.Error=cause.Error(); if len(in.Error)>500 { in.Error=in.Error[:500] } }
+	_,err:=a.post("/v1/nodes/watchdog/ack",in,nil)
+	return err
+}
+
+func (a *Agent) activateWatchdogImpulse(impulse watchdogImpulse) error {
+	if !a.watchdogEnabled { return errors.New("watchdog activation is disabled on this node") }
+	if impulse.ID<1 || len(impulse.Services)==0 || len(impulse.Services)>5 { return errors.New("invalid watchdog impulse") }
+	seen:=map[string]bool{}
+	for _,service:=range impulse.Services {
+		if seen[service] { continue }
+		seen[service]=true
+		target,ok:=watchdogTarget(service)
+		if !ok { return fmt.Errorf("watchdog service %q is not allowlisted",service) }
+		composeFile:=strings.TrimSpace(a.watchdogComposeFiles[target.Stack])
+		if !filepath.IsAbs(composeFile) { return fmt.Errorf("watchdog compose file for %s must be an absolute path",target.Stack) }
+		info,err:=os.Stat(composeFile)
+		if err!=nil || !info.Mode().IsRegular() { return fmt.Errorf("watchdog compose file for %s is unavailable",target.Stack) }
+		args:=[]string{"compose","--project-name",target.Project,"--project-directory",filepath.Dir(composeFile),"-f",composeFile}
+		if target.Profile!="" { args=append(args,"--profile",target.Profile) }
+		args=append(args,"up","--no-build","--pull","never","-d",target.Service)
+		ctx,cancel:=context.WithTimeout(context.Background(),2*time.Minute)
+		cmd:=exec.CommandContext(ctx,"docker",args...)
+		output,runErr:=cmd.CombinedOutput()
+		cancel()
+		if runErr!=nil {
+			message:=strings.TrimSpace(string(output)); if len(message)>1200 { message=message[:1200] }
+			return fmt.Errorf("activate %s failed: %w: %s",service,runErr,message)
+		}
+		log.Printf("watchdog activated service=%s project=%s",service,target.Project)
+	}
+	return nil
 }
 
 func (a *Agent) execute(w Workload) error {
@@ -609,9 +702,25 @@ func main() {
 		stateFile:      os.Getenv("VPS_NODE_STATE_FILE"),
 		computeEnabled: envEnabled("VPS_ENABLE_COMPUTE_NODE") && strings.TrimSpace(os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) != "" && runtimeBin() != "",
 		storageEnabled: envEnabled("VPS_ENABLE_STORAGE_NODE"),
+		watchdogEnabled: envEnabled("VPS_ENABLE_WATCHDOG_ACTIVATION"),
+		watchdogComposeFiles: map[string]string{
+			"data-centre": strings.TrimSpace(os.Getenv("VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE")),
+			"cdn": strings.TrimSpace(os.Getenv("VPS_WATCHDOG_CDN_COMPOSE_FILE")),
+		},
 	}
 	if strings.TrimSpace(os.Getenv("VPS_ALLOWED_WORKLOAD_IMAGES")) == "" {
 		log.Printf("workload execution is disabled until VPS_ALLOWED_WORKLOAD_IMAGES contains approved image@sha256 references")
+	}
+	if a.watchdogEnabled {
+		if !dockerComposeAvailable() || !filepath.IsAbs(a.watchdogComposeFiles["data-centre"]) || !filepath.IsAbs(a.watchdogComposeFiles["cdn"]) {
+			a.watchdogEnabled=false
+			log.Printf("watchdog activation disabled: Docker Compose and absolute Data Centre/CDN compose file paths are required")
+		} else {
+			for _,stack:=range []string{"data-centre","cdn"} {
+				info,err:=os.Stat(a.watchdogComposeFiles[stack])
+				if err!=nil || !info.Mode().IsRegular() { a.watchdogEnabled=false; log.Printf("watchdog activation disabled: %s compose file is unavailable",stack); break }
+			}
+		}
 	}
 	if a.name == "" {
 		a.name = "testagram-node"
@@ -704,6 +813,17 @@ func main() {
 				if err != nil {
 					log.Printf("workload %s failed: %v", work.ID, err)
 				}
+			}
+		}
+		if a.watchdogEnabled {
+			impulses, pollErr := a.pollWatchdog()
+			if pollErr != nil { log.Printf("watchdog poll: %v",pollErr) }
+			for _,impulse:=range impulses {
+				activationErr:=a.activateWatchdogImpulse(impulse)
+				if ackErr:=a.ackWatchdog(impulse.ID,activationErr==nil,activationErr); ackErr!=nil {
+					log.Printf("watchdog acknowledgement failed id=%d: %v",impulse.ID,ackErr)
+				}
+				if activationErr!=nil { log.Printf("watchdog impulse failed id=%d: %v",impulse.ID,activationErr) }
 			}
 		}
 
