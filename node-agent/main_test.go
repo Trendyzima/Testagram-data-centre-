@@ -266,3 +266,17 @@ func TestWatchdogActivationRejectsUnknownService(t *testing.T) {
 		t.Fatal("unknown service must be rejected")
 	}
 }
+
+
+func TestComposeWaitSupported(t *testing.T) {
+	for _, version := range []string{"v2.17.0", "2.20.3", "v2.39.4", "3.0.0"} {
+		if !composeWaitSupported(version) {
+			t.Fatalf("expected Compose version %q to support --wait", version)
+		}
+	}
+	for _, version := range []string{"", "v1.29.2", "v2.16.9", "unknown"} {
+		if composeWaitSupported(version) {
+			t.Fatalf("Compose version %q must not be accepted", version)
+		}
+	}
+}
