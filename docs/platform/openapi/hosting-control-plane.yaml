@@ -233,6 +233,79 @@ paths:
         '401': {description: Unauthorized}
         '404': {description: Manifest not found}
         '422': {description: Hash or size mismatch}
+  /v1/watchdog/impulses:
+    post:
+      summary: Enqueue a privacy-safe, authenticated user activity impulse from Backend
+      description: >
+        Requires the dedicated VPS_WATCHDOG_INTERNAL_TOKEN, not VPS_INTERNAL_TOKEN.
+        Backend sends only an allowlisted event type and a five-minute idempotency bucket;
+        no user/session identity is accepted. Browser and mobile clients must never call this route.
+      security:
+        - WatchdogServiceBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [idempotencyKey, eventType]
+              properties:
+                idempotencyKey: {type: string, minLength: 16, maxLength: 128}
+                eventType:
+                  type: string
+                  enum: [login, feed_open, post_publish, media_upload, media_view, federation_interaction]
+      responses:
+        '202': {description: Idempotent activity impulse durably accepted}
+        '400': {description: Invalid event or idempotency key}
+        '401': {description: Dedicated watchdog service token required}
+        '503': {description: Queue unavailable}
+  /v1/watchdog/services:
+    get:
+      summary: Inspect active downstream service leases
+      security:
+        - WatchdogServiceBearer: []
+      responses:
+        '200': {description: Active service lease inventory}
+        '401': {description: Dedicated watchdog service token required}
+        '503': {description: Lease inventory unavailable}
+  /v1/nodes/watchdog/claim:
+    post:
+      summary: Claim one or more user impulses using an enrolled node token
+      security:
+        - EnrolledNodeBearer: []
+      parameters:
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 50, default: 10}
+      responses:
+        '200': {description: Impulses leased to a recent watchdog-capable node}
+        '400': {description: Invalid limit}
+        '401': {description: Node token is stale, invalid or lacks watchdogActivation capability}
+        '503': {description: Queue unavailable}
+  /v1/nodes/watchdog/ack:
+    post:
+      summary: Acknowledge a claimed activity impulse using the claiming node token
+      security:
+        - EnrolledNodeBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id, success]
+              properties:
+                id: {type: integer, format: int64, minimum: 1}
+                success: {type: boolean}
+                error: {type: string, maxLength: 500}
+      responses:
+        '200': {description: Impulse completed or queued for bounded retry}
+        '400': {description: Invalid acknowledgement}
+        '401': {description: Node token is stale, invalid or lacks watchdogActivation capability}
+        '409': {description: Impulse is not currently claimed by this node}
+        '503': {description: Queue unavailable}
   /v1/hosting/recovery/drills:
     get:
       summary: List reported recovery drills
@@ -269,6 +342,16 @@ paths:
         '422': {description: Failed or mismatched restore report}
 components:
   securitySchemes:
+    WatchdogServiceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Dedicated VPS_WATCHDOG_INTERNAL_TOKEN shared only by Backend and Data Centre control plane.
+    EnrolledNodeBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-node-token
+      description: Enrolled VPS node token; claim/ack requires a recent heartbeat and watchdogActivation capability.
     OperatorBearer:
       type: http
       scheme: bearer

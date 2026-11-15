@@ -48,15 +48,41 @@ if [[ "$VPS_NODE_BOOTSTRAP_TOKEN" == *$'\n'* || "$VPS_NODE_BOOTSTRAP_TOKEN" == *
   echo "Node bootstrap token must be a single line." >&2
   exit 2
 fi
+
+if [ "${VPS_ENABLE_WATCHDOG_ACTIVATION:-false}" = "true" ]; then
+  compose_version="$(docker compose version --short | sed 's/^v//')"
+  if ! printf '2.17.0\n%s\n' "$compose_version" | sort -V -C; then
+    echo "Watchdog activation requires Docker Compose v2.17.0 or newer for health-wait support." >&2
+    exit 2
+  fi
+  if [ -z "${VPS_WATCHDOG_INTERNAL_TOKEN:-}" ] || [ "${#VPS_WATCHDOG_INTERNAL_TOKEN}" -lt 32 ]; then
+    echo "Watchdog activation requires a dedicated VPS_WATCHDOG_INTERNAL_TOKEN of at least 32 characters." >&2
+    exit 2
+  fi
+  for key in VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE VPS_WATCHDOG_CDN_COMPOSE_FILE; do
+    value="${!key:-}"
+    if [[ "$value" != /* ]] || [ ! -f "$value" ]; then
+      echo "Watchdog activation requires an existing absolute path in $key." >&2
+      exit 2
+    fi
+  done
+fi
+
 if grep -Eq 'REPLACE_WITH|REPLACE_PASSWORD|REPLACE_WITH_64_HEX_DIGEST|ops@example.com' "$ENV_FILE"; then
   echo "Fresh env still contains placeholders. Set real secrets and immutable image digests before deployment." >&2
   exit 2
 fi
-
 mkdir -p "$STORAGE_ROOT/nodes" "$ROOT/bin" /etc/testagram
 chmod 0750 "$STORAGE_ROOT" "$STORAGE_ROOT/nodes"
-docker compose --env-file "$ENV_FILE" -f "$ROOT/vps/docker-compose.yml" config -q
-docker compose --env-file "$ENV_FILE" -f "$ROOT/vps/docker-compose.yml" up -d --wait
+# Backend owns and creates the private shared networks. Deploy its Compose stack first.
+for network in testagram-platform testagram-ranker; do
+  if ! docker network inspect "$network" >/dev/null 2>&1; then
+    echo "Required private Docker network $network is missing. Start the Backend self-hosted Compose stack first." >&2
+    exit 2
+  fi
+done
+docker compose --env-file "$ENV_FILE" --profile nodes -f "$ROOT/vps/docker-compose.yml" config -q
+docker compose --env-file "$ENV_FILE" --profile nodes -f "$ROOT/vps/docker-compose.yml" up -d --wait
 
 if command -v go >/dev/null 2>&1; then
   (cd "$ROOT" && go build -trimpath -ldflags="-s -w" -o "$ROOT/bin/node-agent" ./node-agent)
@@ -72,6 +98,9 @@ VPS_NODE_NAME=$(hostname)-node
 VPS_NODE_ENDPOINT=outbound-only
 VPS_VOLUME_ROOT=$STORAGE_ROOT/nodes
 VPS_NODE_STATE_FILE=$STORAGE_ROOT/nodes/node-state.json
+VPS_ENABLE_WATCHDOG_ACTIVATION=${VPS_ENABLE_WATCHDOG_ACTIVATION:-false}
+VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE=${VPS_WATCHDOG_DATA_CENTRE_COMPOSE_FILE:-$ROOT/vps/docker-compose.yml}
+VPS_WATCHDOG_CDN_COMPOSE_FILE=${VPS_WATCHDOG_CDN_COMPOSE_FILE:-}
 EOF
 chmod 0600 /etc/testagram/node-agent.env
 install -m 0644 "$ROOT/vps/node-agent.service" /etc/systemd/system/testagram-node-agent.service
