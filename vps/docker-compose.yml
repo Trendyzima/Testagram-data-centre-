@@ -161,7 +161,7 @@ services:
       # platform migrations from this deployment path.
       psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_vps.sql
       psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/006_hosting_control_plane.sql
-      psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/008_user_activity_watchdog.sql
+      psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/vps/008_user_activity_watchdog.sql
     environment:
       DATABASE_URL: ${DATA_CENTRE_DATABASE_URL:-}
     volumes:
