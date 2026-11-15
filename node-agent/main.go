@@ -439,7 +439,7 @@ func dockerComposeAvailable() bool {
 
 func (a *Agent) pollWatchdog() ([]watchdogImpulse,error) {
 	var out watchdogClaimResponse
-	_,err:=a.post("/v1/nodes/watchdog/claim?limit=10",map[string]any{},&out)
+	_,err:=a.post("/v1/nodes/watchdog/claim?limit=1",map[string]any{},&out)
 	return out.Impulses,err
 }
 
