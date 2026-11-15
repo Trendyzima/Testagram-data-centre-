@@ -10,9 +10,9 @@ class BackupScopeContract(unittest.TestCase):
     def test_backup_records_partial_scope_and_component_checksums(self):
         source = (ROOT / "vps/backup.sh").read_text()
         for required in (
-            'sha256sum data-centre.dump neon-social.dump > components.sha256',
-            'backup_scope=database_only',
-            'cross_database_atomic=false',
+            'sha256sum data-centre.dump > components.sha256',
+            'backup_scope=data_centre_infrastructure_only',
+            'neon_database_required=false',
             'media_bytes_included=false',
             'appwrite_documents_included=false',
         ):
@@ -22,13 +22,15 @@ class BackupScopeContract(unittest.TestCase):
         source = (ROOT / "vps/restore-drill.sh").read_text()
         for required in (
             'sha256sum -c components.sha256',
-            "backup_scope=database_only",
-            "cross_database_atomic=false",
+            "backup_scope=data_centre_infrastructure_only",
+            "neon_database_required=false",
             "media_bytes_included=false",
             "appwrite_documents_included=false",
-            "DATABASE-ONLY RESTORE DRILL PASSED",
+            "DATA CENTRE INFRASTRUCTURE RESTORE DRILL PASSED",
         ):
             self.assertIn(required, source)
+        self.assertNotIn("neon-social.dump", source)
+        self.assertNotIn("NEON_DATABASE_URL", source)
         self.assertNotIn('echo "RESTORE DRILL PASSED"', source)
 
 
