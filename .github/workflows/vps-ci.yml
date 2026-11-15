@@ -80,7 +80,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: Trendyzima/Testagram-backend-
-          ref: main
+          ref: de78071a67998df5dd32cc7e8e1122f3e2dd0398
           path: backend-source
           persist-credentials: false
       - name: Verify canonical Backend Federation schema contract
@@ -344,7 +344,7 @@ jobs:
           export PLATFORM_INTERNAL_TOKEN=ci-platform-internal-token-2026-strong
           export TESTAGRAM_NETWORK=testagram-platform
           docker run -d --name testagram-api --network testagram-platform --network-alias api \
-            -e LISTEN_ADDR=:8080 \
+            -e LISTEN_ADDR=:8080 -e INTERNAL_LISTEN_ADDR=:8082 \
             -e DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram?sslmode=disable \
             -e APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1 -e APPWRITE_PROJECT_ID=ci-project \
             -e ALGORITHM_URL=http://algorithm:8092 -e ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough \
@@ -352,10 +352,11 @@ jobs:
             -e FEDERATION_BACKEND_INTERNAL_TOKEN=ci-federation-backend-read-token-long-enough \
             testagram-backend-ci
           for i in $(seq 1 30); do
-            docker exec testagram-api wget -q -O - http://127.0.0.1:8080/readyz >/dev/null 2>&1 && break
+            docker exec testagram-api wget -q -O - http://127.0.0.1:8082/readyz >/dev/null 2>&1 && break
             sleep 2
           done
-          docker exec testagram-api wget -q -O - http://127.0.0.1:8080/readyz
+          docker exec testagram-api wget -q -O - http://127.0.0.1:8082/readyz
+          if docker exec testagram-api wget -q -O - http://127.0.0.1:8080/readyz >/dev/null 2>&1; then echo 'public Backend listener exposed readiness'; exit 1; fi
           docker compose -f backend/docker-compose.yml pull algorithm federation-api
           docker compose -f backend/docker-compose.yml up -d platform video video-worker notification worker algorithm federation-api
           docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine sh -c 'count="$(psql -h testagram-postgres -U postgres -d testagram -Atqc "SELECT count(*) FROM public.testagram_data_centre_schema_migrations")"; test "$count" = "8"'
