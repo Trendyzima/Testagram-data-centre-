@@ -379,7 +379,8 @@ func presign(store s3Store,method,key string,ttl time.Duration,contentType strin
 }
 type lengthReader struct{io.Reader;n int64}
 func(r *lengthReader)Len64()int64{return r.n}
-func validateStore(s s3Store)error{u,err:=url.Parse(strings.TrimSpace(s.endpoint));if err!=nil||u.Scheme!="https"||u.Host==""||u.User!=nil||u.RawQuery!=""||u.Fragment!=""||(u.Path!=""&&u.Path!="/"){return errors.New("S3 endpoint must be an HTTPS origin without credentials, path, query or fragment")};if s.region==""||len(s.region)>64||strings.ContainsAny(s.region,"/\\\r\n")||s.bucket==""||len(s.bucket)>255||strings.ContainsAny(s.bucket,"/\\\r\n")||s.access==""||s.secret==""||strings.ContainsAny(s.access+s.secret,"\r\n"){return errors.New("S3 region, bucket and credentials must be valid non-empty single-line values")};return nil}
+func validateStore(s s3Store)error{u,err:=url.Parse(strings.TrimSpace(s.endpoint));privateHTTP := u != nil && u.Scheme=="http" && (u.Hostname()=="object-storage" || u.Hostname()=="localhost" || u.Hostname()=="127.0.0.1")
+	if err!=nil||u.Host==""||(!privateHTTP&&u.Scheme!="https")||u.User!=nil||u.RawQuery!=""||u.Fragment!=""||(u.Path!=""&&u.Path!="/"){return errors.New("S3 endpoint must be HTTPS, or private Docker object-storage HTTP, without credentials, path, query or fragment")};if s.region==""||len(s.region)>64||strings.ContainsAny(s.region,"/\\\r\n")||s.bucket==""||len(s.bucket)>255||strings.ContainsAny(s.bucket,"/\\\r\n")||s.access==""||s.secret==""||strings.ContainsAny(s.access+s.secret,"\r\n"){return errors.New("S3 region, bucket and credentials must be valid non-empty single-line values")};return nil}
 func objectURL(s s3Store,key string)(*url.URL,error){
 	if err:=validateStore(s);err!=nil{return nil,err};if !validObjectKey(key){return nil,errors.New("invalid object key")};base,err:=url.Parse(strings.TrimRight(s.endpoint,"/"));if err!=nil{return nil,err}
 	base.Path="/"+s.bucket+"/"+key;return base,nil
