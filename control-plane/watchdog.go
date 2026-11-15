@@ -162,6 +162,13 @@ func (s *Server) watchdogNodeClaimImpulses(w http.ResponseWriter, r *http.Reques
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	if _, err := s.db.Exec(ctx, `update testagram_watchdog.impulses
+		set status='failed',last_error='activation lease expired after maximum attempts',
+			lease_until=null,claimed_by_node_id=null,updated_at=now()
+		where status='claimed' and lease_until<now() and attempts>=5`); err != nil {
+		reply(w, http.StatusServiceUnavailable, map[string]string{"error": "watchdog retry maintenance failed"})
+		return
+	}
 	rows, err := s.db.Query(ctx, `with picked as (
 		select id from testagram_watchdog.impulses
 		where ((status='queued' and available_at<=now())
@@ -169,7 +176,7 @@ func (s *Server) watchdogNodeClaimImpulses(w http.ResponseWriter, r *http.Reques
 		order by created_at asc for update skip locked limit $1
 	)
 	update testagram_watchdog.impulses i set status='claimed',attempts=i.attempts+1,
-		lease_until=now()+interval '60 seconds',claimed_by_node_id=$2::uuid,updated_at=now()
+		lease_until=now()+interval '5 minutes',claimed_by_node_id=$2::uuid,updated_at=now()
 	from picked where i.id=picked.id
 	returning i.id,i.event_type,i.services,i.attempts,i.lease_until`, limit, nodeID)
 	if err != nil {
