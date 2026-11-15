@@ -418,7 +418,7 @@ type composeTarget struct {
 func watchdogTarget(service string) (composeTarget, bool) {
 	switch service {
 	case "algorithm":
-		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"ranking",Service:"algorithm"},true
+		return composeTarget{Stack:"data-centre",Project:"testagram-fresh",Profile:"ranking",Service:"algorithm"},true
 	case "data-centre":
 		return composeTarget{Stack:"data-centre",Project:"testagram-datacentre",Profile:"media",Service:"media",MigrationService:"media-migrate"},true
 	case "cdn":
