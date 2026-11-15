@@ -235,3 +235,34 @@ func TestValidateControlPlaneURL(t *testing.T) {
 		}
 	}
 }
+
+
+func TestWatchdogTargetIsStrictlyAllowlisted(t *testing.T) {
+	want:=map[string]composeTarget{
+		"algorithm":{Stack:"data-centre",Project:"testagram-datacentre",Profile:"ranking",Service:"algorithm"},
+		"data-centre":{Stack:"data-centre",Project:"testagram-datacentre",Profile:"media",Service:"media"},
+		"cdn":{Stack:"cdn",Project:"testagram-cdn",Service:"edge"},
+		"federation":{Stack:"data-centre",Project:"testagram-datacentre",Profile:"federation",Service:"federation-api"},
+	}
+	for name,expected:=range want {
+		got,ok:=watchdogTarget(name)
+		if !ok || got!=expected { t.Fatalf("%s: got %#v, %v; want %#v",name,got,ok,expected) }
+	}
+	for _,name:=range []string{"api","postgres","control-plane","edge","../../etc","arbitrary"} {
+		if _,ok:=watchdogTarget(name); ok { t.Fatalf("unexpectedly allowlisted %q",name) }
+	}
+}
+
+func TestWatchdogActivationRejectsDisabledNode(t *testing.T) {
+	a:=&Agent{watchdogEnabled:false}
+	if err:=a.activateWatchdogImpulse(watchdogImpulse{ID:1,Services:[]string{"algorithm"}}); err==nil {
+		t.Fatal("disabled node must not execute service activation")
+	}
+}
+
+func TestWatchdogActivationRejectsUnknownService(t *testing.T) {
+	a:=&Agent{watchdogEnabled:true,watchdogComposeFiles:map[string]string{"data-centre":"/tmp/compose.yml","cdn":"/tmp/cdn.yml"}}
+	if err:=a.activateWatchdogImpulse(watchdogImpulse{ID:1,Services:[]string{"arbitrary"}}); err==nil {
+		t.Fatal("unknown service must be rejected")
+	}
+}
