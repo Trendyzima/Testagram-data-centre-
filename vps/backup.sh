@@ -18,7 +18,6 @@ set -a
 set +a
 POSTGRES_IMAGE="${POSTGRES_CLIENT_IMAGE:-postgres:17-alpine}"
 test -n "${DATA_CENTRE_DATABASE_URL:-}" || { echo "DATA_CENTRE_DATABASE_URL is required" >&2; exit 1; }
-test -n "${NEON_DATABASE_URL:-}" || { echo "NEON_DATABASE_URL is required" >&2; exit 1; }
 test -n "$BACKUP_REMOTE" || { echo "TESTAGRAM_BACKUP_REMOTE must be user@host:/absolute/path" >&2; exit 1; }
 test -n "$AGE_RECIPIENT" || { echo "TESTAGRAM_BACKUP_AGE_RECIPIENT must be an age public recipient" >&2; exit 1; }
 case "$BACKUP_REMOTE" in *:/*) ;; *) echo "Remote must use user@host:/absolute/path syntax" >&2; exit 1 ;; esac
@@ -37,18 +36,16 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# Each pg_dump is transactionally consistent for its own database. These
-# independent dumps are not a cross-database atomic snapshot.
+# This script backs up only Data Centre infrastructure state. Product accounts,
+# posts, feeds and Backend-owned PostgreSQL are backed up by the Backend
+# repository's scripts/self-hosted-backup.sh. Do not duplicate or point this
+# job at a second social-data provider.
 docker run --rm --network host -e "DATABASE_URL=$DATA_CENTRE_DATABASE_URL" "$POSTGRES_IMAGE" \
   sh -ec 'pg_dump "$DATABASE_URL" --format=custom --no-owner --no-acl' > "$STAGE/data-centre.dump"
-docker run --rm --network host -e "DATABASE_URL=$NEON_DATABASE_URL" "$POSTGRES_IMAGE" \
-  sh -ec 'pg_dump "$DATABASE_URL" --format=custom --no-owner --no-acl' > "$STAGE/neon-social.dump"
 test -s "$STAGE/data-centre.dump"
-test -s "$STAGE/neon-social.dump"
 
-# Verify each component independently inside the encrypted archive. The outer
-# archive checksum alone cannot identify which database dump is damaged.
-(cd "$STAGE" && sha256sum data-centre.dump neon-social.dump > components.sha256)
+# Verify the infrastructure dump independently inside the encrypted archive.
+(cd "$STAGE" && sha256sum data-centre.dump > components.sha256)
 test -s "$STAGE/components.sha256"
 
 if [ -d /var/lib/testagram/storage/nodes ]; then
@@ -58,12 +55,13 @@ cat > "$STAGE/metadata.txt" <<EOF
 created_at_utc=$STAMP
 repository_commit=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
 data_centre_database=pg_dump-custom
-neon_social_database=pg_dump-custom
-backup_scope=database_only
-cross_database_atomic=false
+backend_product_database=separate_backend_owned_backup_required
+backup_scope=data_centre_infrastructure_only
+neon_database_required=false
+cross_database_atomic=not_applicable
 media_bytes_included=false
 appwrite_documents_included=false
-media_bytes=retained_in_private_B2_and_R2; not duplicated in this database archive
+media_bytes=retained_in_private_B2_and_R2; not duplicated in this infrastructure archive
 appwrite_identity_and_documents=not_exported_by_this_script
 EOF
 tar -C "$STAGE" -czf "$ARCHIVE" .
