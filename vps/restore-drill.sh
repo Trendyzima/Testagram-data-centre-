@@ -27,12 +27,11 @@ age -d -i "$IDENTITY_FILE" -o "$STAGE/backup.tar.gz" "$BACKUP_FILE"
 tar -tzf "$STAGE/backup.tar.gz" >/dev/null
 tar -xzf "$STAGE/backup.tar.gz" -C "$STAGE"
 test -s "$STAGE/data-centre.dump"
-test -s "$STAGE/neon-social.dump"
 
 test -s "$STAGE/components.sha256" || { echo "Per-database checksum manifest missing" >&2; exit 1; }
 (cd "$STAGE" && sha256sum -c components.sha256)
-grep -qx 'backup_scope=database_only' "$STAGE/metadata.txt" || { echo "Backup scope is not explicitly database_only" >&2; exit 1; }
-grep -qx 'cross_database_atomic=false' "$STAGE/metadata.txt" || { echo "Cross-database consistency is not attested" >&2; exit 1; }
+grep -qx 'backup_scope=data_centre_infrastructure_only' "$STAGE/metadata.txt" || { echo "Backup scope is not explicitly database_only" >&2; exit 1; }
+grep -qx 'neon_database_required=false' "$STAGE/metadata.txt" || { echo "Legacy Neon database dependency is still present" >&2; exit 1; }
 grep -qx 'media_bytes_included=false' "$STAGE/metadata.txt" || { echo "Unexpected media backup scope metadata" >&2; exit 1; }
 grep -qx 'appwrite_documents_included=false' "$STAGE/metadata.txt" || { echo "Unexpected Appwrite backup scope metadata" >&2; exit 1; }
 
@@ -44,16 +43,15 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 test "$ready" -eq 1 || { echo "Isolated restore database did not become ready" >&2; exit 1; }
-docker exec "$CONTAINER" createdb -U postgres neon_restore
+docker exec "$CONTAINER" createdb -U postgres testagram_data_centre_restore
 docker cp "$STAGE/data-centre.dump" "$CONTAINER:/tmp/data-centre.dump" >/dev/null
-docker cp "$STAGE/neon-social.dump" "$CONTAINER:/tmp/neon-social.dump" >/dev/null
-docker exec "$CONTAINER" pg_restore -U postgres -d postgres --no-owner --no-acl --exit-on-error /tmp/data-centre.dump
-docker exec "$CONTAINER" pg_restore -U postgres -d neon_restore --no-owner --no-acl --exit-on-error /tmp/neon-social.dump
-for database in postgres neon_restore; do
+docker exec "$CONTAINER" pg_restore -U postgres -d testagram_data_centre_restore --no-owner --no-acl --exit-on-error /tmp/data-centre.dump
+for database in testagram_data_centre_restore; do
   count="$(docker exec "$CONTAINER" psql -U postgres -d "$database" -Atqc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p') AND n.nspname NOT IN ('pg_catalog','information_schema')")"
   test "$count" -gt 0 || { echo "Restore contains no user tables in $database" >&2; exit 1; }
 done
 
 echo "DATABASE-ONLY RESTORE DRILL PASSED"
-echo "Both Data Centre and Neon PostgreSQL archives restored in an isolated, network-disabled container."
-echo "Scope is explicitly database-only: cross-database atomicity, Appwrite documents and B2/R2 media bytes are NOT restored by this drill."
+echo "Data Centre infrastructure PostgreSQL archive restored in an isolated, network-disabled container."
+echo "Backend product PostgreSQL is restored separately by the Backend repository's self-hosted restore drill."
+echo "Appwrite identity/configuration and B2/R2 media bytes require their own provider-backed recovery drills."
