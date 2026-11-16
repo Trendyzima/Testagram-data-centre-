@@ -141,6 +141,18 @@ jobs:
           grep -q 'FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}' vps/docker-compose.fresh.yml
           grep -q "TESTAGRAM_RETENTION_ENABLED: \"false\"" vps/docker-compose.fresh.yml
           grep -q "TESTAGRAM_RETENTION_DRY_RUN: \"true\"" vps/docker-compose.fresh.yml
+          python - <<'PY'
+          from pathlib import Path
+          compose = Path("backend/docker-compose.yml").read_text()
+          env_example = Path("backend/.env.example").read_text()
+          federation = compose.split("  federation-api:", 1)[1].split("\n  platform:", 1)[0]
+          assert "PUBLIC_BASE_URL: ${FEDERATION_PUBLIC_BASE_URL:-https://testagram.site}" in federation, "Federation must advertise the canonical apex origin"
+          assert "edge: {}" in federation, "Federation must join the existing Backend Caddy edge network"
+          assert "expose: [\"8081\"]" in federation, "Federation must remain private; do not publish a host port"
+          assert "FEDERATION_PUBLIC_BASE_URL=https://testagram.site" in env_example, "runtime example must use the canonical apex"
+          assert "name: ${TESTAGRAM_EDGE_NETWORK:-testagram-self-hosted_edge}" in compose, "Federation edge network must default to the Backend Caddy network"
+          print("Canonical apex Federation overlay and private-edge contract: PASS")
+          PY
           echo "Fresh runtime, B2/R2 storage contract and disabled-retention gates: PASS"
 
       - name: Validate database migrations
