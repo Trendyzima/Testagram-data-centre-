@@ -70,7 +70,7 @@ func TestParseNativeVideoAccessToken(t *testing.T) {
 	})
 	t.Run("rejects wrong issuer or audience", func(t *testing.T) {
 		for name, mutate := range map[string]func(*nativeVideoAuthClaims){
-			"issuer": func(c *nativeVideoAuthClaims) { c.Issuer = "appwrite" },
+			"issuer": func(c *nativeVideoAuthClaims) { c.Issuer = "untrusted-provider" },
 			"audience": func(c *nativeVideoAuthClaims) { c.Audience = "another-service" },
 		} {
 			t.Run(name, func(t *testing.T) {
