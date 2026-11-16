@@ -83,4 +83,3 @@ fi
 
 printf 'Encrypted database backup created, transferred and checksum-verified: %s\n' "$ENCRYPTED"
 printf 'Remote destination: %s\n' "$BACKUP_REMOTE"
-printf 'Note: Appwrite documents and B2/R2 media bytes are outside this database archive.\n'
