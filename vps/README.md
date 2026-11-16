@@ -56,6 +56,28 @@ the stack. Image tags must refer to successfully published immutable GHCR
 images. If packages are private, authenticate Docker to ghcr.io on the VPS
 using a read-only package token; never place that token in the repository.
 
+## Canonical Fediverse domain
+
+`testagram.site` is the canonical ActivityPub instance domain. The standard
+VPS edge configuration in `vps/Caddyfile` routes only WebFinger discovery,
+local actor documents, inboxes and public object URLs to the private
+`federation-api:8081` service. Other apex requests redirect to
+`https://www.testagram.site`, leaving the web frontend on `www`.
+
+Before enabling public Federation routing, create the apex A/AAAA records at
+the domain's DNS provider pointing to this VPS and allow Caddy to obtain TLS.
+Keep the existing `www` frontend DNS record unchanged. Configure
+`FEDERATION_PUBLIC_BASE_URL=https://testagram.site`; do not publish
+`federation.testagram.site` as the canonical actor origin.
+
+The Federation Compose profile remains opt-in. Do not advertise the instance
+or expose these routes until its dedicated TLS PostgreSQL database, private
+Backend actor-resolution credentials, durable inbox processing, outbound
+delivery, recipient fan-out, monitoring and Mastodon/GoToSocial interoperability
+checks are complete. A Caddy route is not proof that those protocol workflows
+are ready. The separate Fresh/Appwrite compose file retains its own Caddyfile
+and must not be used as the Federation production path.
+
 Federated Content is deployed only after signature verification, durable inbox
 and outbox, consent checks, deduplication and dynamic actor resolution pass
 their release gates. Do not expose a preview inbox publicly or claim production
