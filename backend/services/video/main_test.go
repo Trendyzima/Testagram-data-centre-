@@ -51,7 +51,7 @@ func TestParseNativeVideoAccessToken(t *testing.T) {
 	})
 	t.Run("rejects altered signature", func(t *testing.T) {
 		token := signNativeVideoTestToken(t, claims, secret, "HS256")
-		token = token[:len(token)-1] + map[bool]string{true: "A", false: "B"}[token[len(token)-1:] == "A"]
+		token += "x"
 		if _, ok := parseNativeVideoAccessToken(token, secret, now); ok {
 			t.Fatal("altered token signature was accepted")
 		}
