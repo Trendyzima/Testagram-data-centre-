@@ -17,9 +17,9 @@ The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Fed
 - migrate: applies only `001_vps.sql` and `006_hosting_control_plane.sql` to
   the dedicated Data Centre PostgreSQL database before control-plane starts.
   It deliberately does not apply product/video, notification, platform-event,
-  or Supabase Storage migrations to this infrastructure database.
+  or product-data migrations to this infrastructure database.
 - control-plane: Data Centre infrastructure state only. Its PostgreSQL URL
-  must point to a dedicated TLS database, not the legacy Supabase project.
+  must point to a dedicated TLS database isolated from other environments.
 - media: dedicated private B2-primary/R2-replica object lifecycle service,
   enabled only with the `media` profile and backed by its own MEDIA_DATABASE_URL.
   It is attached to both the local services network and the Backend-owned
