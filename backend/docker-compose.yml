@@ -100,7 +100,7 @@ services:
       VIDEO_MIN_FREE_BYTES: ${VIDEO_MIN_FREE_BYTES:-2147483648}
     volumes:
       - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/media:/media
-    networks: [internal, platform, egress]
+    networks: [internal, platform, egress, edge]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8790/readyz"]
       interval: 10s
@@ -235,6 +235,9 @@ networks:
   platform:
     external: true
     name: ${TESTAGRAM_NETWORK:-testagram-platform}
+  edge:
+    external: true
+    name: ${TESTAGRAM_EDGE_NETWORK:-testagram-self-hosted_edge}
   egress:
     external: true
     name: ${TESTAGRAM_EGRESS_NETWORK:-testagram-egress}
