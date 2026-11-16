@@ -56,7 +56,8 @@ services:
       # Caddy in the Backend self-hosted stack is the only public edge.
       # Join its existing network so the apex ActivityPub routes can proxy
       # to this service without publishing the Federation container port.
-      edge: {}
+      edge:
+        aliases: [federation]
     healthcheck:
       test: ["CMD", "/federation-api", "--healthcheck"]
       interval: 10s
