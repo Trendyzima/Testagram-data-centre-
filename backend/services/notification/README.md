@@ -1,12 +1,16 @@
 # Notification service
 
-Private Testagram notification API and streaming service.
+The notification API owns device registrations, queued notifications and
+server-sent event delivery. Authenticated client requests use Testagram-native
+HS256 access tokens issued by the Go Backend. The service validates the token
+signature with the shared server-side `TESTAGRAM_AUTH_JWT_SECRET` and checks
+the active session, token version, account state and registration approval
+against the shared PostgreSQL identity tables.
 
-Client requests authenticate with an Appwrite session JWT. The service validates
-the JWT against the configured Appwrite Account endpoint, then resolves the
-Appwrite user ID through `testagram_identity.appwrite_accounts` to the canonical
-Testagram UUID before reading or changing user-owned notification data.
+The service never accepts an external identity-provider token. The JWT signing
+secret is a server-only secret and must be identical to the Backend's value.
+The notification service requires read access to `testagram_auth` and
+`testagram_identity.native_registration_provisioning`.
 
-Internal producer routes require the separate `NOTIFICATION_INTERNAL_TOKEN`.
-Never ship that token to Flutter or browsers. There is no Supabase JWT secret,
-local JWT decoding, or legacy authentication fallback.
+Internal notification creation uses a separate `NOTIFICATION_INTERNAL_TOKEN`;
+it is not interchangeable with the user JWT signing secret.
