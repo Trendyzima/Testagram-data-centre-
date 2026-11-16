@@ -24,8 +24,6 @@ jobs:
       FEDERATION_DATABASE_URL: postgresql://postgres:testagram@federation-db:5432/testagram_federation?sslmode=disable
       FEDERATION_PUBLIC_BASE_URL: https://federation.testagram.site
       FEDERATION_INSTANCE_DOMAIN: testagram.site
-      TESTAGRAM_FRESH_BACKEND_IMAGE: ghcr.io/trendyzima/testagram-backend-fresh@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
-      CADDY_IMAGE: caddy:2.10-alpine
       POSTGRES_CLIENT_IMAGE: postgres:17-alpine
       DATA_CENTRE_DATABASE_URL: postgresql://postgres:testagram@db:5432/data_centre?sslmode=disable
       # Compose validation fixtures for the independent Data Centre service stack.
@@ -33,7 +31,6 @@ jobs:
       PLATFORM_INTERNAL_TOKEN: ci-platform-internal-token-2026-strong
       VIDEO_SIGNING_SECRET: ci-video-signing-secret-at-least-32-bytes
       NOTIFICATION_INTERNAL_TOKEN: ci-notification-internal-token-long-enough
-      FRESH_API_ALLOWED_ORIGINS: https://testagram.site,https://www.testagram.site
       FRESH_MEDIA_ENABLED: "false"
       DATA_CENTRE_MEDIA_API_URL: http://media:8096
       FRESH_DATA_CENTRE_INTERNAL_TOKEN: ci-media-internal-token-at-least-32-chars
@@ -50,13 +47,11 @@ jobs:
       CLOUDFLARE_R2_SECRET_ACCESS_KEY: ci-r2-secret
       # Non-production credentials used only to render/validate the fresh Compose model in CI.
       # Production must supply one independently generated secret to both Backend and Federation.
-      FRESH_FEDERATION_INTERNAL_TOKEN: ci-federation-backend-read-token-long-enough
       FEDERATION_POSTGRES_IMAGE: postgres:17-alpine
       FEDERATION_DB_PASSWORD: ci-federation-db-password-only
       # Compose interpolation fixture only; CI does not connect Federation to this local URL.
       VPS_INTERNAL_TOKEN: ci-internal-token-for-ci-tests-32chars
       VPS_NODE_BOOTSTRAP_TOKEN: ci-bootstrap-token-for-ci-tests-32chars
-      TLS_ADMIN_EMAIL: ci@example.invalid
       # Local Postgres service for CI only; production uses Neon with TLS.
       TESTAGRAM_DATABASE_URL: postgresql://postgres:testagram@db:5432/postgres?sslmode=disable
     services:
@@ -530,7 +525,6 @@ jobs:
           neon_database_required=false
           cross_database_atomic=not_applicable
           media_bytes_included=false
-          appwrite_documents_included=false
           EOF
           tar -czf "$stage/testagram-ci-backup.tar.gz" -C "$stage" data-centre.dump components.sha256 metadata.txt
           age-keygen -o "$stage/restore-identity.txt"
