@@ -136,6 +136,7 @@ jobs:
           test -f vps/docker-compose.yml
           test -f backend/docker-compose.yml
           test -f vps/fresh/Caddyfile
+          test -f vps/Caddyfile
           grep -q "B2_S3_ENDPOINT" vps/docker-compose.fresh.yml
           grep -q "CLOUDFLARE_R2_ENDPOINT" vps/docker-compose.fresh.yml
           grep -q 'FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}' vps/docker-compose.fresh.yml
@@ -175,6 +176,7 @@ jobs:
           ! grep -qi 'supabase' vps/docker-compose.fresh.yml
           ! grep -Eq '/migrations/(002_video_platform|003_production_hardening|004_storage_buckets|005_platform|006_video_upload_safety|007_video_upload_safety)\.sql' vps/docker-compose.fresh.yml
           docker run --rm -e TLS_ADMIN_EMAIL=ci@example.invalid -v "$PWD/vps/fresh/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
+          docker run --rm -e TLS_ADMIN_EMAIL=ci@example.invalid -v "$PWD/vps/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
       - name: Validate VPS control plane runtime
         run: |
           set -euo pipefail
