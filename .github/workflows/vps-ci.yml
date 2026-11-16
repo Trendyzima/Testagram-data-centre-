@@ -115,7 +115,7 @@ jobs:
           assert "services:" in workflow and "postgres:17-alpine" in workflow, "live lifecycle test must use isolated PostgreSQL"
           PY
       - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker ./backend/services/platform ./backend/services/media
-      - name: Validate fresh platform boundary
+      - name: Validate Data Centre platform boundary
         run: |
           set -euo pipefail
           bash -n vps/backup.sh
@@ -130,25 +130,25 @@ jobs:
           bash -n android-node/install-apk.sh
           test -f vps/docker-compose.yml
           test -f backend/docker-compose.yml
-          test -f vps/fresh/Caddyfile
-          grep -q "B2_S3_ENDPOINT" vps/docker-compose.fresh.yml
-          grep -q "CLOUDFLARE_R2_ENDPOINT" vps/docker-compose.fresh.yml
-          grep -q 'FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}' vps/docker-compose.fresh.yml
-          grep -q "TESTAGRAM_RETENTION_ENABLED: \"false\"" vps/docker-compose.fresh.yml
-          grep -q "TESTAGRAM_RETENTION_DRY_RUN: \"true\"" vps/docker-compose.fresh.yml
+          ! grep -qiE 'appwrite|onspace' vps/docker-compose.yml vps/install.sh vps/.env.example vps/fresh.env.example backend/docker-compose.yml backend/.env.example
+          ! grep -Eq '^  (api|edge):' vps/docker-compose.yml
+          grep -q 'MEDIA_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:?Set FRESH_DATA_CENTRE_INTERNAL_TOKEN}' vps/docker-compose.yml
+          grep -q 'BACKEND_INTERNAL_TOKEN: ${FEDERATION_BACKEND_INTERNAL_TOKEN:?Set FEDERATION_BACKEND_INTERNAL_TOKEN}' vps/docker-compose.yml
+          grep -q 'FEDERATION_INGRESS_TOKEN: ${FEDERATION_INGRESS_TOKEN:?Set FEDERATION_INGRESS_TOKEN}' vps/docker-compose.yml
+          grep -q 'testagram-backend-api:8082' vps/docker-compose.yml
           python - <<'PY'
           from pathlib import Path
           compose = Path("backend/docker-compose.yml").read_text()
           env_example = Path("backend/.env.example").read_text()
           federation = compose.split("  federation-api:", 1)[1].split("\n  platform:", 1)[0]
           assert "PUBLIC_BASE_URL: ${FEDERATION_PUBLIC_BASE_URL:-https://testagram.site}" in federation, "Federation must advertise the canonical apex origin"
-          assert "edge:" in federation and "aliases: [federation]" in federation, "Federation must join the Caddy edge network with the stable federation upstream alias"
-          assert "expose: [\"8081\"]" in federation, "Federation must remain private; do not publish a host port"
+          assert "edge:" in federation and "aliases: [federation]" in federation, "Federation must join the Backend-owned Caddy edge network"
+          assert 'expose: ["8081"]' in federation, "Federation must remain private"
           assert "FEDERATION_PUBLIC_BASE_URL=https://testagram.site" in env_example, "runtime example must use the canonical apex"
-          assert "name: ${TESTAGRAM_EDGE_NETWORK:-testagram-self-hosted_edge}" in compose, "Federation edge network must default to the Backend Caddy network"
-          print("Canonical apex Federation overlay and private-edge contract: PASS")
+          assert "name: ${TESTAGRAM_EDGE_NETWORK:-testagram-self-hosted_edge}" in compose, "Federation edge network must default to Backend Caddy"
+          print("Backend-owned API edge, private Federation and Data Centre service boundaries: PASS")
           PY
-          echo "Fresh runtime, B2/R2 storage contract and disabled-retention gates: PASS"
+          echo "Data Centre boundary checks: PASS"
 
       - name: Validate database migrations
         run: |
@@ -165,23 +165,18 @@ jobs:
       - name: Validate Compose syntax
         run: |
           set -euo pipefail
-          test -n "$FRESH_FEDERATION_INTERNAL_TOKEN"
-          test "${#FRESH_FEDERATION_INTERNAL_TOKEN}" -ge 32
+          test -n "$FEDERATION_BACKEND_INTERNAL_TOKEN"
+          test "${#FEDERATION_BACKEND_INTERNAL_TOKEN}" -ge 32
+          test -n "$FEDERATION_INGRESS_TOKEN"
+          test "${#FEDERATION_INGRESS_TOKEN}" -ge 32
           docker compose -f backend/docker-compose.yml config
-          # Optional media profile must not make the default stack require media-only credentials.
           env -u MEDIA_DATABASE_URL -u MEDIA_DATABASE_NAME docker compose -f backend/docker-compose.yml config --quiet
           docker compose --profile media -f backend/docker-compose.yml config --quiet
           grep -Fq '${MEDIA_DATABASE_URL:?Set MEDIA_DATABASE_URL}' backend/docker-compose.yml
-          docker compose -f vps/docker-compose.fresh.yml config
           docker compose -f vps/docker-compose.yml config
-          # Standard and Fresh stacks intentionally differ; validate each Compose model independently above.
-          ! grep -Eqi "supabase|SUPABASE" vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml
-          # Both services must receive exactly the same non-empty private credential.
-          docker compose --profile federation -f vps/docker-compose.fresh.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; fed=c["services"]["federation-api"]["environment"]; a=api.get("FRESH_FEDERATION_INTERNAL_TOKEN",""); b=fed.get("BACKEND_INTERNAL_TOKEN",""); ingress=fed.get("FEDERATION_INGRESS_TOKEN",""); assert a and b and a == b, "Federation-to-Backend read token mismatch"; assert ingress and ingress != b, "Backend-to-Federation ingress token must be distinct"'
-          docker compose --profile media -f vps/docker-compose.fresh.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; media=c["services"]["media"]["environment"]; migrate=c["services"]["media-migrate"]["environment"]; token=api.get("FRESH_DATA_CENTRE_INTERNAL_TOKEN",""); assert token and len(token)>=32 and media.get("MEDIA_INTERNAL_TOKEN")==token, "Backend/Data Centre media token mismatch"; assert media.get("MEDIA_DATABASE_URL")==migrate.get("MEDIA_DATABASE_URL") and media.get("MEDIA_DATABASE_URL"), "dedicated media DB mismatch"; assert all(media.get(k) for k in ("B2_S3_ENDPOINT","B2_S3_BUCKET","B2_S3_ACCESS_KEY_ID","B2_S3_SECRET_ACCESS_KEY","CLOUDFLARE_R2_ENDPOINT","CLOUDFLARE_R2_BUCKET","CLOUDFLARE_R2_ACCESS_KEY_ID","CLOUDFLARE_R2_SECRET_ACCESS_KEY")), "provider credentials must be wired only to media"; assert not any(k in api for k in ("B2_S3_ACCESS_KEY_ID","B2_S3_SECRET_ACCESS_KEY","CLOUDFLARE_R2_ACCESS_KEY_ID","CLOUDFLARE_R2_SECRET_ACCESS_KEY")), "Backend must not receive object-store credentials"; assert "ports" not in c["services"]["media"], "media API must remain private-only"'
-          ! grep -qi 'supabase' vps/docker-compose.fresh.yml
-          ! grep -Eq '/migrations/(002_video_platform|003_production_hardening|004_storage_buckets|005_platform|006_video_upload_safety|007_video_upload_safety)\.sql' vps/docker-compose.fresh.yml
-          docker run --rm -e TLS_ADMIN_EMAIL=ci@example.invalid -v "$PWD/vps/fresh/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
+          docker compose --profile media -f vps/docker-compose.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); media=c["services"]["media"]["environment"]; migrate=c["services"]["media-migrate"]["environment"]; assert media.get("MEDIA_INTERNAL_TOKEN") and len(media["MEDIA_INTERNAL_TOKEN"])>=32; assert media.get("MEDIA_DATABASE_URL")==migrate.get("MEDIA_DATABASE_URL") and media.get("MEDIA_DATABASE_URL"); assert all(media.get(k) for k in ("B2_S3_ENDPOINT","B2_S3_BUCKET","B2_S3_ACCESS_KEY_ID","B2_S3_SECRET_ACCESS_KEY","CLOUDFLARE_R2_ENDPOINT","CLOUDFLARE_R2_BUCKET","CLOUDFLARE_R2_ACCESS_KEY_ID","CLOUDFLARE_R2_SECRET_ACCESS_KEY")); assert "ports" not in c["services"]["media"], "media API must remain private-only"'
+          docker compose --profile federation -f vps/docker-compose.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); fed=c["services"]["federation-api"]["environment"]; read=fed.get("BACKEND_INTERNAL_TOKEN",""); ingress=fed.get("FEDERATION_INGRESS_TOKEN",""); assert read and len(read)>=32 and ingress and len(ingress)>=32 and ingress != read, "Federation read and ingress credentials must be distinct"'
+          ! grep -qiE 'appwrite|onspace|supabase' vps/docker-compose.yml vps/.env.example vps/fresh.env.example vps/install.sh backend/docker-compose.yml backend/.env.example
       - name: Validate VPS control plane runtime
         run: |
           set -euo pipefail
@@ -241,18 +236,19 @@ jobs:
           test "$drill_code" = "422"
           grep -q '"success":false' /tmp/testagram-drill.json
 
-      - name: Validate Caddy syntax
+      - name: Validate Backend-owned Caddy syntax
         run: |
-          if grep -Eq '^[[:space:]]*federation[.]testagram[.]site[[:space:]]*[{]' vps/fresh/Caddyfile; then
-            echo "Public Federation routing is blocked until inbox/outbox workers and end-to-end gates are complete."
+          set -euo pipefail
+          if grep -Eq '^[[:space:]]*federation[.]testagram[.]site[[:space:]]*[{]' backend-source/deploy/self-hosted/Caddyfile; then
+            echo "Public Federation subdomain routing is blocked until federation release gates are complete."
             exit 1
           fi
           docker run --rm \
-            -e TESTAGRAM_DOMAIN=video.testagram.local \
-            -e TESTAGRAM_ORIGIN=http://control-plane:8787 \
-            -e TLS_ADMIN_EMAIL=admin@testagram.local \
-            -e TESTAGRAM_API_DOMAIN=api.testagram.local \
-            -v "$PWD/vps/fresh/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            -e ACME_EMAIL=admin@testagram.local \
+            -e API_DOMAIN=api.testagram.local \
+            -e MEDIA_DOMAIN=media.testagram.local \
+            -e ADMIN_DOMAIN=ops.testagram.local \
+            -v "$PWD/backend-source/deploy/self-hosted/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2.10 caddy validate --config /etc/caddy/Caddyfile
       - name: Build backend containers
         run: |
