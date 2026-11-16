@@ -41,6 +41,26 @@ Never expose PostgreSQL, object-storage administration, control-plane, or
 internal service ports directly to the Internet. Publish only the approved
 Caddy HTTPS edge and explicitly configured node-agent operations endpoints.
 
+## Canonical Fediverse instance origin
+
+The Federation service publishes Testagram actors and objects on
+`https://testagram.site`. The service remains private on the Docker platform
+network; it does not publish port 8081 and this Data Centre stack does not own a
+second public Caddy edge for the apex.
+
+The Backend Caddy edge is the public ingress. It routes
+`/.well-known/webfinger`, `/users/*` and `/objects/*` on the apex to the
+private `federation-api:8081` service over the shared `testagram-platform`
+network. Normal web traffic continues to the existing
+`https://www.testagram.site` frontend. Keep apex DNS pointed at the Backend
+Caddy host and keep the `www` DNS record on the frontend provider.
+
+Set `FEDERATION_PUBLIC_BASE_URL=https://testagram.site`. Do not configure
+`federation.testagram.site` as the actor origin. The Federation profile
+remains opt-in until the dedicated database, Backend service credentials,
+inbox/outbox workers, recipient delivery and Mastodon interoperability checks
+are complete.
+
 ## Five-repository application runtime
 
 The VPS stack includes the separately released Testagram Backend API and the
