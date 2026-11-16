@@ -16,6 +16,44 @@ services:
       retries: 6
       start_period: 5s
 
+  api:
+    image: ${TESTAGRAM_FRESH_BACKEND_IMAGE:?Set TESTAGRAM_FRESH_BACKEND_IMAGE to the fresh Appwrite API image pinned by digest}
+    restart: unless-stopped
+    environment:
+      FRESH_API_ADDR: :8081
+      FRESH_API_ALLOWED_ORIGINS: ${FRESH_API_ALLOWED_ORIGINS:?Set exact HTTPS Flutter/web client origins}
+      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:?Set the fresh Appwrite endpoint}
+      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:?Set the fresh Appwrite project ID}
+      APPWRITE_DATABASE_ID: ${APPWRITE_DATABASE_ID:?Set the fresh Appwrite database ID}
+      APPWRITE_SERVER_API_KEY: ${APPWRITE_SERVER_API_KEY:?Set a least-privilege server API key}
+      NEON_DATABASE_URL: ${NEON_DATABASE_URL:-}
+      NEON_REQUIRED: ${NEON_REQUIRED:-true}
+      # Fresh API consumes these exact private-service variables.
+      ALGORITHM_ENDPOINT: ${ALGORITHM_ENDPOINT:-http://algorithm:8092}
+      ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
+      FEED_RANKING_REQUIRED: "false"
+      FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}
+      ONSPACE_AI_BASE_URL: ${ONSPACE_AI_BASE_URL:-https://ai.onspace.ai/v1}
+      ONSPACE_AI_API_KEY: ${ONSPACE_AI_API_KEY:-}
+      # B2 and R2 are independent full-copy stores; Data Centre owns their credentials.
+      # Provider keys stay only in the dedicated media service, never in Backend or node-agent containers.
+      FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}
+      DATA_CENTRE_MEDIA_API_URL: ${DATA_CENTRE_MEDIA_API_URL:-}
+      FRESH_DATA_CENTRE_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}
+      FRESH_MEDIA_PRIMARY_PROVIDER: ${FRESH_MEDIA_PRIMARY_PROVIDER:-b2}
+      TESTAGRAM_STORAGE_POOL_BYTES: ${TESTAGRAM_STORAGE_POOL_BYTES:-150000000000}
+      TESTAGRAM_STORAGE_PER_USER_BYTES: ${TESTAGRAM_STORAGE_PER_USER_BYTES:-2147483648}
+      ARCHIVE_S3_ENDPOINT: ${ARCHIVE_S3_ENDPOINT:-}
+      ARCHIVE_S3_REGION: ${ARCHIVE_S3_REGION:-us-east-1}
+      ARCHIVE_S3_BUCKET: ${ARCHIVE_S3_BUCKET:-}
+      ARCHIVE_S3_ACCESS_KEY_ID: ${ARCHIVE_S3_ACCESS_KEY_ID:-}
+      ARCHIVE_S3_SECRET_ACCESS_KEY: ${ARCHIVE_S3_SECRET_ACCESS_KEY:-}
+      TESTAGRAM_RETENTION_ENABLED: "false"
+      TESTAGRAM_RETENTION_DRY_RUN: "true"
+    expose: ["8081"]
+    networks: [services, ranker]
+
+
   # Dedicated object lifecycle service. Enable only with --profile media and
   # a separate MEDIA_DATABASE_URL; never share the node control-plane database.
   media-migrate:
@@ -153,7 +191,25 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  edge:
+    image: ${CADDY_IMAGE:?Set CADDY_IMAGE to a reviewed immutable Caddy image digest}
+    restart: unless-stopped
+    environment:
+      TLS_ADMIN_EMAIL: ${TLS_ADMIN_EMAIL:?Set TLS_ADMIN_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./fresh/Caddyfile:/etc/caddy/Caddyfile:ro
+      - fresh_edge_data:/data
+      - fresh_edge_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [edge, services]
+
 networks:
+  edge: {}
   services: {}
   # Join the Backend's private platform network so Backend can reach media:8096.
   # Deploy the Backend stack first; it creates testagram-platform.
