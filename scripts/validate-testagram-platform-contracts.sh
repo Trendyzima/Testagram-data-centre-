@@ -6,58 +6,62 @@ for script in vps/backup.sh vps/restore-drill.sh vps/install.sh scripts/install-
   bash -n "$script"
 done
 
+compose="vps/docker-compose.yml"
+test -f "$compose"
 
-# Appwrite login must not depend on optional ranking, Federation or node services.
-api_block="$(sed -n '/^  api:/,/^  federation-db:/p' vps/docker-compose.fresh.yml)"
-if grep -q '^  algorithm:' <<< "$api_block"; then
-  echo "The public Backend API must not have an Algorithm startup dependency." >&2
+# The Backend repository owns the canonical public API and HTTPS edge.
+# The Data Centre must not start a parallel API or bind public web ports.
+if grep -Eq '^  (api|edge):' "$compose"; then
+  echo "Data Centre compose must not duplicate the Backend API or public edge." >&2
   exit 1
 fi
-grep -q 'FEED_RANKING_REQUIRED: "false"' <<< "$api_block"
-grep -q 'ALGORITHM_ENDPOINT: ${ALGORITHM_ENDPOINT:-http://algorithm:8092}' <<< "$api_block"
-grep -q 'FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}' <<< "$api_block"
-grep -Fq 'profiles: ["ranking"]' vps/docker-compose.fresh.yml
-grep -Fq 'profiles: ["federation"]' vps/docker-compose.fresh.yml
-grep -Fq 'profiles: ["nodes"]' vps/docker-compose.fresh.yml
 
-# Keep service-to-service reachability explicit and least-privilege:
-# - Fresh API and Algorithm share only the isolated ranker network.
-# - API, Federation and media share the in-stack services network.
-# - Federation and media attach to platform for their documented integration;
-#   Algorithm must never join that shared platform network.
-algorithm_block="$(sed -n '/^  algorithm:/,/^  api:/p' vps/docker-compose.fresh.yml)"
-active_algorithm_block="$(sed -n '/^  algorithm:/,/^  api:/p' vps/docker-compose.yml)"
-federation_block="$(sed -n '/^  federation-api:/,/^  migrate:/p' vps/docker-compose.fresh.yml)"
-grep -Fq 'networks: [services, ranker]' <<< "$api_block"
+# Optional ranking remains isolated from media, federation and Backend services.
+algorithm_block="$(sed -n '/^  algorithm:/,/^  media-migrate:/p' "$compose")"
+grep -Fq 'profiles: ["ranking"]' <<< "$algorithm_block"
 grep -Fq 'networks: [ranker]' <<< "$algorithm_block"
-grep -Fq 'networks: [ranker]' <<< "$active_algorithm_block"
-if grep -Fq 'platform' <<< "$algorithm_block" || grep -Fq 'platform' <<< "$active_algorithm_block"; then
-  echo "Algorithm must remain isolated from the shared platform network in both Fresh Compose entry points." >&2
+if grep -Fq 'platform' <<< "$algorithm_block" || grep -Fq 'federation' <<< "$algorithm_block"; then
+  echo "Ranking must remain isolated from the shared platform and federation networks." >&2
   exit 1
 fi
-grep -Fq 'INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}' <<< "$algorithm_block"
-grep -Fq 'networks: [services, federation, platform]' <<< "$federation_block"
-grep -Fq 'BACKEND_INTERNAL_URL: http://api:8081' <<< "$federation_block"
-grep -Fq 'BACKEND_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}' <<< "$federation_block"
-media_block="$(sed -n '/^  media:/,/^  federation-db:/p' vps/docker-compose.fresh.yml)"
+
+# Data Centre media remains private, independently credentialed and dual-provider.
+media_block="$(sed -n '/^  media:/,/^  federation-db:/p' "$compose")"
+grep -Fq 'profiles: ["media"]' <<< "$media_block"
 grep -Fq 'networks: [services, platform]' <<< "$media_block"
-grep -Fq 'DATA_CENTRE_MEDIA_API_URL: ${DATA_CENTRE_MEDIA_API_URL:-}' <<< "$api_block"
-grep -Fq 'FRESH_DATA_CENTRE_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}' <<< "$api_block"
-for file in vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml; do
+grep -Fq 'MEDIA_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:?Set FRESH_DATA_CENTRE_INTERNAL_TOKEN}' <<< "$media_block"
+grep -Fq 'MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:?Set a dedicated MEDIA_DATABASE_URL}' <<< "$media_block"
+grep -Fq 'B2_S3_ENDPOINT: ${B2_S3_ENDPOINT:?Set B2_S3_ENDPOINT}' <<< "$media_block"
+grep -Fq 'CLOUDFLARE_R2_ENDPOINT: ${CLOUDFLARE_R2_ENDPOINT:?Set CLOUDFLARE_R2_ENDPOINT}' <<< "$media_block"
+if grep -Fq 'ports:' <<< "$media_block"; then
+  echo "Media must remain private and must not publish a host port." >&2
+  exit 1
+fi
+
+# Federation remains private and uses two distinct directional credentials.
+federation_block="$(sed -n '/^  federation-api:/,/^  migrate:/p' "$compose")"
+grep -Fq 'profiles: ["federation"]' <<< "$federation_block"
+grep -Fq 'networks: [federation, services, platform]' <<< "$federation_block"
+grep -Fq 'BACKEND_INTERNAL_URL: http://testagram-backend-api:8082' <<< "$federation_block"
+grep -Fq 'BACKEND_INTERNAL_TOKEN: ${FEDERATION_BACKEND_INTERNAL_TOKEN:?Set FEDERATION_BACKEND_INTERNAL_TOKEN}' <<< "$federation_block"
+grep -Fq 'FEDERATION_INGRESS_TOKEN: ${FEDERATION_INGRESS_TOKEN:?Set FEDERATION_INGRESS_TOKEN}' <<< "$federation_block"
+if grep -Fq 'ports:' <<< "$federation_block"; then
+  echo "Federation ingress must remain private behind the Backend edge." >&2
+  exit 1
+fi
+
+for file in "$compose" vps/.env.example vps/fresh.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml backend/.env.example; do
   if grep -Eqi 'supabase' "$file"; then
-    echo "Retired provider reference remains in active runtime path: $file" >&2
+    echo "Unapproved external database dependency remains in active runtime path: $file" >&2
     exit 1
   fi
 done
 
-grep -q 'B2_S3_ENDPOINT' vps/docker-compose.fresh.yml
-grep -q 'CLOUDFLARE_R2_ENDPOINT' vps/docker-compose.fresh.yml
 grep -q 'Backblaze B2' docs/platform/media-storage-architecture.md
 grep -q 'Cloudflare R2' docs/platform/media-storage-architecture.md
-grep -q 'FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}' vps/docker-compose.fresh.yml
-grep -q 'TESTAGRAM_RETENTION_ENABLED: "false"' vps/docker-compose.fresh.yml
-grep -q 'TESTAGRAM_RETENTION_DRY_RUN: "true"' vps/docker-compose.fresh.yml
+grep -q 'TESTAGRAM_RETENTION_ENABLED: "false"' "$compose"
+grep -q 'TESTAGRAM_RETENTION_DRY_RUN: "true"' "$compose"
 grep -q '/readyz' docs/platform/openapi/internal-platform.yaml
 grep -q '/v1/hosting/backups' docs/platform/openapi/hosting-control-plane.yaml
 
-echo "Fresh Appwrite runtime, B2/R2 storage contract and retired-provider exit checks: PASS"
+echo "Data Centre service boundaries, private media/federation wiring and safety checks: PASS"
