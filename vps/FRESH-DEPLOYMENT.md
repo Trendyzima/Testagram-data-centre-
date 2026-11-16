@@ -1,5 +1,13 @@
 # Fresh Appwrite deployment (separate from the legacy VPS stack)
 
+> **Federation deployment boundary:** this Fresh/Appwrite compose file is not the
+> production native-Backend Federation path. Its Federation profile remains a
+> private preview and must not be used to publish the public instance. The
+> canonical ActivityPub domain is `testagram.site`; the standard VPS edge
+> configuration in `vps/Caddyfile` routes the apex discovery/actor/inbox
+> paths to Federation. The Fresh stack continues to use
+> `vps/fresh/Caddyfile` and does not expose those routes.
+
 The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Federation and the Data Centre node control-plane are independent opt-in profiles; none is allowed to gate Appwrite login. This stack does not attach retired provider networks, start the legacy cmd/api, or configure retired database credentials.
 
 ## Services and trust boundaries
@@ -32,9 +40,10 @@ The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Fed
   deliveries, but it does not yet process inbox activities or execute outbound
   delivery/follower-fanout workers. It is attached to `testagram-platform` so
   the legacy Backend can reach its private ingress; it is not publicly routed.
-  Its canonical actor origin is
-  https://federation.testagram.site; that hostname must not receive public DNS
-  or Caddy routing until the remaining federation release gates pass.
+  This Fresh compose profile is not the production public Federation path.
+  Do not expose it through the apex Caddy routes; use the standard VPS
+  Federation deployment only after the native Backend integration and release
+  gates are verified.
 
 ## Before deployment
 
