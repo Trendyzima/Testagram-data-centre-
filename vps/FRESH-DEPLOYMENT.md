@@ -17,9 +17,9 @@ The default profile starts the Appwrite Backend API and Caddy edge. Ranking, Fed
 - migrate: applies only `001_vps.sql` and `006_hosting_control_plane.sql` to
   the dedicated Data Centre PostgreSQL database before control-plane starts.
   It deliberately does not apply product/video, notification, platform-event,
-  or Supabase Storage migrations to this infrastructure database.
+  or product-data migrations to this infrastructure database.
 - control-plane: Data Centre infrastructure state only. Its PostgreSQL URL
-  must point to a dedicated TLS database, not the legacy Supabase project.
+  must point to a dedicated TLS database isolated from other environments.
 - media: dedicated private B2-primary/R2-replica object lifecycle service,
   enabled only with the `media` profile and backed by its own MEDIA_DATABASE_URL.
   It is attached to both the local services network and the Backend-owned
@@ -56,7 +56,7 @@ keep the file mode at 0600 and never commit it.
    collections, attributes and indexes; wait for asynchronous provisioning
    before starting the API.
 7. Create a least-privilege Appwrite server key. Keep it only in the runtime
-   secret store. Never put it in XClone build variables.
+   secret store. Never put it in frontend build variables.
 8. Configure exact frontend HTTPS origins, Appwrite endpoint/project/database,
    independent Algorithm token and a separate TLS PostgreSQL database for the
    Data Centre control plane.
