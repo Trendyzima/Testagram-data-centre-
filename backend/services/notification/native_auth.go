@@ -26,30 +26,46 @@ type nativeNotificationClaims struct {
 
 var nativeNotificationUUID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$`)
 
-func (s *service) nativeUser(r *http.Request, token string) (string, bool) {
+func parseNativeNotificationAccessToken(token string, secret []byte, now time.Time) (nativeNotificationClaims, bool) {
 	var claims nativeNotificationClaims
 	parts := strings.Split(strings.TrimSpace(token), ".")
-	if len(s.authJWTSecret) < 32 || len(parts) != 3 || len(token) > 8192 { return "", false }
+	if len(secret) < 32 || len(parts) != 3 || len(token) > 8192 {
+		return claims, false
+	}
 	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil { return "", false }
+	if err != nil { return claims, false }
 	var header struct { Algorithm string `json:"alg"`; Type string `json:"typ"` }
-	if json.Unmarshal(headerBytes, &header) != nil || header.Algorithm != "HS256" || header.Type != "JWT" { return "", false }
+	if json.Unmarshal(headerBytes, &header) != nil || header.Algorithm != "HS256" || header.Type != "JWT" {
+		return claims, false
+	}
 	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil { return "", false }
-	mac := hmac.New(sha256.New, s.authJWTSecret)
+	if err != nil { return claims, false }
+	mac := hmac.New(sha256.New, secret)
 	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
-	if !hmac.Equal(signature, mac.Sum(nil)) { return "", false }
+	if !hmac.Equal(signature, mac.Sum(nil)) { return claims, false }
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil || json.Unmarshal(payload, &claims) != nil { return "", false }
-	now := time.Now().UTC().Unix()
-	if claims.Issuer != "testagram-auth" || claims.Audience != "testagram-api" || claims.Role != "authenticated" ||
-		!nativeNotificationUUID.MatchString(claims.Subject) || !nativeNotificationUUID.MatchString(claims.SessionID) ||
-		claims.TokenVersion < 1 || claims.IssuedAt <= 0 || claims.IssuedAt > now+60 ||
-		claims.ExpiresAt <= now || claims.ExpiresAt <= claims.IssuedAt || claims.ExpiresAt-claims.IssuedAt > 16*60 { return "", false }
+	if err != nil || json.Unmarshal(payload, &claims) != nil { return nativeNotificationClaims{}, false }
+	nowUnix := now.UTC().Unix()
+	if claims.Issuer != "testagram-auth" || claims.Audience != "testagram-api" ||
+		claims.Role != "authenticated" ||
+		!nativeNotificationUUID.MatchString(claims.Subject) ||
+		!nativeNotificationUUID.MatchString(claims.SessionID) ||
+		claims.TokenVersion < 1 || claims.IssuedAt <= 0 ||
+		claims.IssuedAt > nowUnix+60 || claims.ExpiresAt <= nowUnix ||
+		claims.ExpiresAt <= claims.IssuedAt ||
+		claims.ExpiresAt-claims.IssuedAt > int64((16*time.Minute)/time.Second) {
+		return nativeNotificationClaims{}, false
+	}
+	return claims, true
+}
+
+func (s *service) nativeUser(r *http.Request, token string) (string, bool) {
+	claims, ok := parseNativeNotificationAccessToken(token, s.authJWTSecret, time.Now())
+	if !ok { return "", false }
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	var active bool
-	err = s.db.QueryRow(ctx, `
+	err := s.db.QueryRow(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM testagram_auth.sessions s
 			JOIN testagram_auth.identities i ON i.user_id=s.user_id
