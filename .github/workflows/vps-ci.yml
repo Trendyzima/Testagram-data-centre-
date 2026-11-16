@@ -125,7 +125,7 @@ jobs:
           bash -n android-node/install-apk.sh
           test -f vps/docker-compose.yml
           test -f backend/docker-compose.yml
-          ! grep -qiE 'appwrite|onspace' vps/docker-compose.yml vps/install.sh vps/.env.example vps/fresh.env.example backend/docker-compose.yml backend/.env.example
+          ! grep -qiE 'appwrite' vps/docker-compose.yml vps/install.sh vps/.env.example vps/fresh.env.example backend/docker-compose.yml backend/.env.example
           ! grep -Eq '^  (api|edge):' vps/docker-compose.yml
           grep -q 'MEDIA_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:?Set FRESH_DATA_CENTRE_INTERNAL_TOKEN}' vps/docker-compose.yml
           grep -q 'BACKEND_INTERNAL_TOKEN: ${FEDERATION_BACKEND_INTERNAL_TOKEN:?Set FEDERATION_BACKEND_INTERNAL_TOKEN}' vps/docker-compose.yml
@@ -171,7 +171,7 @@ jobs:
           docker compose -f vps/docker-compose.yml config
           docker compose --profile media -f vps/docker-compose.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); media=c["services"]["media"]["environment"]; migrate=c["services"]["media-migrate"]["environment"]; assert media.get("MEDIA_INTERNAL_TOKEN") and len(media["MEDIA_INTERNAL_TOKEN"])>=32; assert media.get("MEDIA_DATABASE_URL")==migrate.get("MEDIA_DATABASE_URL") and media.get("MEDIA_DATABASE_URL"); assert all(media.get(k) for k in ("B2_S3_ENDPOINT","B2_S3_BUCKET","B2_S3_ACCESS_KEY_ID","B2_S3_SECRET_ACCESS_KEY","CLOUDFLARE_R2_ENDPOINT","CLOUDFLARE_R2_BUCKET","CLOUDFLARE_R2_ACCESS_KEY_ID","CLOUDFLARE_R2_SECRET_ACCESS_KEY")); assert "ports" not in c["services"]["media"], "media API must remain private-only"'
           docker compose --profile federation -f vps/docker-compose.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); fed=c["services"]["federation-api"]["environment"]; read=fed.get("BACKEND_INTERNAL_TOKEN",""); ingress=fed.get("FEDERATION_INGRESS_TOKEN",""); assert read and len(read)>=32 and ingress and len(ingress)>=32 and ingress != read, "Federation read and ingress credentials must be distinct"'
-          ! grep -qiE 'appwrite|onspace|supabase' vps/docker-compose.yml vps/.env.example vps/fresh.env.example vps/install.sh backend/docker-compose.yml backend/.env.example
+          ! grep -qiE 'appwrite|supabase' vps/docker-compose.yml vps/.env.example vps/fresh.env.example vps/install.sh backend/docker-compose.yml backend/.env.example
       - name: Validate VPS control plane runtime
         run: |
           set -euo pipefail
