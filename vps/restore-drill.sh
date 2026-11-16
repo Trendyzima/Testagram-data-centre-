@@ -33,7 +33,6 @@ test -s "$STAGE/components.sha256" || { echo "Per-database checksum manifest mis
 grep -qx 'backup_scope=data_centre_infrastructure_only' "$STAGE/metadata.txt" || { echo "Backup scope is not explicitly Data Centre infrastructure-only" >&2; exit 1; }
 grep -qx 'neon_database_required=false' "$STAGE/metadata.txt" || { echo "Legacy Neon database dependency is still present" >&2; exit 1; }
 grep -qx 'media_bytes_included=false' "$STAGE/metadata.txt" || { echo "Unexpected media backup scope metadata" >&2; exit 1; }
-grep -qx 'appwrite_documents_included=false' "$STAGE/metadata.txt" || { echo "Unexpected Appwrite backup scope metadata" >&2; exit 1; }
 
 # Restore into a network-isolated disposable database. No public port is bound.
 docker run -d --name "$CONTAINER" --network none -e "POSTGRES_PASSWORD=$PASS" "$RESTORE_IMAGE" >/dev/null
@@ -54,4 +53,4 @@ done
 echo "DATA CENTRE INFRASTRUCTURE RESTORE DRILL PASSED"
 echo "Data Centre infrastructure PostgreSQL archive restored in an isolated, network-disabled container."
 echo "Backend product PostgreSQL is restored separately by the Backend repository's self-hosted restore drill."
-echo "Appwrite identity/configuration and B2/R2 media bytes require their own provider-backed recovery drills."
+echo "Identity records and B2/R2 media bytes require their own provider-backed recovery drills."
