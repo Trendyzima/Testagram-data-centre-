@@ -56,7 +56,7 @@ keep the file mode at 0600 and never commit it.
    collections, attributes and indexes; wait for asynchronous provisioning
    before starting the API.
 7. Create a least-privilege Appwrite server key. Keep it only in the runtime
-   secret store. Never put it in XClone build variables.
+   secret store. Never put it in frontend build variables.
 8. Configure exact frontend HTTPS origins, Appwrite endpoint/project/database,
    independent Algorithm token and a separate TLS PostgreSQL database for the
    Data Centre control plane.
