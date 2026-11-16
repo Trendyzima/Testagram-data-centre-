@@ -1,0 +1,31 @@
+{
+	 email {$TLS_ADMIN_EMAIL}
+	 admin off
+}
+
+api.testagram.site {
+	encode zstd gzip
+	reverse_proxy api:8081
+}
+
+# The apex domain is the canonical Fediverse identity domain. Keep the web
+# application on www; only ActivityPub discovery, actors, inboxes and objects
+# are served from the apex so the existing frontend is not displaced.
+testagram.site {
+	encode zstd gzip
+
+	@activitypub path /.well-known/webfinger /users/* /objects/*
+	handle @activitypub {
+		reverse_proxy federation-api:8081
+	}
+	handle {
+		redir https://www.testagram.site{uri} 308
+	}
+}
+
+# Dedicated HTTPS endpoint for Android removable-storage nodes and Linux
+# computer nodes. The Go control plane authenticates bootstrap/node tokens.
+nodes.testagram.site {
+	encode zstd gzip
+	reverse_proxy control-plane:8787
+}
