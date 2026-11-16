@@ -25,7 +25,7 @@ if [ ! -f "$ENV_FILE" ]; then
   mkdir -p "$(dirname "$ENV_FILE")"
   cp "$ROOT/vps/fresh.env.example" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
-  echo "Created $ENV_FILE. Fill in Appwrite, Neon, B2/R2, image digests and node tokens, then rerun." >&2
+  echo "Created $ENV_FILE. Fill in PostgreSQL, B2/R2, image digests and node tokens, then rerun." >&2
   exit 2
 fi
 
@@ -33,7 +33,7 @@ set -a
 . "$ENV_FILE"
 set +a
 
-for key in APPWRITE_PROJECT_ID APPWRITE_DATABASE_ID APPWRITE_SERVER_API_KEY NEON_DATABASE_URL DATA_CENTRE_DATABASE_URL FEDERATION_DATABASE_URL FRESH_FEDERATION_INTERNAL_TOKEN ALGORITHM_ENDPOINT ALGORITHM_INTERNAL_TOKEN VPS_INTERNAL_TOKEN VPS_NODE_BOOTSTRAP_TOKEN; do
+for key in DATA_CENTRE_DATABASE_URL FEDERATION_DATABASE_URL FRESH_FEDERATION_INTERNAL_TOKEN ALGORITHM_ENDPOINT ALGORITHM_INTERNAL_TOKEN VPS_INTERNAL_TOKEN VPS_NODE_BOOTSTRAP_TOKEN; do
   value="${!key:-}"
   if [ -z "$value" ] || [[ "$value" == *REPLACE* ]]; then
     echo "Required fresh deployment setting is missing or still a placeholder: $key" >&2
