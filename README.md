@@ -32,9 +32,8 @@ a separate Linux worker.
 - The Backend remains the authority for product accounts, posts, privacy and
   media-to-post authorization.
 
-No Supabase, Redis/Valkey or Upstash runtime is required. Rate limits use
-PostgreSQL counters; durable asynchronous work uses service-owned PostgreSQL
-outboxes and idempotent workers.
+Rate limits use PostgreSQL counters; durable asynchronous work uses
+service-owned PostgreSQL outboxes and idempotent workers.
 
 ## Deployment status
 
