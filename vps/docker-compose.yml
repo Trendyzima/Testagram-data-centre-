@@ -156,7 +156,6 @@ services:
 
 
 networks:
-  edge: {}
   services: {}
   # Join the Backend's private platform network so Backend can reach media:8096.
   # Deploy the Backend stack first; it creates testagram-platform.
@@ -170,6 +169,4 @@ networks:
     internal: true
 
 volumes:
-  fresh_edge_data: {}
-  fresh_edge_config: {}
   federation_data: {}
