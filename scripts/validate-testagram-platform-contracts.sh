@@ -41,7 +41,7 @@ fi
 # Federation remains private and uses two distinct directional credentials.
 federation_block="$(sed -n '/^  federation-api:/,/^  migrate:/p' "$compose")"
 grep -Fq 'profiles: ["federation"]' <<< "$federation_block"
-grep -Fq 'networks: [federation, services, platform]' <<< "$federation_block"
+grep -Fq 'networks: [services, federation, platform]' <<< "$federation_block"
 grep -Fq 'BACKEND_INTERNAL_URL: http://testagram-backend-api:8082' <<< "$federation_block"
 grep -Fq 'BACKEND_INTERNAL_TOKEN: ${FEDERATION_BACKEND_INTERNAL_TOKEN:?Set FEDERATION_BACKEND_INTERNAL_TOKEN}' <<< "$federation_block"
 grep -Fq 'FEDERATION_INGRESS_TOKEN: ${FEDERATION_INGRESS_TOKEN:?Set FEDERATION_INGRESS_TOKEN}' <<< "$federation_block"
@@ -59,8 +59,7 @@ done
 
 grep -q 'Backblaze B2' docs/platform/media-storage-architecture.md
 grep -q 'Cloudflare R2' docs/platform/media-storage-architecture.md
-grep -q 'TESTAGRAM_RETENTION_ENABLED: "false"' "$compose"
-grep -q 'TESTAGRAM_RETENTION_DRY_RUN: "true"' "$compose"
+! grep -Eq '^  (retention|retention-worker):' "$compose"
 grep -q '/readyz' docs/platform/openapi/internal-platform.yaml
 grep -q '/v1/hosting/backups' docs/platform/openapi/hosting-control-plane.yaml
 
