@@ -535,7 +535,6 @@ jobs:
           neon_database_required=false
           cross_database_atomic=not_applicable
           media_bytes_included=false
-          appwrite_documents_included=false
           EOF
           tar -czf "$stage/testagram-ci-backup.tar.gz" -C "$stage" data-centre.dump components.sha256 metadata.txt
           age-keygen -o "$stage/restore-identity.txt"
