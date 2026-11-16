@@ -10,16 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Trendyzima/Testagram-data-centre-/backend/internal/appwriteauth"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type service struct {
-	db       *pgxpool.Pool
-	appwriteEndpoint string
-	appwriteProject  string
+	db *pgxpool.Pool
 	internal string
+	authJWTSecret []byte
 }
 
 type notification struct {
@@ -52,7 +50,9 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	s := &service{db: db, appwriteEndpoint: mustEnv("APPWRITE_ENDPOINT"), appwriteProject: mustEnv("APPWRITE_PROJECT_ID"), internal: internal}
+	authSecret := strings.TrimSpace(mustEnv("TESTAGRAM_AUTH_JWT_SECRET"))
+	if len(authSecret) < 32 { log.Fatal("TESTAGRAM_AUTH_JWT_SECRET must contain at least 32 characters") }
+	s := &service{db: db, internal: internal, authJWTSecret: []byte(authSecret)}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
@@ -219,10 +219,7 @@ func (s *service) user(r *http.Request) (string, bool) {
 	if raw == "" {
 		return "", false
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
-	defer cancel()
-	userID, err := appwriteauth.ResolveUserID(ctx, s.db, s.appwriteEndpoint, s.appwriteProject, raw)
-	return userID, err == nil
+	return s.nativeUser(r, raw)
 }
 
 func bearer(r *http.Request) string {
