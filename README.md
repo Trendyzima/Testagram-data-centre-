@@ -20,9 +20,10 @@ a separate Linux worker.
 
 ## Runtime ownership
 
-- Appwrite issues client sessions. Video and notification APIs validate
-  Appwrite JWTs with the Appwrite Account API and resolve canonical Testagram
-  UUIDs through the shared PostgreSQL identity bridge.
+- The Testagram Go Backend issues native HS256 access tokens. Video and
+  notification APIs validate signatures and live session state against the
+  shared PostgreSQL identity/session tables. The signing secret is shared only
+  through server-side secret configuration.
 - PostgreSQL stores Data Centre platform configuration, audit/telemetry,
   storage metadata and infrastructure control-plane state.
 - Object storage and node agents own byte placement, checksums, replicas and
@@ -59,11 +60,11 @@ docker compose --env-file backend/.env -f backend/docker-compose.yml up -d --bui
 docker compose --env-file backend/.env -f backend/docker-compose.yml ps
 ```
 
-- `vps/docker-compose.fresh.yml` remains a separate Appwrite/Neon/B2/R2
-  preview and is not the portable deployment path. Use the Backend base stack
+- `vps/docker-compose.fresh.yml` is an isolated legacy preview and is not the
+  supported portable deployment path. Use the Backend base stack
   plus this repository's `backend/docker-compose.yml` overlay for the
-  PostgreSQL/MinIO deployment. End-to-end Compose, Appwrite and media restore
-  tests remain release gates.
+  PostgreSQL/MinIO deployment. End-to-end Compose, native-auth and media
+  restore tests remain release gates.
 
 ## Federation service credentials
 
