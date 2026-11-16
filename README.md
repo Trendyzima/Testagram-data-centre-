@@ -86,8 +86,7 @@ disabled until both directions are verified in staging.
 
 The VPS backup scripts currently cover the Data Centre infrastructure database
 and optional node-storage archive. They do not by themselves back up the
-Backend product database, all media objects, Federation state or Appwrite
-configuration. A full restore drill must include those systems before
+Backend product database, active media objects or Federation state. A full restore drill must include those systems before
 production recovery is declared ready.
 
 ## Forensic end-to-end gate
@@ -106,4 +105,4 @@ every hop.
 - [Internal platform OpenAPI contract](docs/platform/openapi/internal-platform.yaml)
 - [Hosting control-plane OpenAPI contract](docs/platform/openapi/hosting-control-plane.yaml)
 - [Media storage architecture](docs/platform/media-storage-architecture.md)\n- Instabox VPS + Cloudflare R2 + Backblaze B2 target: three verified media copies; Testagram CDN owns public delivery.
-- [Fresh deployment preview](vps/FRESH-DEPLOYMENT.md)
+- [Data Centre deployment](vps/DEPLOYMENT.md)
