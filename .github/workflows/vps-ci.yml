@@ -351,16 +351,15 @@ jobs:
           docker exec testagram-postgres psql -U postgres -d testagram -Atqc "SELECT to_regclass('testagram_local.federation_outbox') IS NOT NULL AND to_regclass('testagram_local.communication_outbox') IS NOT NULL" | grep -qx t
           docker build -f backend-source/Dockerfile -t testagram-backend-ci backend-source
           export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram
-          export VIDEO_JWT_SECRET=ci-test-jwt-secret
+          export TESTAGRAM_AUTH_JWT_SECRET=ci-test-native-auth-jwt-secret-at-least-32-bytes
           export VIDEO_SIGNING_SECRET=ci-test-signing-secret-at-least-32-bytes
-          export NOTIFICATION_JWT_SECRET=ci-test-jwt-secret
           export NOTIFICATION_INTERNAL_TOKEN=ci-test-internal-token
           export PLATFORM_INTERNAL_TOKEN=ci-platform-internal-token-2026-strong
           export TESTAGRAM_NETWORK=testagram-platform
           docker run -d --name testagram-api --network testagram-platform --network-alias api \
             -e LISTEN_ADDR=:8080 -e INTERNAL_LISTEN_ADDR=:8082 \
             -e DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram?sslmode=disable \
-            -e APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1 -e APPWRITE_PROJECT_ID=ci-project \
+            -e TESTAGRAM_AUTH_JWT_SECRET=ci-test-native-auth-jwt-secret-at-least-32-bytes \
             -e ALGORITHM_URL=http://algorithm:8092 -e ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough \
             -e FEDERATION_INTERNAL_URL=http://federation:8081 -e FEDERATION_INTERNAL_TOKEN=ci-federation-ingress-token-long-enough \
             -e FEDERATION_BACKEND_INTERNAL_TOKEN=ci-federation-backend-read-token-long-enough \
