@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="${TESTAGRAM_ROOT:-/opt/testagram}"
 BRANCH="${TESTAGRAM_REPO_BRANCH:-main}"
 REPO_URL="${TESTAGRAM_REPO_URL:-https://github.com/Trendyzima/Testagram-data-centre-.git}"
-ENV_FILE="${TESTAGRAM_FRESH_ENV_FILE:-$ROOT/vps/fresh.env}"
+ENV_FILE="${TESTAGRAM_DATA_CENTRE_ENV_FILE:-${TESTAGRAM_FRESH_ENV_FILE:-$ROOT/vps/data-centre.env}}"
 STORAGE_ROOT="${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}"
 
 command -v git >/dev/null || { echo "git is required" >&2; exit 1; }
@@ -23,9 +23,9 @@ fi
 
 if [ ! -f "$ENV_FILE" ]; then
   mkdir -p "$(dirname "$ENV_FILE")"
-  cp "$ROOT/vps/fresh.env.example" "$ENV_FILE"
+  cp "$ROOT/vps/data-centre.env.example" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
-  echo "Created $ENV_FILE. Fill in PostgreSQL, B2/R2, image digests and node tokens, then rerun." >&2
+  echo "Created $ENV_FILE. Fill in the Data Centre PostgreSQL URL and node-control tokens, then rerun." >&2
   exit 2
 fi
 
@@ -33,15 +33,15 @@ set -a
 . "$ENV_FILE"
 set +a
 
-for key in DATA_CENTRE_DATABASE_URL FEDERATION_DATABASE_URL FRESH_FEDERATION_INTERNAL_TOKEN ALGORITHM_ENDPOINT ALGORITHM_INTERNAL_TOKEN VPS_INTERNAL_TOKEN VPS_NODE_BOOTSTRAP_TOKEN; do
+for key in DATA_CENTRE_DATABASE_URL VPS_INTERNAL_TOKEN VPS_NODE_BOOTSTRAP_TOKEN; do
   value="${!key:-}"
   if [ -z "$value" ] || [[ "$value" == *REPLACE* ]]; then
-    echo "Required fresh deployment setting is missing or still a placeholder: $key" >&2
+    echo "Required Data Centre setting is missing or still a placeholder: $key" >&2
     exit 2
   fi
 done
-if [ "${#FRESH_FEDERATION_INTERNAL_TOKEN}" -lt 32 ] || [ "${#ALGORITHM_INTERNAL_TOKEN}" -lt 32 ] || [ "${#VPS_INTERNAL_TOKEN}" -lt 32 ] || [ "${#VPS_NODE_BOOTSTRAP_TOKEN}" -lt 32 ]; then
-  echo "Federation, Algorithm, control-plane and node bootstrap tokens must contain at least 32 characters." >&2
+if [ "${#VPS_INTERNAL_TOKEN}" -lt 32 ] || [ "${#VPS_NODE_BOOTSTRAP_TOKEN}" -lt 32 ]; then
+  echo "Control-plane and node bootstrap tokens must contain at least 32 characters." >&2
   exit 2
 fi
 if [[ "$VPS_NODE_BOOTSTRAP_TOKEN" == *$'\n'* || "$VPS_NODE_BOOTSTRAP_TOKEN" == *$'\r'* ]]; then
@@ -68,10 +68,6 @@ if [ "${VPS_ENABLE_WATCHDOG_ACTIVATION:-false}" = "true" ]; then
   done
 fi
 
-if grep -Eq 'REPLACE_WITH|REPLACE_PASSWORD|REPLACE_WITH_64_HEX_DIGEST|ops@example.com' "$ENV_FILE"; then
-  echo "Fresh env still contains placeholders. Set real secrets and immutable image digests before deployment." >&2
-  exit 2
-fi
 mkdir -p "$STORAGE_ROOT/nodes" "$ROOT/bin" /etc/testagram
 chmod 0750 "$STORAGE_ROOT" "$STORAGE_ROOT/nodes"
 # Backend owns and creates the private shared networks. Deploy its Compose stack first.
