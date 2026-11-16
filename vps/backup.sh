@@ -60,9 +60,8 @@ backup_scope=data_centre_infrastructure_only
 neon_database_required=false
 cross_database_atomic=not_applicable
 media_bytes_included=false
-appwrite_documents_included=false
 media_bytes=retained_in_private_B2_and_R2; not duplicated in this infrastructure archive
-appwrite_identity_and_documents=not_exported_by_this_script
+identity_and_authentication_data=not_exported_by_this_script
 EOF
 tar -C "$STAGE" -czf "$ARCHIVE" .
 test -s "$ARCHIVE"
@@ -85,4 +84,4 @@ fi
 
 printf 'Encrypted database backup created, transferred and checksum-verified: %s\n' "$ENCRYPTED"
 printf 'Remote destination: %s\n' "$BACKUP_REMOTE"
-printf 'Note: Appwrite documents and B2/R2 media bytes are outside this database archive.\n'
+printf 'Note: Identity/authentication data and B2/R2 media bytes are outside this infrastructure archive.\n'
