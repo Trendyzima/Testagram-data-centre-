@@ -127,7 +127,7 @@ services:
     environment:
       HTTP_ADDR: :8081
       APP_ENV: production
-      PUBLIC_BASE_URL: https://federation.testagram.site
+      PUBLIC_BASE_URL: ${FEDERATION_PUBLIC_BASE_URL:-https://testagram.site}
       INSTANCE_DOMAIN: testagram.site
       SERVICE_ACTOR_USERNAME: testagram
       SERVICE_ACTOR_NAME: Testagram
@@ -200,12 +200,12 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./fresh/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - fresh_edge_data:/data
       - fresh_edge_config:/config
-    depends_on:
-      api:
-        condition: service_healthy
+    # The edge must be able to serve ActivityPub independently of the API
+    # container's startup; Caddy returns upstream errors only for the affected
+    # route while the corresponding service is unavailable.
     networks: [edge, services]
 
 networks:
