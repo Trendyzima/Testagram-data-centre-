@@ -89,8 +89,10 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
-      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:?Set APPWRITE_ENDPOINT in backend/.env}
-      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:?Set APPWRITE_PROJECT_ID in backend/.env}
+      TESTAGRAM_AUTH_PROVIDER: ${TESTAGRAM_AUTH_PROVIDER:-appwrite}
+      TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:-}
+      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:-}
+      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:-}
       VIDEO_SIGNING_SECRET: ${VIDEO_SIGNING_SECRET:?Set VIDEO_SIGNING_SECRET in backend/.env}
       VIDEO_MEDIA_ROOT: /media
       VIDEO_ADDR: :8790
@@ -98,7 +100,7 @@ services:
       VIDEO_MIN_FREE_BYTES: ${VIDEO_MIN_FREE_BYTES:-2147483648}
     volumes:
       - ${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}/media:/media
-    networks: [internal, platform, egress]
+    networks: [internal, platform, egress, edge]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8790/readyz"]
       interval: 10s
@@ -233,6 +235,9 @@ networks:
   platform:
     external: true
     name: ${TESTAGRAM_NETWORK:-testagram-platform}
+  edge:
+    external: true
+    name: ${TESTAGRAM_EDGE_NETWORK:-testagram-self-hosted_edge}
   egress:
     external: true
     name: ${TESTAGRAM_EGRESS_NETWORK:-testagram-egress}

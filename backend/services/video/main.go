@@ -28,6 +28,8 @@ type server struct {
 	mediaDir          string
 	appwriteEndpoint  string
 	appwriteProject   string
+	authProvider      string
+	authJWTSecret     []byte
 	signKey           []byte
 	uploadSlots       chan struct{}
 	accountQuotaBytes int64
@@ -54,7 +56,26 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	s := &server{db: db, mediaDir: mediaDir, appwriteEndpoint: mustEnv("APPWRITE_ENDPOINT"), appwriteProject: mustEnv("APPWRITE_PROJECT_ID"), signKey: []byte(mustEnv("VIDEO_SIGNING_SECRET")), uploadSlots: make(chan struct{}, 2), accountQuotaBytes: accountQuotaBytes, minFreeBytes: minFreeBytes}
+	authProvider := strings.ToLower(strings.TrimSpace(env("TESTAGRAM_AUTH_PROVIDER", "appwrite")))
+	if authProvider != "appwrite" && authProvider != "native" {
+		log.Fatalf("TESTAGRAM_AUTH_PROVIDER must be appwrite or native")
+	}
+	appwriteEndpoint := strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT"))
+	appwriteProject := strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID"))
+	nativeAuthSecret := strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))
+	if authProvider == "appwrite" && (appwriteEndpoint == "" || appwriteProject == "") {
+		log.Fatal("APPWRITE_ENDPOINT and APPWRITE_PROJECT_ID are required when TESTAGRAM_AUTH_PROVIDER=appwrite")
+	}
+	if authProvider == "native" && len(nativeAuthSecret) < 32 {
+		log.Fatal("TESTAGRAM_AUTH_JWT_SECRET must contain at least 32 characters when TESTAGRAM_AUTH_PROVIDER=native")
+	}
+	s := &server{
+		db: db, mediaDir: mediaDir,
+		appwriteEndpoint: appwriteEndpoint, appwriteProject: appwriteProject,
+		authProvider: authProvider, authJWTSecret: []byte(nativeAuthSecret),
+		signKey: []byte(mustEnv("VIDEO_SIGNING_SECRET")), uploadSlots: make(chan struct{}, 2),
+		accountQuotaBytes: accountQuotaBytes, minFreeBytes: minFreeBytes,
+	}
 	if len(s.signKey) < 32 {
 		log.Fatal("VIDEO_SIGNING_SECRET must be at least 32 bytes")
 	}
@@ -623,14 +644,21 @@ func (s *server) hls(w http.ResponseWriter, r *http.Request, id, file string) {
 	http.ServeFile(w, r, path)
 }
 func (s *server) user(r *http.Request) (string, bool) {
-	raw := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
-	if raw == "" {
+	parts := strings.Fields(strings.TrimSpace(r.Header.Get("Authorization")))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || len(parts[1]) < 8 || len(parts[1]) > 8192 {
 		return "", false
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
-	defer cancel()
-	userID, err := appwriteauth.ResolveUserID(ctx, s.db, s.appwriteEndpoint, s.appwriteProject, raw)
-	return userID, err == nil
+	switch s.authProvider {
+	case "native":
+		return s.nativeUser(r, parts[1])
+	case "appwrite":
+		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
+		defer cancel()
+		userID, err := appwriteauth.ResolveUserID(ctx, s.db, s.appwriteEndpoint, s.appwriteProject, parts[1])
+		return userID, err == nil
+	default:
+		return "", false
+	}
 }
 func (s *server) sign(id string, exp time.Time) string {
 	mac := hmac.New(sha256.New, s.signKey)
