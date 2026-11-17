@@ -33,11 +33,7 @@ jobs:
       PLATFORM_INTERNAL_TOKEN: ci-platform-internal-token-2026-strong
       VIDEO_SIGNING_SECRET: ci-video-signing-secret-at-least-32-bytes
       NOTIFICATION_INTERNAL_TOKEN: ci-notification-internal-token-long-enough
-      APPWRITE_ENDPOINT: https://fra.cloud.appwrite.io/v1
-      APPWRITE_PROJECT_ID: ci-project
-      APPWRITE_DATABASE_ID: ci-database
-      APPWRITE_SERVER_API_KEY: ci-appwrite-server-key
-      TESTAGRAM_AUTH_PROVIDER: appwrite
+      TESTAGRAM_AUTH_JWT_SECRET: ci-testagram-native-auth-secret-at-least-32-bytes
       FRESH_API_ALLOWED_ORIGINS: https://testagram.site,https://www.testagram.site
       FRESH_MEDIA_ENABLED: "false"
       DATA_CENTRE_MEDIA_API_URL: http://media:8096
@@ -172,6 +168,8 @@ jobs:
           set -euo pipefail
           test -n "$FRESH_FEDERATION_INTERNAL_TOKEN"
           test "${#FRESH_FEDERATION_INTERNAL_TOKEN}" -ge 32
+          ! grep -Eqi 'APPWRITE_ENDPOINT|APPWRITE_PROJECT_ID|appwriteauth' backend/docker-compose.yml backend/services/video backend/services/notification backend/internal
+          grep -Fq 'TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:?Set TESTAGRAM_AUTH_JWT_SECRET in backend/.env}' backend/docker-compose.yml
           docker compose -f backend/docker-compose.yml config
           # Optional media profile must not make the default stack require media-only credentials.
           env -u MEDIA_DATABASE_URL -u MEDIA_DATABASE_NAME docker compose -f backend/docker-compose.yml config --quiet
@@ -356,16 +354,15 @@ jobs:
           docker exec testagram-postgres psql -U postgres -d testagram -Atqc "SELECT to_regclass('testagram_local.federation_outbox') IS NOT NULL AND to_regclass('testagram_local.communication_outbox') IS NOT NULL" | grep -qx t
           docker build -f backend-source/Dockerfile -t testagram-backend-ci backend-source
           export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram
-          export VIDEO_JWT_SECRET=ci-test-jwt-secret
+          export TESTAGRAM_AUTH_JWT_SECRET=ci-testagram-native-auth-secret-at-least-32-bytes
           export VIDEO_SIGNING_SECRET=ci-test-signing-secret-at-least-32-bytes
-          export NOTIFICATION_JWT_SECRET=ci-test-jwt-secret
           export NOTIFICATION_INTERNAL_TOKEN=ci-test-internal-token
           export PLATFORM_INTERNAL_TOKEN=ci-platform-internal-token-2026-strong
           export TESTAGRAM_NETWORK=testagram-platform
           docker run -d --name testagram-api --network testagram-platform --network-alias api \
             -e LISTEN_ADDR=:8080 -e INTERNAL_LISTEN_ADDR=:8082 \
             -e DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram?sslmode=disable \
-            -e APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1 -e APPWRITE_PROJECT_ID=ci-project \
+            -e TESTAGRAM_AUTH_PROVIDER=native -e TESTAGRAM_AUTH_JWT_SECRET=ci-testagram-native-auth-secret-at-least-32-bytes \
             -e ALGORITHM_URL=http://algorithm:8092 -e ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough \
             -e FEDERATION_INTERNAL_URL=http://federation:8081 -e FEDERATION_INTERNAL_TOKEN=ci-federation-ingress-token-long-enough \
             -e FEDERATION_BACKEND_INTERNAL_TOKEN=ci-federation-backend-read-token-long-enough \
@@ -540,7 +537,7 @@ jobs:
           neon_database_required=false
           cross_database_atomic=not_applicable
           media_bytes_included=false
-          appwrite_documents_included=false
+          external_identity_documents_included=false
           EOF
           tar -czf "$stage/testagram-ci-backup.tar.gz" -C "$stage" data-centre.dump components.sha256 metadata.txt
           age-keygen -o "$stage/restore-identity.txt"
