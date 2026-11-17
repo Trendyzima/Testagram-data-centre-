@@ -173,7 +173,7 @@ jobs:
           set -euo pipefail
           test -n "$FRESH_FEDERATION_INTERNAL_TOKEN"
           test "${#FRESH_FEDERATION_INTERNAL_TOKEN}" -ge 32
-          ! grep -Eqi 'APPWRITE_ENDPOINT|APPWRITE_PROJECT_ID|appwriteauth' backend/docker-compose.yml backend/services/video backend/services/notification backend/internal
+          ! grep -Eqi 'APPWRITE_ENDPOINT|APPWRITE_PROJECT_ID|appwriteauth' backend/docker-compose.yml backend/services/video/*.go backend/services/notification/*.go backend/internal/nativeauth
           grep -Fq 'TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:?Set TESTAGRAM_AUTH_JWT_SECRET in backend/.env}' backend/docker-compose.yml
           docker compose -f backend/docker-compose.yml config
           # Optional media profile must not make the default stack require media-only credentials.
