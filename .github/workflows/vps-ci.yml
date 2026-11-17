@@ -362,7 +362,7 @@ jobs:
           docker run -d --name testagram-api --network testagram-platform --network-alias api \
             -e LISTEN_ADDR=:8080 -e INTERNAL_LISTEN_ADDR=:8082 \
             -e DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram?sslmode=disable \
-            -e TESTAGRAM_AUTH_PROVIDER=native -e TESTAGRAM_AUTH_JWT_SECRET=ci-testagram-native-auth-secret-at-least-32-bytes \
+            -e TESTAGRAM_AUTH_JWT_SECRET=ci-testagram-native-auth-secret-at-least-32-bytes \
             -e ALGORITHM_URL=http://algorithm:8092 -e ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough \
             -e FEDERATION_INTERNAL_URL=http://federation:8081 -e FEDERATION_INTERNAL_TOKEN=ci-federation-ingress-token-long-enough \
             -e FEDERATION_BACKEND_INTERNAL_TOKEN=ci-federation-backend-read-token-long-enough \
