@@ -54,4 +54,4 @@ done
 echo "DATA CENTRE INFRASTRUCTURE RESTORE DRILL PASSED"
 echo "Data Centre infrastructure PostgreSQL archive restored in an isolated, network-disabled container."
 echo "Backend product PostgreSQL is restored separately by the Backend repository's self-hosted restore drill."
-echo "Appwrite identity/configuration and B2/R2 media bytes require their own provider-backed recovery drills."
+echo "Identity verification records and B2/R2 media bytes require their own provider-backed recovery drills."
