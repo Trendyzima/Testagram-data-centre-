@@ -6,6 +6,11 @@ It provides creator channels, direct upload, asynchronous local FFmpeg processin
 
 No managed video platform, CDN, or media SaaS is required.
 
-Authentication is provider-explicit and fail-closed. `TESTAGRAM_AUTH_PROVIDER=appwrite` (the migration-safe default) validates Appwrite session JWTs against the configured Account endpoint and resolves the linked canonical Testagram UUID. `TESTAGRAM_AUTH_PROVIDER=native` validates Testagram HS256 access tokens with the exact `TESTAGRAM_AUTH_JWT_SECRET` used by Backend, then checks the session, token version, verified/enabled account and approved-registration state in PostgreSQL before accepting the canonical user UUID. Native mode requires the Backend auth migrations to have been applied and the video service to use a database role with read access to `testagram_auth` and `testagram_identity.native_registration_provisioning`. Invalid provider values, invalid tokens and unavailable session state fail closed; there is no cross-provider fallback.
+Authentication accepts only short-lived Testagram-native HS256 access tokens.
+The service verifies signature, fixed issuer/audience, role, UUID subject/session,
+token lifetime and version, then checks the live PostgreSQL session, revocation,
+account status, verified email and approved-registration state. It uses the
+exact `TESTAGRAM_AUTH_JWT_SECRET` shared with Backend. Appwrite and alternate
+identity-provider fallback paths are not supported.
 
 PostgreSQL stores metadata and durable jobs. Video bytes stay on Testagram-owned VPS/node storage.

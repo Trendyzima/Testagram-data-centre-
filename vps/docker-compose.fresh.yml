@@ -22,10 +22,6 @@ services:
     environment:
       FRESH_API_ADDR: :8081
       FRESH_API_ALLOWED_ORIGINS: ${FRESH_API_ALLOWED_ORIGINS:?Set exact HTTPS Flutter/web client origins}
-      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:?Set the fresh Appwrite endpoint}
-      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:?Set the fresh Appwrite project ID}
-      APPWRITE_DATABASE_ID: ${APPWRITE_DATABASE_ID:?Set the fresh Appwrite database ID}
-      APPWRITE_SERVER_API_KEY: ${APPWRITE_SERVER_API_KEY:?Set a least-privilege server API key}
       NEON_DATABASE_URL: ${NEON_DATABASE_URL:-}
       NEON_REQUIRED: ${NEON_REQUIRED:-true}
       # Fresh API consumes these exact private-service variables.

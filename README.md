@@ -20,9 +20,7 @@ a separate Linux worker.
 
 ## Runtime ownership
 
-- Appwrite issues client sessions. Video and notification APIs validate
-  Appwrite JWTs with the Appwrite Account API and resolve canonical Testagram
-  UUIDs through the shared PostgreSQL identity bridge.
+- The Backend issues Testagram-native short-lived access tokens. Video and notification APIs verify the shared HS256 contract and live PostgreSQL session state; no external identity provider is used.
 - PostgreSQL stores Data Centre platform configuration, audit/telemetry,
   storage metadata and infrastructure control-plane state.
 - Object storage and node agents own byte placement, checksums, replicas and

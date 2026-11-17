@@ -19,16 +19,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Trendyzima/Testagram-data-centre-/backend/internal/appwriteauth"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type server struct {
 	db                *pgxpool.Pool
 	mediaDir          string
-	appwriteEndpoint  string
-	appwriteProject   string
-	authProvider      string
 	authJWTSecret     []byte
 	signKey           []byte
 	uploadSlots       chan struct{}
@@ -56,23 +52,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	authProvider := strings.ToLower(strings.TrimSpace(env("TESTAGRAM_AUTH_PROVIDER", "appwrite")))
-	if authProvider != "appwrite" && authProvider != "native" {
-		log.Fatalf("TESTAGRAM_AUTH_PROVIDER must be appwrite or native")
-	}
-	appwriteEndpoint := strings.TrimSpace(os.Getenv("APPWRITE_ENDPOINT"))
-	appwriteProject := strings.TrimSpace(os.Getenv("APPWRITE_PROJECT_ID"))
 	nativeAuthSecret := strings.TrimSpace(os.Getenv("TESTAGRAM_AUTH_JWT_SECRET"))
-	if authProvider == "appwrite" && (appwriteEndpoint == "" || appwriteProject == "") {
-		log.Fatal("APPWRITE_ENDPOINT and APPWRITE_PROJECT_ID are required when TESTAGRAM_AUTH_PROVIDER=appwrite")
-	}
-	if authProvider == "native" && len(nativeAuthSecret) < 32 {
-		log.Fatal("TESTAGRAM_AUTH_JWT_SECRET must contain at least 32 characters when TESTAGRAM_AUTH_PROVIDER=native")
+	if len(nativeAuthSecret) < 32 {
+		log.Fatal("TESTAGRAM_AUTH_JWT_SECRET must contain at least 32 characters")
 	}
 	s := &server{
 		db: db, mediaDir: mediaDir,
-		appwriteEndpoint: appwriteEndpoint, appwriteProject: appwriteProject,
-		authProvider: authProvider, authJWTSecret: []byte(nativeAuthSecret),
+		authJWTSecret: []byte(nativeAuthSecret),
 		signKey: []byte(mustEnv("VIDEO_SIGNING_SECRET")), uploadSlots: make(chan struct{}, 2),
 		accountQuotaBytes: accountQuotaBytes, minFreeBytes: minFreeBytes,
 	}
@@ -648,17 +634,7 @@ func (s *server) user(r *http.Request) (string, bool) {
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || len(parts[1]) < 8 || len(parts[1]) > 8192 {
 		return "", false
 	}
-	switch s.authProvider {
-	case "native":
-		return s.nativeUser(r, parts[1])
-	case "appwrite":
-		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
-		defer cancel()
-		userID, err := appwriteauth.ResolveUserID(ctx, s.db, s.appwriteEndpoint, s.appwriteProject, parts[1])
-		return userID, err == nil
-	default:
-		return "", false
-	}
+	return s.nativeUser(r, parts[1])
 }
 func (s *server) sign(id string, exp time.Time) string {
 	mac := hmac.New(sha256.New, s.signKey)
