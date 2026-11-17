@@ -33,7 +33,7 @@ test -s "$STAGE/components.sha256" || { echo "Per-database checksum manifest mis
 grep -qx 'backup_scope=data_centre_infrastructure_only' "$STAGE/metadata.txt" || { echo "Backup scope is not explicitly Data Centre infrastructure-only" >&2; exit 1; }
 grep -qx 'neon_database_required=false' "$STAGE/metadata.txt" || { echo "Legacy Neon database dependency is still present" >&2; exit 1; }
 grep -qx 'media_bytes_included=false' "$STAGE/metadata.txt" || { echo "Unexpected media backup scope metadata" >&2; exit 1; }
-grep -qx 'appwrite_documents_included=false' "$STAGE/metadata.txt" || { echo "Unexpected Appwrite backup scope metadata" >&2; exit 1; }
+grep -qx 'external_identity_documents_included=false' "$STAGE/metadata.txt" || { echo "Unexpected external identity-document backup scope metadata" >&2; exit 1; }
 
 # Restore into a network-isolated disposable database. No public port is bound.
 docker run -d --name "$CONTAINER" --network none -e "POSTGRES_PASSWORD=$PASS" "$RESTORE_IMAGE" >/dev/null
