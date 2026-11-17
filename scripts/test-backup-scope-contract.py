@@ -14,7 +14,7 @@ class BackupScopeContract(unittest.TestCase):
             'backup_scope=data_centre_infrastructure_only',
             'neon_database_required=false',
             'media_bytes_included=false',
-            'appwrite_documents_included=false',
+            'external_identity_documents_included=false',
         ):
             self.assertIn(required, source)
 
