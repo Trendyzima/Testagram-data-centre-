@@ -57,6 +57,7 @@ func TestResolveUserIDEnforcesLiveSessionAndAccountState(t *testing.T) {
 		name              string
 		provisioningState string
 		mutation          string
+		mutationUsesUserID bool
 		wantAllowed       bool
 	}{
 		{name: "existing native account without provisioning row", wantAllowed: true},
@@ -65,10 +66,10 @@ func TestResolveUserIDEnforcesLiveSessionAndAccountState(t *testing.T) {
 		{name: "revoked session is denied", mutation: "UPDATE testagram_auth.sessions SET revoked_at=now() WHERE session_id=$1::uuid", wantAllowed: false},
 		{name: "expired session is denied", mutation: "UPDATE testagram_auth.sessions SET expires_at=now()-interval '1 minute' WHERE session_id=$1::uuid", wantAllowed: false},
 		{name: "session token-version mismatch is denied", mutation: "UPDATE testagram_auth.sessions SET token_version=token_version+1 WHERE session_id=$1::uuid", wantAllowed: false},
-		{name: "identity token-version mismatch is denied", mutation: "UPDATE testagram_auth.identities SET token_version=token_version+1 WHERE user_id=$1::uuid", wantAllowed: false},
-		{name: "disabled account is denied", mutation: "UPDATE testagram_auth.identities SET disabled_at=now() WHERE user_id=$1::uuid", wantAllowed: false},
-		{name: "unverified email is denied", mutation: "UPDATE testagram_auth.identities SET email_verified_at=NULL WHERE user_id=$1::uuid", wantAllowed: false},
-		{name: "password reset required is denied", mutation: "UPDATE testagram_auth.identities SET password_reset_required=true WHERE user_id=$1::uuid", wantAllowed: false},
+		{name: "identity token-version mismatch is denied", mutation: "UPDATE testagram_auth.identities SET token_version=token_version+1 WHERE user_id=$1::uuid", mutationUsesUserID: true, wantAllowed: false},
+		{name: "disabled account is denied", mutation: "UPDATE testagram_auth.identities SET disabled_at=now() WHERE user_id=$1::uuid", mutationUsesUserID: true, wantAllowed: false},
+		{name: "unverified email is denied", mutation: "UPDATE testagram_auth.identities SET email_verified_at=NULL WHERE user_id=$1::uuid", mutationUsesUserID: true, wantAllowed: false},
+		{name: "password reset required is denied", mutation: "UPDATE testagram_auth.identities SET password_reset_required=true WHERE user_id=$1::uuid", mutationUsesUserID: true, wantAllowed: false},
 	}
 
 	for index, tc := range cases {
@@ -113,11 +114,9 @@ func TestResolveUserIDEnforcesLiveSessionAndAccountState(t *testing.T) {
 			}
 			token := signedToken(t, claims, secret, "HS256")
 			if tc.mutation != "" {
-				var arg string
-				if tc.name == "identity token-version mismatch is denied" {
+				arg := sessionID
+				if tc.mutationUsesUserID {
 					arg = userID
-				} else {
-					arg = sessionID
 				}
 				if _, err := db.Exec(ctx, tc.mutation, arg); err != nil {
 					t.Fatal(err)
