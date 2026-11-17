@@ -60,6 +60,11 @@ jobs:
       TLS_ADMIN_EMAIL: ci@example.invalid
       # Local Postgres service for CI only; production uses Neon with TLS.
       TESTAGRAM_DATABASE_URL: postgresql://postgres:testagram@db:5432/postgres?sslmode=disable
+      # Non-credential placeholders are only for rendering the retained legacy Fresh API Compose model in CI.
+      APPWRITE_ENDPOINT: https://appwrite.invalid/v1
+      APPWRITE_PROJECT_ID: ci-only-project
+      APPWRITE_DATABASE_ID: ci-only-database
+      APPWRITE_SERVER_API_KEY: ci-only-not-a-real-key
     services:
       postgres:
         image: postgres:17-alpine
