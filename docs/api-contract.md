@@ -32,7 +32,7 @@ The current Backend self-hosted production Compose file builds `Dockerfile`, whi
 - `FEDERATION_INTERNAL_URL=http://federation-api:8081` and `FEDERATION_INTERNAL_TOKEN`, matching Federation's dedicated `FEDERATION_INGRESS_TOKEN`.
 - `FEDERATION_BACKEND_INTERNAL_TOKEN`, matching Federation's `BACKEND_INTERNAL_TOKEN`, for Federation -> Backend actor/readiness calls.
 
-These are two separate service credentials for the two directions. Do not reuse Appwrite user JWTs or expose any of these values to Flutter/browser builds.
+These are two separate service credentials for the two directions. Testagram-native user access JWTs are not service credentials and must never be reused for Algorithm, Federation, platform or storage calls. Never expose any service token to Flutter/browser builds.
 
 The separate `Dockerfile.fresh` / `cmd/fresh-api` runtime uses a different set of environment names and a different service wiring contract. Do not combine `ALGORITHM_ENDPOINT` / `FRESH_FEDERATION_INTERNAL_TOKEN` with the `cmd/api` deployment. Select one backend binary and configure its matching environment contract.
 
@@ -47,3 +47,10 @@ The Data Centre overlay deploys Algorithm and Federation on the shared private p
 - Never interpret a missing heartbeat as proof of deletion.
 - Never delete media or reclaim quota without a Backend-authorized lifecycle command and independent replica checks.
 - Keep node credentials, provider keys and storage secrets out of client builds and logs.
+
+## Native user authentication boundary
+
+- User-aware video and notification routes validate the Testagram-native Backend access JWT using the shared `TESTAGRAM_AUTH_JWT_SECRET`, then call the native session resolver to recheck the live PostgreSQL session, token version, account state, verified email and provisioning state.
+- The Data Centre platform API is a different trust boundary. Its protected routes accept only `PLATFORM_INTERNAL_TOKEN`; they do not accept a user access JWT, refresh token or legacy Appwrite JWT.
+- The current Backend mainline issues native user sessions. The legacy Fresh Backend image in `vps/docker-compose.yml` still requires `APPWRITE_ENDPOINT`, project/database IDs and a server API key. Treat that image as a separate legacy runtime, not as the native auth authority. Do not remove its environment or stop it until deployed traffic, account reconciliation, rollback and production cutover have been verified and separately approved.
+- Do not route Flutter directly to the legacy `/auth/v1/*` service. Flutter's supported source path is Backend `/api/auth/*` and the applicant-scoped `/api/identity/*` flow.
