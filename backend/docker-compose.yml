@@ -216,7 +216,9 @@ services:
       VPS_MINIO_METADATA_SECRET_ACCESS_KEY: ${VPS_MINIO_METADATA_SECRET_ACCESS_KEY:-}
       CLOUDFLARE_R2_METADATA_BUCKET: ${CLOUDFLARE_R2_METADATA_BUCKET:-}
     expose: ["8096"]
-    networks: [platform]
+    # Provider S3 APIs require outbound egress; keep the service private on
+    # the platform network and add only the dedicated egress network.
+    networks: [platform, egress]
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8096/readyz"]
       interval: 10s
