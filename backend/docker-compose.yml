@@ -6,9 +6,12 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
       FEDERATION_DATABASE_NAME: ${FEDERATION_DATABASE_NAME:-testagram_federation}
+      FEDERATION_DATABASE_USER: ${FEDERATION_DATABASE_USER:-}
+      FEDERATION_DATABASE_PASSWORD: ${FEDERATION_DATABASE_PASSWORD:-}
     volumes:
       - ../migrations:/migrations:ro
       - ../scripts/migrate-data-centre.sh:/scripts/migrate-data-centre.sh:ro
+      - ../scripts/provision-federation-database.sh:/scripts/provision-federation-database.sh:ro
     entrypoint: ["/bin/sh", "/scripts/migrate-data-centre.sh"]
     restart: "no"
     networks: [platform]
@@ -48,6 +51,7 @@ services:
       FEDERATION_INGRESS_TOKEN: ${FEDERATION_INTERNAL_TOKEN:?Set FEDERATION_INTERNAL_TOKEN in backend/.env}
       FEDERATION_DELIVERY_WORKER_ENABLED: ${FEDERATION_DELIVERY_WORKER_ENABLED:-false}
       FEDERATION_OUTBOX_POLLER_ENABLED: ${FEDERATION_OUTBOX_POLLER_ENABLED:-false}
+      FEDERATION_INBOX_ACCEPT_ENABLED: ${FEDERATION_INBOX_ACCEPT_ENABLED:-false}
       FEDERATION_INBOX_WORKER_ENABLED: ${FEDERATION_INBOX_WORKER_ENABLED:-false}
     expose: ["8081"]
     networks:
@@ -169,35 +173,17 @@ services:
     profiles: ["media"]
     image: postgres:17-alpine
     restart: "no"
-    entrypoint: ["/bin/sh", "-ec"]
-    command: |
-      set -eu
-      : "$${DATABASE_URL:?Set DATABASE_URL}"
-      : "$${MEDIA_DATABASE_URL:?Set MEDIA_DATABASE_URL}"
-      name="$${MEDIA_DATABASE_NAME:-testagram_media}"
-      case "$$name" in ""|*[!A-Za-z0-9_]*)
-        echo "MEDIA_DATABASE_NAME must contain only letters, digits and underscores" >&2
-        exit 1
-        ;;
-      esac
-      if [ "$$MEDIA_DATABASE_URL" = "$$DATABASE_URL" ]; then
-        echo "Media lifecycle requires a separate database from the Backend database" >&2
-        exit 1
-      fi
-      exists="$$(psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc "SELECT 1 FROM pg_database WHERE datname = '$$name'")"
-      if [ "$$exists" != "1" ]; then
-        psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$$name\""
-      fi
-      psql "$$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql
-      psql "$$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/002_primary_origin_restore.sql
+    entrypoint: ["/bin/sh", "/scripts/provision-media-database.sh"]
     environment:
       DATABASE_URL: ${DATABASE_URL:-}
       MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}
       MEDIA_DATABASE_NAME: ${MEDIA_DATABASE_NAME:-testagram_media}
+      MEDIA_DATABASE_USER: ${MEDIA_DATABASE_USER:-}
+      MEDIA_DATABASE_PASSWORD: ${MEDIA_DATABASE_PASSWORD:-}
     volumes:
+      - ../scripts/provision-media-database.sh:/scripts/provision-media-database.sh:ro
       - ./services/media/migrations:/migrations:ro
     networks: [platform]
-
   media:
     profiles: ["media"]
     build:
@@ -221,6 +207,13 @@ services:
       CLOUDFLARE_R2_BUCKET: ${CLOUDFLARE_R2_BUCKET:-}
       CLOUDFLARE_R2_ACCESS_KEY_ID: ${CLOUDFLARE_R2_ACCESS_KEY_ID:-}
       CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}
+      # MinIO + R2 hold metadata sidecars only; these are not a third media-byte copy.
+      VPS_MINIO_ENDPOINT: ${VPS_MINIO_ENDPOINT:-http://object-storage:9000}
+      VPS_MINIO_REGION: ${VPS_MINIO_REGION:-us-east-1}
+      VPS_MINIO_METADATA_BUCKET: ${VPS_MINIO_METADATA_BUCKET:-}
+      VPS_MINIO_METADATA_ACCESS_KEY_ID: ${VPS_MINIO_METADATA_ACCESS_KEY_ID:-}
+      VPS_MINIO_METADATA_SECRET_ACCESS_KEY: ${VPS_MINIO_METADATA_SECRET_ACCESS_KEY:-}
+      CLOUDFLARE_R2_METADATA_BUCKET: ${CLOUDFLARE_R2_METADATA_BUCKET:-}
     expose: ["8096"]
     networks: [platform]
     healthcheck:

@@ -1,9 +1,9 @@
 name: testagram-vps-ci
 on:
   push:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-testagram-runtime-integration.py","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh",".github/workflows/vps-ci.yml"]
   pull_request:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-testagram-runtime-integration.py","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh",".github/workflows/vps-ci.yml"]
   workflow_dispatch:
 jobs:
   go:
@@ -21,8 +21,11 @@ jobs:
       FEDERATION_INTERNAL_TOKEN: ci-federation-ingress-token-long-enough
       FEDERATION_BACKEND_INTERNAL_TOKEN: ci-federation-backend-read-token-long-enough
       FEDERATION_INGRESS_TOKEN: ci-federation-ingress-token-long-enough
+      FEDERATION_INBOX_ACCEPT_ENABLED: "false"
       FEDERATION_DATABASE_NAME: testagram_federation
-      FEDERATION_DATABASE_URL: postgresql://postgres:testagram@federation-db:5432/testagram_federation?sslmode=disable
+      FEDERATION_DATABASE_USER: testagram_federation_ci
+      FEDERATION_DATABASE_PASSWORD: ci-federation-db-password-only
+      FEDERATION_DATABASE_URL: postgresql://testagram_federation_ci:ci-federation-db-password-only@federation-db:5432/testagram_federation?sslmode=disable
       FEDERATION_PUBLIC_BASE_URL: https://testagram.site
       FEDERATION_INSTANCE_DOMAIN: testagram.site
       CADDY_IMAGE: caddy:2.10-alpine
@@ -39,7 +42,10 @@ jobs:
       FRESH_MEDIA_ENABLED: "false"
       DATA_CENTRE_MEDIA_API_URL: http://media:8096
       FRESH_DATA_CENTRE_INTERNAL_TOKEN: ci-media-internal-token-at-least-32-chars
-      MEDIA_DATABASE_URL: postgresql://postgres:testagram@db:5432/media?sslmode=disable
+      MEDIA_DATABASE_NAME: media
+      MEDIA_DATABASE_USER: testagram_media_ci
+      MEDIA_DATABASE_PASSWORD: ci-media-db-password-only
+      MEDIA_DATABASE_URL: postgresql://testagram_media_ci:ci-media-db-password-only@db:5432/media?sslmode=disable
       B2_S3_ENDPOINT: https://s3.us-west-004.backblazeb2.com
       B2_S3_REGION: us-west-004
       B2_S3_BUCKET: ci-media-primary
@@ -78,7 +84,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: Trendyzima/Testagram-backend-
-          ref: e440e341a98004b4e982035f068f80aaf6f64dee
+          ref: bbbd3ea0ca4b2d91837476946e15e9d692e918e7
           path: backend-source
           persist-credentials: false
       - name: Verify canonical Backend Federation schema contract
@@ -112,8 +118,11 @@ jobs:
           from pathlib import Path
           workflow = Path(".github/workflows/media-provider-smoke.yml").read_text()
           compose = Path("backend/docker-compose.yml").read_text()
-          assert "002_primary_origin_restore.sql" in compose, "deployment media-migrate must apply the primary restoration migration"
-          assert compose.count('psql "$$MEDIA_DATABASE_URL"') == 2, "Compose must escape MEDIA_DATABASE_URL for the container shell in both media migrations"
+          provisioner = Path("scripts/provision-media-database.sh").read_text()
+          assert 'entrypoint: ["/bin/sh", "/scripts/provision-media-database.sh"]' in compose, "deployment media-migrate must execute the mounted database provisioner"
+          assert "../scripts/provision-media-database.sh:/scripts/provision-media-database.sh:ro" in compose, "deployment media-migrate must mount the provisioner read-only"
+          assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql' in provisioner, "media provisioner must apply the lifecycle migration"
+          assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/002_primary_origin_restore.sql' in provisioner, "media provisioner must apply the primary restoration migration"
           for required in (
               "confirm_live_provider_writes",
               "MEDIA_DATABASE_URL",
@@ -127,6 +136,60 @@ jobs:
           assert "services:" in workflow and "postgres:17-alpine" in workflow, "live lifecycle test must use isolated PostgreSQL"
           PY
       - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker ./backend/services/platform ./backend/services/media
+
+      - name: Exercise isolated media database bootstrap and least-privilege role
+        shell: bash
+        run: |
+          set -euo pipefail
+          network="${TESTAGRAM_PLATFORM_NETWORK:-testagram-platform}"
+          docker network create "$network"
+          cleanup() {
+            docker rm -f testagram-media-migrate-db >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run -d --name testagram-media-migrate-db --network "$network" \
+            --network-alias db --network-alias postgres --network-alias federation-db \
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=testagram -e POSTGRES_DB=postgres \
+            postgres:17-alpine
+          for attempt in $(seq 1 40); do
+            if docker exec testagram-media-migrate-db pg_isready -U postgres -d postgres >/dev/null 2>&1; then break; fi
+            if [ "$attempt" -eq 40 ]; then echo "::error::CI PostgreSQL did not become healthy"; exit 1; fi
+            sleep 2
+          done
+          docker compose -p testagram-media-migrate-ci -f backend/docker-compose.yml --profile media run --rm --no-deps media-migrate
+          role_attrs="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT (rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls)::text FROM pg_roles WHERE rolname = 'testagram_media_ci'")"
+          [[ "$role_attrs" == "true" ]] || { echo "::error::Media database role must be login-capable without superuser, database-creation, role-creation, replication or bypass-RLS privileges: $role_attrs"; exit 1; }
+          db_owner="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'media'")"
+          [[ "$db_owner" == "testagram_media_ci" ]] || { echo "::error::Media database owner mismatch: $db_owner"; exit 1; }
+          docker run --rm --network "$network" -e PGPASSWORD="$MEDIA_DATABASE_PASSWORD" postgres:17-alpine \
+            psql -h db -U "$MEDIA_DATABASE_USER" -d media -v ON_ERROR_STOP=1 -Atqc "SELECT current_user || ':' || current_database()" | grep -qx 'testagram_media_ci:media'
+          docker exec testagram-media-migrate-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS public.admin_only_media_probe(secret text); INSERT INTO public.admin_only_media_probe VALUES ('private'); REVOKE ALL ON public.admin_only_media_probe FROM PUBLIC" >/dev/null
+          if docker run --rm --network "$network" -e PGPASSWORD="$MEDIA_DATABASE_PASSWORD" postgres:17-alpine \
+            psql -h db -U "$MEDIA_DATABASE_USER" -d postgres -v ON_ERROR_STOP=1 -c "SELECT * FROM public.admin_only_media_probe" >/dev/null 2>&1; then
+            echo "::error::Media database role unexpectedly read Backend administrative database"
+            exit 1
+          fi
+          echo "Media migration creates a dedicated non-superuser database owner; runtime credentials cannot read the Backend administrative database."
+          docker run --rm --network "$network" \
+            -e DATABASE_URL="postgresql://postgres:testagram@db:5432/postgres?sslmode=disable" \
+            -e FEDERATION_DATABASE_NAME=testagram_federation \
+            -e FEDERATION_DATABASE_USER=testagram_federation_ci \
+            -e FEDERATION_DATABASE_PASSWORD=ci-federation-db-password-only \
+            -v "$PWD/scripts/provision-federation-database.sh:/scripts/provision-federation-database.sh:ro" \
+            postgres:17-alpine /bin/sh /scripts/provision-federation-database.sh
+          federation_role_attrs="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT (rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls)::text FROM pg_roles WHERE rolname = 'testagram_federation_ci'")"
+          [[ "$federation_role_attrs" == "true" ]] || { echo "::error::Federation database role must be login-capable without superuser, database-creation, role-creation, replication or bypass-RLS privileges: $federation_role_attrs"; exit 1; }
+          federation_db_owner="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'testagram_federation'")"
+          [[ "$federation_db_owner" == "testagram_federation_ci" ]] || { echo "::error::Federation database owner mismatch: $federation_db_owner"; exit 1; }
+          docker run --rm --network "$network" -e PGPASSWORD=ci-federation-db-password-only postgres:17-alpine \
+            psql -h federation-db -U testagram_federation_ci -d testagram_federation -v ON_ERROR_STOP=1 -Atqc "SELECT current_user || ':' || current_database()" | grep -qx 'testagram_federation_ci:testagram_federation'
+          if docker run --rm --network "$network" -e PGPASSWORD=ci-federation-db-password-only postgres:17-alpine \
+            psql -h federation-db -U testagram_federation_ci -d postgres -v ON_ERROR_STOP=1 -c "SELECT * FROM public.admin_only_media_probe" >/dev/null 2>&1; then
+            echo "::error::Federation database role unexpectedly read Backend administrative database"
+            exit 1
+          fi
+          echo "Federation protocol state uses a dedicated non-superuser database owner, isolated from Backend product tables."
       - name: Validate canonical Backend platform boundary
         run: |
           set -euo pipefail
@@ -135,6 +198,7 @@ jobs:
           python3 scripts/test-backup-scope-contract.py
           bash scripts/validate-testagram-platform-contracts.sh
           python -m pip install --disable-pip-version-check PyYAML
+          python scripts/validate-testagram-runtime-integration.py
           python scripts/validate-platform-openapi.py
           bash -n vps/install.sh
           bash -n scripts/install-local-docker.sh
@@ -187,13 +251,13 @@ jobs:
       - name: Validate Compose syntax
         run: |
           set -euo pipefail
-          ! grep -Eqi 'APPWRITE_ENDPOINT|APPWRITE_PROJECT_ID|appwriteauth' backend/docker-compose.yml backend/services/video/*.go backend/services/notification/*.go backend/internal/nativeauth
+          ! grep -Eqi 'APPWRITE_ENDPOINT|APPWRITE_PROJECT_ID|appwriteauth' backend/docker-compose.yml backend/services/video/*.go backend/services/notification/*.go backend/internal/nativeauth/*.go
           grep -Fq 'TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:?Set TESTAGRAM_AUTH_JWT_SECRET in backend/.env}' backend/docker-compose.yml
           docker compose -f backend/docker-compose.yml config
           # Optional media profile must not make the default stack require media-only credentials.
           env -u MEDIA_DATABASE_URL -u MEDIA_DATABASE_NAME docker compose -f backend/docker-compose.yml config --quiet
           docker compose --profile media -f backend/docker-compose.yml config --quiet
-          grep -Fq '${MEDIA_DATABASE_URL:?Set MEDIA_DATABASE_URL}' backend/docker-compose.yml
+          grep -Fq 'MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}' backend/docker-compose.yml
           docker compose -f vps/docker-compose.yml config
           # The VPS stack has one canonical API Compose model; Backend self-hosted services are validated separately.
           ! grep -Eqi "supabase|SUPABASE" vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml
