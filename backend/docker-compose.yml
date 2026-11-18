@@ -194,9 +194,9 @@ services:
       fi
       export MEDIA_DATABASE_NAME="$$name"
       psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
-      \\getenv media_user MEDIA_DATABASE_USER
-      \\getenv media_password MEDIA_DATABASE_PASSWORD
-      \\getenv media_db MEDIA_DATABASE_NAME
+      \getenv media_user MEDIA_DATABASE_USER
+      \getenv media_password MEDIA_DATABASE_PASSWORD
+      \getenv media_db MEDIA_DATABASE_NAME
       SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'media_user', :'media_password')
       WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'media_user') \gexec
       SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'media_user', :'media_password') \gexec
