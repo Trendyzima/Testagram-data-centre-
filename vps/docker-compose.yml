@@ -163,6 +163,7 @@ services:
       FEDERATION_DELIVERY_WORKER_ENABLED: ${FEDERATION_DELIVERY_WORKER_ENABLED:-false}
       FEDERATION_OUTBOX_POLLER_ENABLED: ${FEDERATION_OUTBOX_POLLER_ENABLED:-false}
       FEDERATION_INBOX_WORKER_ENABLED: ${FEDERATION_INBOX_WORKER_ENABLED:-false}
+      FEDERATION_INBOX_ACCEPT_ENABLED: ${FEDERATION_INBOX_ACCEPT_ENABLED:-false}
     expose: ["8081"]
     networks: [services, federation, platform]
     # Backend is reached over the shared private platform network; do not
