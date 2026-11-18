@@ -211,7 +211,7 @@ func (s *server) verify(w http.ResponseWriter,r *http.Request){
 func (s *server) status(w http.ResponseWriter,r *http.Request){
 	if r.Method!=http.MethodGet{method(w,"GET");return};if !s.auth(w,r){return}
 	owner,ns,key:=r.URL.Query().Get("owner_id"),r.URL.Query().Get("namespace"),r.URL.Query().Get("key")
-	if !validIdentity(owner)||!validNamespace(ns)||!validMediaKey(key,owner){writeErr(w,400,"invalid status query");return}
+	if !validIdentity(owner)||!validNamespace(ns)||!validObjectForNamespace(ns,key,owner){writeErr(w,400,"invalid status query");return}
 	var o object;err:=s.db.QueryRow(r.Context(),`select owner_id,namespace,object_key,content_type,size_bytes,coalesce(sha256,''),status,primary_verified_at,replica_verified_at from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&o.OwnerID,&o.Namespace,&o.Key,&o.ContentType,&o.Size,&o.SHA,&o.Status,&o.PrimaryVerified,&o.ReplicaVerified)
 	if errors.Is(err,pgx.ErrNoRows){writeErr(w,404,"object not found");return};if err!=nil{writeErr(w,503,"media state unavailable");return}
 	writeJSON(w,200,map[string]any{"status":o.Status,"content_type":o.ContentType,"size_bytes":o.Size,"sha256":o.SHA,"primary_verified_at":o.PrimaryVerified,"replica_verified_at":o.ReplicaVerified})
@@ -220,7 +220,8 @@ func (s *server) downloadURL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost { method(w, "POST"); return }
 	if !s.auth(w, r) { return }
 	var in downloadRequest
-	if !decode(w, r, &in) || !validIdentity(in.RequesterID) || !validIdentity(in.OwnerID) || !validNamespace(in.Namespace) || !validMediaKey(in.Key, in.OwnerID) { writeErr(w, 400, "invalid download request"); return }
+	if !decode(w, r, &in) || !validIdentity(in.RequesterID) || !validIdentity(in.OwnerID) || !validNamespace(in.Namespace) || !validObjectForNamespace(in.Namespace, in.Key, in.OwnerID) { writeErr(w, 400, "invalid download request"); return }
+	if in.Namespace == "identity-evidence-private" && in.RequesterID != in.OwnerID { writeErr(w, 403, "identity evidence is restricted to its owning Backend application"); return }
 	if in.Method == "" { in.Method = http.MethodGet }; if in.Method != http.MethodGet && in.Method != http.MethodHead { writeErr(w, 400, "download method must be GET or HEAD"); return }
 	var status, contentType string; var size int64
 	err := s.db.QueryRow(r.Context(), `select status,size_bytes,content_type from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key).Scan(&status, &size, &contentType)
@@ -388,13 +389,61 @@ func objectURL(s s3Store,key string)(*url.URL,error){
 func signingKey(secret,day,region string)[]byte{k:=hmacSHA([]byte("AWS4"+secret),day);k=hmacSHA(k,region);k=hmacSHA(k,"s3");return hmacSHA(k,"aws4_request")}
 func hmacSHA(key []byte,data string)[]byte{h:=hmac.New(sha256.New,key);_,_=h.Write([]byte(data));return h.Sum(nil)}
 func hashHex(b []byte)string{h:=sha256.Sum256(b);return hex.EncodeToString(h[:])}
-func validUpload(in uploadRequest)bool{return validIdentity(in.OwnerID)&&validNamespace(in.Namespace)&&validMediaKey(in.Key,in.OwnerID)&&allowedMediaType(in.ContentType)&&in.SizeBytes>0&&in.SizeBytes<=5<<30}
-func allowedMediaType(v string)bool{switch v{case "image/jpeg","image/png","image/webp","image/gif","image/avif","video/mp4","video/webm":return true};return false}
-func validMediaKey(key,owner string)bool{if !validObjectKey(key)||!validIdentity(owner){return false};parts:=strings.Split(key,"/");if len(parts)!=3||parts[0]!="users"||parts[1]!=owner||len(parts[2])!=32||strings.ToLower(parts[2])!=parts[2]{return false};_,err:=hex.DecodeString(parts[2]);return err==nil}
+func validUpload(in uploadRequest) bool {
+	if !validIdentity(in.OwnerID) || !validNamespace(in.Namespace) || !validObjectKey(in.Key) || in.SizeBytes < 1 {
+		return false
+	}
+	if in.Namespace == "identity-evidence-private" {
+		return validIdentityEvidenceKey(in.Key, in.OwnerID) && allowedIdentityEvidenceType(in.ContentType) && in.SizeBytes <= 15<<20
+	}
+	return validMediaKey(in.Key, in.OwnerID) && allowedMediaType(in.ContentType) && in.SizeBytes <= 5<<30
+}
+func allowedMediaType(v string) bool {
+	switch v { case "image/jpeg", "image/png", "image/webp", "image/gif", "image/avif", "video/mp4", "video/webm": return true }
+	return false
+}
+func allowedIdentityEvidenceType(v string) bool {
+	switch v { case "image/jpeg", "image/png", "image/webp", "application/pdf": return true }
+	return false
+}
+func validMediaKey(key, owner string) bool {
+	if !validObjectKey(key) || !validIdentity(owner) { return false }
+	parts := strings.Split(key, "/")
+	if len(parts) != 3 || parts[0] != "users" || parts[1] != owner || len(parts[2]) != 32 || strings.ToLower(parts[2]) != parts[2] { return false }
+	_, err := hex.DecodeString(parts[2])
+	return err == nil
+}
+func validIdentityEvidenceKey(key, owner string) bool {
+	if !validObjectKey(key) || !validIdentity(owner) { return false }
+	parts := strings.Split(key, "/")
+	if len(parts) != 4 || parts[0] != "identity" || parts[1] != owner || !validUUID(parts[2]) { return false }
+	name := parts[3]
+	if len(name) < 36+5+1+32 || !validUUID(name[:36]) { return false }
+	rest := name[36:]
+	ext := ""
+	for _, candidate := range []string{".jpg", ".png", ".webp", ".pdf"} {
+		if strings.HasPrefix(rest, candidate+"-") { ext = candidate; rest = strings.TrimPrefix(rest, candidate+"-"); break }
+	}
+	if ext == "" || len(rest) < 32 || len(rest) > 128 { return false }
+	for _, r := range rest {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') { return false }
+	}
+	return true
+}
+func validUUID(value string) bool {
+	if len(value) != 36 { return false }
+	for i, r := range value {
+		if i == 8 || i == 13 || i == 18 || i == 23 { if r != '-' { return false }; continue }
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F') { return false }
+	}
+	return true
+}
 func objectLockKey(owner,namespace,key string)string{return fmt.Sprintf("%d:%s:%d:%s:%s",len(owner),owner,len(namespace),namespace,key)}
 func validObjectKey(key string)bool{if key==""||len(key)>1024||strings.HasPrefix(key,"/")||strings.ContainsAny(key,"\\\x00\r\n"){return false};for _,part:=range strings.Split(key,"/"){if part==""||part=="."||part==".."{return false}};return true}
 func validIdentity(v string)bool{if len(v)<1||len(v)>128{return false};for _,r:=range v{if !(r>='a'&&r<='z'||r>='A'&&r<='Z'||r>='0'&&r<='9'||r=='-'||r=='_'||r=='.'){return false}};return true}
-func validNamespace(v string)bool{return v=="media-public"||v=="media-private"}
+func validNamespace(v string)bool{return v=="media-public"||v=="media-private"||v=="identity-evidence-private"}
+func validObjectForNamespace(namespace,key,owner string)bool{if namespace=="identity-evidence-private"{return validIdentityEvidenceKey(key,owner)};return validMediaKey(key,owner)}
+
 func decode(w http.ResponseWriter,r *http.Request,v any)bool{r.Body=http.MaxBytesReader(w,r.Body,maxJSON);defer r.Body.Close();d:=json.NewDecoder(r.Body);d.DisallowUnknownFields();if d.Decode(v)!=nil{return false};var extra any;return d.Decode(&extra)==io.EOF}
 func writeErr(w http.ResponseWriter,status int,msg string){writeJSON(w,status,map[string]string{"error":msg})}
 func writeJSON(w http.ResponseWriter,status int,v any){w.Header().Set("Content-Type","application/json");w.WriteHeader(status);_=json.NewEncoder(w).Encode(v)}
