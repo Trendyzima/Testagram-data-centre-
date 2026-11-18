@@ -39,12 +39,12 @@ jobs:
       IDENTITY_EVIDENCE_INTERNAL_TOKEN: ci-live-identity-evidence-smoke-token-32-characters
       MEDIA_SMOKE_B2_ENDPOINT: ${{ secrets.MEDIA_SMOKE_B2_ENDPOINT || secrets.B2_S3_ENDPOINT }}
       MEDIA_SMOKE_B2_REGION: ${{ secrets.MEDIA_SMOKE_B2_REGION || secrets.B2_S3_REGION }}
-      MEDIA_SMOKE_B2_BUCKET: ${{ secrets.MEDIA_SMOKE_B2_BUCKET || vars.B2_S3_PRIVATE_BUCKET || secrets.B2_S3_BUCKET }}
+      MEDIA_SMOKE_B2_BUCKET: ${{ secrets.MEDIA_SMOKE_B2_BUCKET || 'testagram-media-staging-b2' }}
       MEDIA_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_B2_ACCESS_KEY_ID || secrets.B2_S3_ACCESS_KEY_ID }}
       MEDIA_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_B2_SECRET_ACCESS_KEY || secrets.B2_S3_SECRET_ACCESS_KEY }}
       MEDIA_SMOKE_R2_ENDPOINT: ${{ secrets.MEDIA_SMOKE_R2_ENDPOINT || vars.CLOUDFLARE_R2_ENDPOINT || secrets.TESTAGRAM_BACKUP_S3_ENDPOINT }}
       MEDIA_SMOKE_R2_REGION: ${{ secrets.MEDIA_SMOKE_R2_REGION || 'auto' }}
-      MEDIA_SMOKE_R2_BUCKET: ${{ secrets.MEDIA_SMOKE_R2_BUCKET || vars.CLOUDFLARE_R2_PRIVATE_BUCKET || 'testagram-media-staging-r2' }}
+      MEDIA_SMOKE_R2_BUCKET: ${{ secrets.MEDIA_SMOKE_R2_BUCKET || 'testagram-media-staging-r2' }}
       MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_R2_ACCESS_KEY_ID || secrets.CLOUDFLARE_R2_ACCESS_KEY_ID || secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
       MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_R2_SECRET_ACCESS_KEY || secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY || secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -55,65 +55,51 @@ jobs:
         with:
           go-version: "1.26.11"
           cache: true
-      - name: Ensure the isolated R2 smoke bucket exists
+      - name: Provision isolated private B2 and R2 smoke buckets
         env:
-          R2_BUCKET: ${{ env.MEDIA_SMOKE_R2_BUCKET }}
+          R2_ENDPOINT: ${{ env.MEDIA_SMOKE_R2_ENDPOINT }}
+          B2_ENDPOINT: ${{ env.MEDIA_SMOKE_B2_ENDPOINT }}
         run: |
           set -euo pipefail
-          case "$MEDIA_SMOKE_B2_BUCKET" in *staging*|*smoke*) ;; *) echo "Refusing live provider smoke against a non-staging B2 bucket." >&2; exit 1 ;; esac
-          case "$R2_BUCKET" in *staging*|*smoke*) ;; *) echo "Refusing to provision a non-staging R2 bucket." >&2; exit 1 ;; esac
-          [[ "$R2_BUCKET" != "testagram-production-backups" ]] || { echo "Refusing to reuse the Restic backup bucket for media smoke." >&2; exit 1; }
-          api_ready=false
-          if [[ -n "$CLOUDFLARE_ACCOUNT_ID" && -n "$CLOUDFLARE_API_TOKEN" ]]; then
-            echo "::add-mask::$CLOUDFLARE_API_TOKEN"
-            status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-buckets.json" -w '%{http_code}' \
-              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
-            if [[ "$status" == "200" ]]; then
-              api_ready=true
-              if jq -e --arg name "$R2_BUCKET" '.result.buckets[]? | select(.name == $name)' "$RUNNER_TEMP/r2-buckets.json" >/dev/null; then
-                echo "R2 staging bucket already exists."
-                exit 0
-              fi
-              create_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
-                -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
-                --data "$(jq -nc --arg name "$R2_BUCKET" '{name:$name,locationHint:"apac"}')" \
-                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
-              if [[ "$create_status" == "200" ]] && jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
-                echo "Created isolated R2 staging bucket through Cloudflare API."
-                exit 0
-              fi
-              jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-create.json" || true
-            else
-              echo "Cloudflare R2 bucket listing returned HTTP $status; trying bucket creation permission before S3 fallback."
-              create_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
-                -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
-                --data "$(jq -nc --arg name "$R2_BUCKET" '{name:$name,locationHint:"apac"}')" \
-                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
-              if [[ "$create_status" == "200" ]] && jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
-                echo "Created isolated R2 staging bucket through Cloudflare API."
-                exit 0
-              fi
-              jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-buckets.json" || true
-              jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-create.json" || true
-            fi
-          else
-            echo "Cloudflare API credentials unavailable; falling back to the existing R2 S3 key pair."
+          for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_R2_BUCKET"; do
+            case "$bucket" in *staging*|*smoke*) ;; *) echo "Refusing live provider smoke against a non-staging bucket." >&2; exit 1 ;; esac
+          done
+          [[ "$MEDIA_SMOKE_R2_BUCKET" != "testagram-production-backups" ]] || { echo "Refusing to reuse the Restic backup bucket." >&2; exit 1; }
+          if [[ -z "$R2_ENDPOINT" && -n "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            R2_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
           fi
+          for name in MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION MEDIA_SMOKE_B2_ACCESS_KEY_ID MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY; do
+            if [[ -z "${!name:-}" ]]; then echo "Missing dedicated staging credential: $name (production bucket credentials are never substituted)." >&2; exit 1; fi
+          done
+          [[ -n "$R2_ENDPOINT" ]] || { echo "Missing R2 S3 endpoint; configure MEDIA_SMOKE_R2_ENDPOINT or CLOUDFLARE_ACCOUNT_ID." >&2; exit 1; }
           docker run --rm --entrypoint /bin/sh \
-            -e R2_ENDPOINT="$MEDIA_SMOKE_R2_ENDPOINT" -e R2_REGION="$MEDIA_SMOKE_R2_REGION" \
-            -e R2_BUCKET="$R2_BUCKET" -e R2_ACCESS_KEY_ID="$MEDIA_SMOKE_R2_ACCESS_KEY_ID" \
-            -e R2_SECRET_ACCESS_KEY="$MEDIA_SMOKE_R2_SECRET_ACCESS_KEY" \
+            -e B2_ENDPOINT="$MEDIA_SMOKE_B2_ENDPOINT" -e B2_REGION="$MEDIA_SMOKE_B2_REGION" \
+            -e B2_BUCKET="$MEDIA_SMOKE_B2_BUCKET" -e B2_ACCESS="$MEDIA_SMOKE_B2_ACCESS_KEY_ID" \
+            -e B2_SECRET="$MEDIA_SMOKE_B2_SECRET_ACCESS_KEY" \
+            -e R2_ENDPOINT="$R2_ENDPOINT" -e R2_REGION="$MEDIA_SMOKE_R2_REGION" \
+            -e R2_BUCKET="$MEDIA_SMOKE_R2_BUCKET" -e R2_ACCESS="$MEDIA_SMOKE_R2_ACCESS_KEY_ID" \
+            -e R2_SECRET="$MEDIA_SMOKE_R2_SECRET_ACCESS_KEY" \
             ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z -ec '
-              mc alias set r2 "$R2_ENDPOINT" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$R2_REGION" >/dev/null
+              mc alias set b2 "$B2_ENDPOINT" "$B2_ACCESS" "$B2_SECRET" --api S3v4 --path auto --region "$B2_REGION" >/dev/null
+              mc alias set r2 "$R2_ENDPOINT" "$R2_ACCESS" "$R2_SECRET" --api S3v4 --path auto --region "$R2_REGION" >/dev/null
+              mc mb --ignore-existing "b2/$B2_BUCKET"
               mc mb --ignore-existing "r2/$R2_BUCKET"
+              mc anonymous set none "b2/$B2_BUCKET"
+              mc anonymous set none "r2/$R2_BUCKET"
+              mc stat "b2/$B2_BUCKET" >/dev/null
+              mc stat "r2/$R2_BUCKET" >/dev/null
             '
       - name: Verify staging-only provider configuration
         run: |
           set -euo pipefail
-          for name in MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION MEDIA_SMOKE_B2_BUCKET MEDIA_SMOKE_B2_ACCESS_KEY_ID MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_ENDPOINT MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_BUCKET MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY; do
-            if [ -z "${!name:-}" ]; then echo "Missing required GitHub secret: $name" >&2; exit 1; fi
+          R2_ENDPOINT="${MEDIA_SMOKE_R2_ENDPOINT:-}"
+          if [[ -z "$R2_ENDPOINT" && -n "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            R2_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          fi
+          for name in MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION MEDIA_SMOKE_B2_BUCKET MEDIA_SMOKE_B2_ACCESS_KEY_ID MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_BUCKET MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY; do
+            if [[ -z "${!name:-}" ]]; then echo "Missing dedicated staging credential: $name" >&2; exit 1; fi
           done
+          [[ -n "$R2_ENDPOINT" ]] || { echo "Missing R2 S3 endpoint." >&2; exit 1; }
           for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_R2_BUCKET"; do
             case "$bucket" in
               *staging*|*smoke*) ;;
