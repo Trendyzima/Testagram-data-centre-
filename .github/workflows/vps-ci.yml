@@ -158,8 +158,8 @@ jobs:
             sleep 2
           done
           docker compose -p testagram-media-migrate-ci -f backend/docker-compose.yml --profile media run --rm --no-deps media-migrate
-          role_attrs="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT rolsuper || ':' || rolcreatedb || ':' || rolcreaterole FROM pg_roles WHERE rolname = 'testagram_media_ci'")"
-          [[ "$role_attrs" == "f:f:f" ]] || { echo "::error::Media database role has elevated privileges: $role_attrs"; exit 1; }
+          role_attrs="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT (rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls)::text FROM pg_roles WHERE rolname = 'testagram_media_ci'")"
+          [[ "$role_attrs" == "true" ]] || { echo "::error::Media database role must be login-capable without superuser, database-creation, role-creation, replication or bypass-RLS privileges: $role_attrs"; exit 1; }
           db_owner="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'media'")"
           [[ "$db_owner" == "testagram_media_ci" ]] || { echo "::error::Media database owner mismatch: $db_owner"; exit 1; }
           docker run --rm --network "$network" -e PGPASSWORD="$MEDIA_DATABASE_PASSWORD" postgres:17-alpine \
@@ -178,8 +178,8 @@ jobs:
             -e FEDERATION_DATABASE_PASSWORD=ci-federation-db-password-only \
             -v "$PWD/scripts/provision-federation-database.sh:/scripts/provision-federation-database.sh:ro" \
             postgres:17-alpine /bin/sh /scripts/provision-federation-database.sh
-          federation_role_attrs="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT rolsuper || ':' || rolcreatedb || ':' || rolcreaterole FROM pg_roles WHERE rolname = 'testagram_federation_ci'")"
-          [[ "$federation_role_attrs" == "f:f:f" ]] || { echo "::error::Federation database role has elevated privileges: $federation_role_attrs"; exit 1; }
+          federation_role_attrs="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT (rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls)::text FROM pg_roles WHERE rolname = 'testagram_federation_ci'")"
+          [[ "$federation_role_attrs" == "true" ]] || { echo "::error::Federation database role must be login-capable without superuser, database-creation, role-creation, replication or bypass-RLS privileges: $federation_role_attrs"; exit 1; }
           federation_db_owner="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'testagram_federation'")"
           [[ "$federation_db_owner" == "testagram_federation_ci" ]] || { echo "::error::Federation database owner mismatch: $federation_db_owner"; exit 1; }
           docker run --rm --network "$network" -e PGPASSWORD=ci-federation-db-password-only postgres:17-alpine \
