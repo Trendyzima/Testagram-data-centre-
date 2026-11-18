@@ -60,23 +60,54 @@ jobs:
           R2_BUCKET: ${{ env.MEDIA_SMOKE_R2_BUCKET }}
         run: |
           set -euo pipefail
-          for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN R2_BUCKET; do
-            [[ -n "${!name:-}" ]] || { echo "Missing existing Cloudflare configuration: $name" >&2; exit 1; }
-          done
-          status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-buckets.json" -w '%{http_code}' \
-            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets?name_contains=$R2_BUCKET")"
-          [[ "$status" == "200" ]] || { echo "Could not list Cloudflare R2 buckets." >&2; exit 1; }
-          if ! jq -e --arg name "$R2_BUCKET" '.result.buckets[]? | select(.name == $name)' "$RUNNER_TEMP/r2-buckets.json" >/dev/null; then
-            status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
-              -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
-              --data "$(jq -nc --arg name "$R2_BUCKET" '{name:$name,locationHint:"apac"}')" \
+          case "$MEDIA_SMOKE_B2_BUCKET" in *staging*|*smoke*) ;; *) echo "Refusing live provider smoke against a non-staging B2 bucket." >&2; exit 1 ;; esac
+          case "$R2_BUCKET" in *staging*|*smoke*) ;; *) echo "Refusing to provision a non-staging R2 bucket." >&2; exit 1 ;; esac
+          [[ "$R2_BUCKET" != "testagram-production-backups" ]] || { echo "Refusing to reuse the Restic backup bucket for media smoke." >&2; exit 1; }
+          api_ready=false
+          if [[ -n "$CLOUDFLARE_ACCOUNT_ID" && -n "$CLOUDFLARE_API_TOKEN" ]]; then
+            echo "::add-mask::$CLOUDFLARE_API_TOKEN"
+            status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-buckets.json" -w '%{http_code}' \
+              -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
               "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
-            if [[ "$status" != "200" ]] || ! jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
-              echo "Could not create the isolated R2 smoke bucket; check the existing Cloudflare token's R2 write permission." >&2
-              exit 1
+            if [[ "$status" == "200" ]]; then
+              api_ready=true
+              if jq -e --arg name "$R2_BUCKET" '.result.buckets[]? | select(.name == $name)' "$RUNNER_TEMP/r2-buckets.json" >/dev/null; then
+                echo "R2 staging bucket already exists."
+                exit 0
+              fi
+              create_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
+                -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
+                --data "$(jq -nc --arg name "$R2_BUCKET" '{name:$name,locationHint:"apac"}')" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
+              if [[ "$create_status" == "200" ]] && jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
+                echo "Created isolated R2 staging bucket through Cloudflare API."
+                exit 0
+              fi
+              jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-create.json" || true
+            else
+              echo "Cloudflare R2 bucket listing returned HTTP $status; trying bucket creation permission before S3 fallback."
+              create_status="$(curl -sS --connect-timeout 5 --max-time 30 -o "$RUNNER_TEMP/r2-create.json" -w '%{http_code}' \
+                -X POST -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' \
+                --data "$(jq -nc --arg name "$R2_BUCKET" '{name:$name,locationHint:"apac"}')" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets")"
+              if [[ "$create_status" == "200" ]] && jq -e '.success == true' "$RUNNER_TEMP/r2-create.json" >/dev/null; then
+                echo "Created isolated R2 staging bucket through Cloudflare API."
+                exit 0
+              fi
+              jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-buckets.json" || true
+              jq -c '{success,errors:[.errors[]? | {code,message}]}' "$RUNNER_TEMP/r2-create.json" || true
             fi
+          else
+            echo "Cloudflare API credentials unavailable; falling back to the existing R2 S3 key pair."
           fi
+          docker run --rm --entrypoint /bin/sh \
+            -e R2_ENDPOINT="$MEDIA_SMOKE_R2_ENDPOINT" -e R2_REGION="$MEDIA_SMOKE_R2_REGION" \
+            -e R2_BUCKET="$R2_BUCKET" -e R2_ACCESS_KEY_ID="$MEDIA_SMOKE_R2_ACCESS_KEY_ID" \
+            -e R2_SECRET_ACCESS_KEY="$MEDIA_SMOKE_R2_SECRET_ACCESS_KEY" \
+            ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z -ec '
+              mc alias set r2 "$R2_ENDPOINT" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" --api S3v4 --path auto --region "$R2_REGION" >/dev/null
+              mc mb --ignore-existing "r2/$R2_BUCKET"
+            '
       - name: Verify staging-only provider configuration
         run: |
           set -euo pipefail
