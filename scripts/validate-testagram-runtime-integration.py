@@ -105,6 +105,16 @@ require(env(dc, "media", "MEDIA_DATABASE_URL") == "${MEDIA_DATABASE_URL:-}",
         "Data Centre media must use its separate media database")
 require(env(dc, "media-migrate", "MEDIA_DATABASE_URL") == "${MEDIA_DATABASE_URL:-}",
         "Media migrations and media runtime must use the same media database")
+require("MEDIA_DATABASE_USER" in media_migrate.get("environment", {}) and
+        "MEDIA_DATABASE_PASSWORD" in media_migrate.get("environment", {}),
+        "Only the one-shot media migration job may receive the restricted media database role credentials")
+require("DATABASE_URL" not in media.get("environment", {}) and
+        "MEDIA_DATABASE_USER" not in media.get("environment", {}) and
+        "MEDIA_DATABASE_PASSWORD" not in media.get("environment", {}),
+        "Long-running media service must not receive database-admin or migration role credentials")
+require("CREATE ROLE" in service(dc, "media-migrate").get("command", "") and
+        "ALTER DATABASE" in service(dc, "media-migrate").get("command", ""),
+        "Media migration job must create and own the separate least-privilege media database")
 require(os.environ.get("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "").strip() and
         len(os.environ["FRESH_DATA_CENTRE_INTERNAL_TOKEN"].strip()) >= 32,
         "CI must provide the dedicated Backend/Data Centre media token")
