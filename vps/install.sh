@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="${TESTAGRAM_ROOT:-/opt/testagram}"
 BRANCH="${TESTAGRAM_REPO_BRANCH:-main}"
 REPO_URL="${TESTAGRAM_REPO_URL:-https://github.com/Trendyzima/Testagram-data-centre-.git}"
-ENV_FILE="${TESTAGRAM_FRESH_ENV_FILE:-$ROOT/vps/fresh.env}"
+ENV_FILE="${TESTAGRAM_VPS_ENV_FILE:-${TESTAGRAM_FRESH_ENV_FILE:-$ROOT/vps/fresh.env}}"
 STORAGE_ROOT="${TESTAGRAM_STORAGE_ROOT:-/var/lib/testagram/storage}"
 
 command -v git >/dev/null || { echo "git is required" >&2; exit 1; }
