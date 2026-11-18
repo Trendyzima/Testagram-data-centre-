@@ -143,9 +143,9 @@ jobs:
             docker network rm "$network" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
-          docker run -d --name testagram-media-migrate-db --network "$network" \\
-            --network-alias db --network-alias postgres \\
-            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=testagram -e POSTGRES_DB=postgres \\
+          docker run -d --name testagram-media-migrate-db --network "$network" \
+            --network-alias db --network-alias postgres \
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=testagram -e POSTGRES_DB=postgres \
             postgres:17-alpine
           for attempt in $(seq 1 40); do
             if docker exec testagram-media-migrate-db pg_isready -U postgres -d postgres >/dev/null 2>&1; then break; fi
@@ -157,10 +157,10 @@ jobs:
           [[ "$role_attrs" == "f:f:f" ]] || { echo "::error::Media database role has elevated privileges: $role_attrs"; exit 1; }
           db_owner="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'media'")"
           [[ "$db_owner" == "testagram_media_ci" ]] || { echo "::error::Media database owner mismatch: $db_owner"; exit 1; }
-          docker run --rm --network "$network" -e PGPASSWORD="$MEDIA_DATABASE_PASSWORD" postgres:17-alpine \\
+          docker run --rm --network "$network" -e PGPASSWORD="$MEDIA_DATABASE_PASSWORD" postgres:17-alpine \
             psql -h db -U "$MEDIA_DATABASE_USER" -d media -v ON_ERROR_STOP=1 -Atqc "SELECT current_user || ':' || current_database()" | grep -qx 'testagram_media_ci:media'
           docker exec testagram-media-migrate-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS public.admin_only_media_probe(secret text); INSERT INTO public.admin_only_media_probe VALUES ('private'); REVOKE ALL ON public.admin_only_media_probe FROM PUBLIC" >/dev/null
-          if docker run --rm --network "$network" -e PGPASSWORD="$MEDIA_DATABASE_PASSWORD" postgres:17-alpine \\
+          if docker run --rm --network "$network" -e PGPASSWORD="$MEDIA_DATABASE_PASSWORD" postgres:17-alpine \
             psql -h db -U "$MEDIA_DATABASE_USER" -d postgres -v ON_ERROR_STOP=1 -c "SELECT * FROM public.admin_only_media_probe" >/dev/null 2>&1; then
             echo "::error::Media database role unexpectedly read Backend administrative database"
             exit 1
