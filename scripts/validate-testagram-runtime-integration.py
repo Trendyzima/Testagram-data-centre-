@@ -103,6 +103,17 @@ require(any("provision-federation-database.sh:/scripts/provision-federation-data
         "Federation migration service must mount the isolated database provisioner")
 require("provision-federation-database.sh" in Path("scripts/migrate-data-centre.sh").read_text(),
         "Data Centre migration entrypoint must provision the Federation database role before startup")
+federation_provisioner = Path("scripts/provision-federation-database.sh").read_text()
+require("NOSUPERUSER" in federation_provisioner and "NOCREATEDB" in federation_provisioner and
+        "NOCREATEROLE" in federation_provisioner and "NOREPLICATION" in federation_provisioner and
+        "NOBYPASSRLS" in federation_provisioner,
+        "Federation database provisioner must create a non-privileged database owner")
+require(os.environ.get("FEDERATION_DATABASE_URL", "").startswith(
+            "postgresql://testagram_federation_ci:ci-federation-db-password-only@federation-db:"),
+        "CI Federation database URL must use its dedicated database user and private DB alias")
+db_passwords = [os.environ.get("MEDIA_DATABASE_PASSWORD", ""), os.environ.get("FEDERATION_DATABASE_PASSWORD", "")]
+require(all(db_passwords) and len(set(db_passwords)) == 2,
+        "Media and Federation database passwords must be present and distinct")
 require(env(backend, "api", "INTERNAL_LISTEN_ADDR") == ":8082",
         "Backend must bind the private service listener on :8082")
 require("platform" in federation.get("networks", {}), "Federation must join the private platform network")
