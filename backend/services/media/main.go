@@ -75,6 +75,7 @@ func main() {
 	mux.HandleFunc("/internal/v1/media/status",s.status)
 	mux.HandleFunc("/internal/v1/media/download-url",s.downloadURL)
 	mux.HandleFunc("/internal/v1/media/delete",s.delete)
+	mux.HandleFunc("/internal/v1/identity-evidence/readyz",s.identityReady)
 	mux.HandleFunc("/internal/v1/identity-evidence/upload-url",s.uploadURL)
 	mux.HandleFunc("/internal/v1/identity-evidence/verify",s.verify)
 	mux.HandleFunc("/internal/v1/identity-evidence/status",s.status)
@@ -143,6 +144,16 @@ func (s *server) auth(w http.ResponseWriter,r *http.Request)bool{
 		expected=s.cfg.identityToken
 	}
 	if expected==""||got==""||strings.ContainsAny(got," \t\r\n")||subtle.ConstantTimeCompare([]byte(got),[]byte(expected))!=1||r.Header.Get("X-Testagram-API-Version")!=apiVersion { writeErr(w,401,"unauthorized");return false };return true
+}
+func (s *server) identityReady(w http.ResponseWriter, r *http.Request) {
+	if !s.auth(w, r) {
+		return
+	}
+	if s.db == nil || s.db.Ping(r.Context()) != nil {
+		writeErr(w, http.StatusServiceUnavailable, "identity evidence database is unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "namespace": "identity-evidence-private"})
 }
 func (s *server) namespaceAllowedForRoute(w http.ResponseWriter,r *http.Request,namespace string)bool{
 	identityRoute:=strings.HasPrefix(r.URL.Path,"/internal/v1/identity-evidence/")
