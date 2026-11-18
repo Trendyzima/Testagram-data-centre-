@@ -31,6 +31,7 @@ jobs:
       TESTAGRAM_LIVE_MEDIA_SMOKE: "true"
       MEDIA_DATABASE_URL: postgresql://postgres:ci-media-smoke-password@127.0.0.1:5432/media_smoke?sslmode=disable
       MEDIA_INTERNAL_TOKEN: ci-live-media-smoke-internal-token-32-characters
+      IDENTITY_EVIDENCE_INTERNAL_TOKEN: ci-live-identity-evidence-smoke-token-32-characters
       MEDIA_SMOKE_B2_ENDPOINT: ${{ secrets.MEDIA_SMOKE_B2_ENDPOINT }}
       MEDIA_SMOKE_B2_REGION: ${{ secrets.MEDIA_SMOKE_B2_REGION }}
       MEDIA_SMOKE_B2_BUCKET: ${{ secrets.MEDIA_SMOKE_B2_BUCKET }}
@@ -74,4 +75,4 @@ jobs:
       - name: Verify live B2/R2 provider lifecycle and replication recovery
         run: |
           set -euo pipefail
-          go test -count=1 -run "^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete)$" -v ./backend/services/media
+          go test -count=1 -run "^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete|TestLiveIdentityEvidenceLifecycle)$" -v ./backend/services/media
