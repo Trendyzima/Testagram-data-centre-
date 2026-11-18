@@ -108,6 +108,17 @@ require(env(dc, "media-migrate", "MEDIA_DATABASE_URL") == "${MEDIA_DATABASE_URL:
 require(os.environ.get("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "").strip() and
         len(os.environ["FRESH_DATA_CENTRE_INTERNAL_TOKEN"].strip()) >= 32,
         "CI must provide the dedicated Backend/Data Centre media token")
+
+service_tokens = [
+    os.environ["ALGORITHM_INTERNAL_TOKEN"],
+    os.environ["FEDERATION_INGRESS_TOKEN"],
+    os.environ["FEDERATION_BACKEND_INTERNAL_TOKEN"],
+    os.environ["FRESH_DATA_CENTRE_INTERNAL_TOKEN"],
+]
+require(len(set(service_tokens)) == len(service_tokens),
+        "Algorithm, Federation ingress, Federation backend and Data Centre media service tokens must all be distinct")
+require(os.environ.get("TESTAGRAM_AUTH_JWT_SECRET", "") not in set(service_tokens),
+        "End-user JWT signing secret must not be reused as a service-to-service credential")
 require(os.environ.get("DATA_CENTRE_MEDIA_API_URL") == "http://media:8096",
         "Backend must target the private Data Centre media service URL")
 require(os.environ.get("FEDERATION_INTERNAL_URL") == "http://federation-api:8081",
