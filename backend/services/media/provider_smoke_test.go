@@ -164,6 +164,11 @@ func TestLiveMediaReplicationRestoreDelete(t *testing.T) {
 	}
 	primary := readStore("MEDIA_SMOKE_B2", "backblaze_b2")
 	replica := readStore("MEDIA_SMOKE_R2", "cloudflare_r2")
+	identityPrimary := readStore("MEDIA_SMOKE_B2_IDENTITY", "backblaze_b2_identity_evidence")
+	identityReplica := readStore("MEDIA_SMOKE_R2_IDENTITY", "cloudflare_r2_identity_evidence")
+	if identityPrimary.bucket == primary.bucket || identityReplica.bucket == replica.bucket {
+		t.Fatal("identity evidence smoke buckets must be distinct from ordinary media smoke buckets")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	db, err := pgxpool.New(ctx, databaseURL)
@@ -321,7 +326,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if err := db.Ping(ctx); err != nil { t.Fatalf("media smoke database unavailable: %v", err) }
 
 	s := &server{
-		cfg: config{token:mediaToken, identityToken:identityToken, primary:primary, replica:replica, uploadTTL:45*time.Minute, downloadTTL:5*time.Minute},
+		cfg: config{token:mediaToken, identityToken:identityToken, primary:primary, replica:replica, identityPrimary:identityPrimary, identityReplica:identityReplica, uploadTTL:45*time.Minute, downloadTTL:5*time.Minute},
 		db:db,
 		http:&http.Client{Timeout:60*time.Second, CheckRedirect:func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}
@@ -348,7 +353,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanupCancel()
-		for _, store := range []s3Store{primary, replica} {
+		for _, store := range []s3Store{identityPrimary, identityReplica} {
 			resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, key, nil, "")
 			if cleanupErr == nil { io.Copy(io.Discard, io.LimitReader(resp.Body,4096)); resp.Body.Close() }
 		}
@@ -429,7 +434,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if state["status"] != "protected" || state["sha256"] != item.expectedSHA || state["size_bytes"] != float64(item.size) || state["content_type"] != item.contentType {
 		t.Fatalf("identity evidence did not reach protected state with matching metadata: %+v", state)
 	}
-	if ok, err := s.originMatches(ctx, replica, item); err != nil || !ok { t.Fatalf("R2 identity evidence read-back failed: ok=%v err=%v", ok, err) }
+	if ok, err := s.originMatches(ctx, identityReplica, item); err != nil || !ok { t.Fatalf("R2 identity evidence read-back failed: ok=%v err=%v", ok, err) }
 
 	denied := call(http.MethodPost, "/internal/v1/identity-evidence/download-url", identityToken, downloadRequest{
 		RequesterID:"00000000-0000-4000-8000-000000000099", OwnerID:owner, Namespace:item.namespace, Key:key,
@@ -450,13 +455,13 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	getResp.Body.Close()
 
 	// Restore the primary from the independently verified replica.
-	lost, err := s.signedRequest(ctx, primary, http.MethodDelete, key, nil, "")
+	lost, err := s.signedRequest(ctx, identityPrimary, http.MethodDelete, key, nil, "")
 	if err != nil { t.Fatalf("simulate identity evidence primary loss: %v", err) }
 	io.Copy(io.Discard, io.LimitReader(lost.Body,4096)); lost.Body.Close()
 	if lost.StatusCode != http.StatusOK && lost.StatusCode != http.StatusNoContent && lost.StatusCode != http.StatusNotFound { t.Fatalf("simulate B2 loss returned HTTP %d", lost.StatusCode) }
 	if err := s.reconcileOne(ctx, item); err != nil { t.Fatalf("reconcile missing identity evidence primary: %v", err) }
 	if err := s.processOne(ctx); err != nil { t.Fatalf("restore identity evidence B2 from R2: %v", err) }
-	if ok, err := s.originMatches(ctx, primary, item); err != nil || !ok { t.Fatalf("restored B2 identity evidence read-back failed: ok=%v err=%v", ok, err) }
+	if ok, err := s.originMatches(ctx, identityPrimary, item); err != nil || !ok { t.Fatalf("restored B2 identity evidence read-back failed: ok=%v err=%v", ok, err) }
 
 	deleteResp := call(http.MethodPost, "/internal/v1/identity-evidence/delete", identityToken, deleteRequest{
 		RequesterID:owner, OwnerID:owner, Namespace:item.namespace, Key:key,
@@ -466,7 +471,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	statusResp = call(http.MethodGet, statusRoute, identityToken, nil)
 	decode(statusResp, &state, http.StatusOK)
 	if state["status"] != "deleted" { t.Fatalf("identity evidence deletion state=%v, want deleted", state["status"]) }
-	for _, store := range []s3Store{primary, replica} {
+	for _, store := range []s3Store{identityPrimary, identityReplica} {
 		head, err := s.signedRequest(ctx, store, http.MethodHead, key, nil, "")
 		if err != nil { t.Fatalf("%s HEAD after identity evidence deletion: %v", store.name, err) }
 		io.Copy(io.Discard, io.LimitReader(head.Body,4096)); head.Body.Close()
