@@ -192,7 +192,9 @@ func (s *server) probeIdentityEvidenceStore(ctx context.Context, store s3Store) 
 	if err != nil { return fmt.Errorf("%s readiness PUT: %w", store.name, err) }
 	io.Copy(io.Discard, io.LimitReader(put.Body, 4096)); put.Body.Close()
 	if put.StatusCode < 200 || put.StatusCode >= 300 { return fmt.Errorf("%s readiness PUT status %d", store.name, put.StatusCode) }
+	cleaned := false
 	defer func() {
+		if cleaned { return }
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, key, nil, "")
@@ -204,6 +206,14 @@ func (s *server) probeIdentityEvidenceStore(ctx context.Context, store s3Store) 
 	actual, readErr := io.ReadAll(io.LimitReader(got.Body, int64(len(payload))+1))
 	got.Body.Close()
 	if readErr != nil || !bytes.Equal(actual, payload) { return fmt.Errorf("%s readiness read-back mismatch", store.name) }
+	remove, err := s.signedRequest(ctx, store, http.MethodDelete, key, nil, "")
+	if err != nil { return fmt.Errorf("%s readiness DELETE: %w", store.name, err) }
+	io.Copy(io.Discard, io.LimitReader(remove.Body, 4096))
+	remove.Body.Close()
+	if remove.StatusCode != http.StatusOK && remove.StatusCode != http.StatusNoContent && remove.StatusCode != http.StatusNotFound {
+		return fmt.Errorf("%s readiness DELETE status %d", store.name, remove.StatusCode)
+	}
+	cleaned = true
 	return nil
 }
 func (s *server) namespaceAllowedForRoute(w http.ResponseWriter,r *http.Request,namespace string)bool{
