@@ -1,7 +1,7 @@
 name: testagram-vps-ci
 on:
   push:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-testagram-runtime-integration.py","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-testagram-runtime-integration.py","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh",".github/workflows/vps-ci.yml",".github/workflows/media-provider-smoke.yml"]
   pull_request:
     paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-testagram-runtime-integration.py","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh",".github/workflows/vps-ci.yml"]
   workflow_dispatch:
