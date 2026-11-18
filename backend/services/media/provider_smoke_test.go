@@ -415,10 +415,10 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 
 	query := url.Values{"owner_id":[]string{owner}, "namespace":[]string{item.namespace}, "key":[]string{key}}
 	statusRoute := "/internal/v1/identity-evidence/status?" + query.Encode()
-	var state MediaStatus
+	var state map[string]any
 	statusResp := call(http.MethodGet, statusRoute, identityToken, nil)
 	decode(statusResp, &state, http.StatusOK)
-	if state.Status != "protected" || state.SHA256 != item.expectedSHA || state.SizeBytes != item.size || state.ContentType != item.contentType {
+	if state["status"] != "protected" || state["sha256"] != item.expectedSHA || state["size_bytes"] != float64(item.size) || state["content_type"] != item.contentType {
 		t.Fatalf("identity evidence did not reach protected state with matching metadata: %+v", state)
 	}
 	if ok, err := s.originMatches(ctx, replica, item); err != nil || !ok { t.Fatalf("R2 identity evidence read-back failed: ok=%v err=%v", ok, err) }
@@ -457,7 +457,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if err := s.processOne(ctx); err != nil { t.Fatalf("durable identity evidence deletion: %v", err) }
 	statusResp = call(http.MethodGet, statusRoute, identityToken, nil)
 	decode(statusResp, &state, http.StatusOK)
-	if state.Status != "deleted" { t.Fatalf("identity evidence deletion state=%q, want deleted", state.Status) }
+	if state["status"] != "deleted" { t.Fatalf("identity evidence deletion state=%v, want deleted", state["status"]) }
 	for _, store := range []s3Store{primary, replica} {
 		head, err := s.signedRequest(ctx, store, http.MethodHead, key, nil, "")
 		if err != nil { t.Fatalf("%s HEAD after identity evidence deletion: %v", store.name, err) }
