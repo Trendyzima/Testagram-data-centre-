@@ -4,12 +4,12 @@ Private Backend-to-Data-Centre object lifecycle service. This service is deliber
 
 ## Runtime configuration
 
-Required: `MEDIA_INTERNAL_TOKEN` (32+ chars), `MEDIA_DATABASE_URL` (TLS PostgreSQL in production), B2 S3 endpoint/region/bucket/access key/secret, and Cloudflare R2 endpoint/region/bucket/access key/secret. Provider credentials belong only in this service's secret environment.
+Required: `MEDIA_INTERNAL_TOKEN` (32+ chars), a distinct `IDENTITY_EVIDENCE_INTERNAL_TOKEN` (32+ chars), `MEDIA_DATABASE_URL` (TLS PostgreSQL in production), B2 S3 endpoint/region/media bucket/dedicated identity-evidence bucket/access key/secret, and Cloudflare R2 endpoint/region/media bucket/dedicated identity-evidence bucket/access key/secret. Provider credentials belong only in this service's secret environment.
 
 ## Private deployment wiring
 
 1. Provision a **separate PostgreSQL database** for media lifecycle state. Set `MEDIA_DATABASE_URL` to that database's TLS connection string; do not point it at the Backend metadata database, platform configuration database, or node control-plane database.
-2. Store `B2_S3_ENDPOINT`, `B2_S3_REGION`, `B2_S3_BUCKET`, `B2_S3_ACCESS_KEY_ID` and `B2_S3_SECRET_ACCESS_KEY` as private VPS deployment secrets. Do the same for `CLOUDFLARE_R2_ENDPOINT`, `CLOUDFLARE_R2_BUCKET`, `CLOUDFLARE_R2_ACCESS_KEY_ID` and `CLOUDFLARE_R2_SECRET_ACCESS_KEY`. Never copy these provider keys into Backend, Flutter, CDN public variables, or Git.
+2. Store `B2_S3_ENDPOINT`, `B2_S3_REGION`, `B2_S3_BUCKET`, `B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET`, `B2_S3_ACCESS_KEY_ID` and `B2_S3_SECRET_ACCESS_KEY` as private VPS deployment secrets. The identity-evidence bucket must be a separate private bucket, not a prefix in the general media bucket. Do the same for `CLOUDFLARE_R2_ENDPOINT`, `CLOUDFLARE_R2_BUCKET`, `CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET`, `CLOUDFLARE_R2_ACCESS_KEY_ID` and `CLOUDFLARE_R2_SECRET_ACCESS_KEY`. The R2 identity-evidence bucket must also be distinct and private. Never copy these provider keys into Backend, Flutter, CDN public variables, or Git.
 3. Generate one high-entropy service token (at least 32 random bytes). Set it as `FRESH_DATA_CENTRE_INTERNAL_TOKEN` for the Backend API and map the same value to `MEDIA_INTERNAL_TOKEN` for this service. The Compose file maps the same source secret to both.
 4. On the shared private Compose network, set `DATA_CENTRE_MEDIA_API_URL=http://media:8096`. The `media` container is not published to the public host; only the Backend API should call it.
 5. Start the service with `docker compose --profile media -f vps/docker-compose.fresh.yml up -d --build media`. Compose runs `media-migrate` first and waits for it to finish successfully.
