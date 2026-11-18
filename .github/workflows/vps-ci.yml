@@ -21,6 +21,7 @@ jobs:
       FEDERATION_INTERNAL_TOKEN: ci-federation-ingress-token-long-enough
       FEDERATION_BACKEND_INTERNAL_TOKEN: ci-federation-backend-read-token-long-enough
       FEDERATION_INGRESS_TOKEN: ci-federation-ingress-token-long-enough
+      FEDERATION_INBOX_ACCEPT_ENABLED: "false"
       FEDERATION_DATABASE_NAME: testagram_federation
       FEDERATION_DATABASE_URL: postgresql://postgres:testagram@federation-db:5432/testagram_federation?sslmode=disable
       FEDERATION_PUBLIC_BASE_URL: https://testagram.site
