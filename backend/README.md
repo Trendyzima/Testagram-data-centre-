@@ -42,8 +42,7 @@ The Backend edge routes only `/.well-known/webfinger`, `/users/*` and
 `/objects/*` on `testagram.site` to Federation. Ordinary apex web requests
 redirect to the existing `www.testagram.site` frontend. Set
 `FEDERATION_PUBLIC_BASE_URL=https://testagram.site` in this overlay's protected
-runtime environment. Keep Federation workers disabled until the separate
-protocol release gates and cross-instance tests pass. The video service joins the shared
+runtime environment. Keep Federation's inbound acceptance, inbox worker, outbound delivery worker and Backend outbox poller disabled until the separate protocol release gates and cross-instance tests pass. In particular, keep `FEDERATION_INBOX_ACCEPT_ENABLED=false`; setting it true requires the durable inbox worker, delivery worker, Federation database and private Backend integration. The video service joins the shared
 Caddy edge network so Caddy can route `/v1/feed`, `/v1/videos/*` and
 `/v1/channels*` over the existing HTTPS API origin. Video playback and its
 likes/comments use the same origin and Testagram-native session as the Flutter
