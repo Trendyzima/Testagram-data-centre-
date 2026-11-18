@@ -149,8 +149,10 @@ jobs:
           ):
               assert required in workflow, f"live media acceptance workflow is missing {required}"
           assert "services:" in workflow and "postgres:17-alpine" in workflow, "live lifecycle test must use isolated PostgreSQL"
-          for prefix in ("ci-smoke/", "users/ci-smoke/", "identity/"):
+          for prefix in ("ci-smoke/", "identity/"):
               assert prefix in smoke_test, f"live media smoke must use the isolated {prefix} object prefix"
+          assert 'owner := "ci-smoke"' in smoke_test, "replication smoke must use a dedicated smoke owner"
+          assert 'key := "users/" + owner + "/" + id' in smoke_test, "replication smoke must isolate its object namespace"
           assert "defer func()" in smoke_test and "DELETE" in smoke_test, "live media smoke must clean up its temporary objects"
           PY
       - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker ./backend/services/platform ./backend/services/media
