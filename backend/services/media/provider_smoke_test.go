@@ -164,8 +164,14 @@ func TestLiveMediaReplicationRestoreDelete(t *testing.T) {
 	}
 	primary := readStore("MEDIA_SMOKE_B2", "backblaze_b2")
 	replica := readStore("MEDIA_SMOKE_R2", "cloudflare_r2")
-	identityPrimary := readStore("MEDIA_SMOKE_B2_IDENTITY", "backblaze_b2_identity_evidence")
-	identityReplica := readStore("MEDIA_SMOKE_R2_IDENTITY", "cloudflare_r2_identity_evidence")
+	identityPrimary := primary
+	identityPrimary.name = "backblaze_b2_identity_evidence"
+	identityPrimary.bucket = os.Getenv("MEDIA_SMOKE_B2_IDENTITY_BUCKET")
+	if err := validateStore(identityPrimary); err != nil { t.Fatalf("B2 identity evidence smoke configuration invalid: %v", err) }
+	identityReplica := replica
+	identityReplica.name = "cloudflare_r2_identity_evidence"
+	identityReplica.bucket = os.Getenv("MEDIA_SMOKE_R2_IDENTITY_BUCKET")
+	if err := validateStore(identityReplica); err != nil { t.Fatalf("R2 identity evidence smoke configuration invalid: %v", err) }
 	if identityPrimary.bucket == primary.bucket || identityReplica.bucket == replica.bucket {
 		t.Fatal("identity evidence smoke buckets must be distinct from ordinary media smoke buckets")
 	}
