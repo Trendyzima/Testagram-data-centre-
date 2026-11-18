@@ -42,6 +42,7 @@ jobs:
       FRESH_MEDIA_ENABLED: "false"
       DATA_CENTRE_MEDIA_API_URL: http://media:8096
       FRESH_DATA_CENTRE_INTERNAL_TOKEN: ci-media-internal-token-at-least-32-chars
+      IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN: ci-identity-evidence-service-token-0123456789
       MEDIA_DATABASE_NAME: media
       MEDIA_DATABASE_USER: testagram_media_ci
       MEDIA_DATABASE_PASSWORD: ci-media-db-password-only
