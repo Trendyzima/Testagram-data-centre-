@@ -6,9 +6,12 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in backend/.env}
       FEDERATION_DATABASE_NAME: ${FEDERATION_DATABASE_NAME:-testagram_federation}
+      FEDERATION_DATABASE_USER: ${FEDERATION_DATABASE_USER:-}
+      FEDERATION_DATABASE_PASSWORD: ${FEDERATION_DATABASE_PASSWORD:-}
     volumes:
       - ../migrations:/migrations:ro
       - ../scripts/migrate-data-centre.sh:/scripts/migrate-data-centre.sh:ro
+      - ../scripts/provision-federation-database.sh:/scripts/provision-federation-database.sh:ro
     entrypoint: ["/bin/sh", "/scripts/migrate-data-centre.sh"]
     restart: "no"
     networks: [platform]
