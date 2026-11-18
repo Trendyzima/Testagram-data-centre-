@@ -116,8 +116,12 @@ require("CREATE ROLE" in service(dc, "media-migrate").get("command", "") and
         "ALTER DATABASE" in service(dc, "media-migrate").get("command", "") and
         "NOSUPERUSER" in service(dc, "media-migrate").get("command", "") and
         "NOCREATEDB" in service(dc, "media-migrate").get("command", "") and
-        "NOCREATEROLE" in service(dc, "media-migrate").get("command", ""),
-        "Media migration job must create and own a separate non-privileged media database role")
+        "NOCREATEROLE" in service(dc, "media-migrate").get("command", "") and
+        "NOREPLICATION" in service(dc, "media-migrate").get("command", "") and
+        "NOBYPASSRLS" in service(dc, "media-migrate").get("command", "") and
+        "\\getenv media_password MEDIA_DATABASE_PASSWORD" in service(dc, "media-migrate").get("command", "") and
+        "-v media_password" not in service(dc, "media-migrate").get("command", ""),
+        "Media migration job must create a separate non-privileged role without exposing its password in process arguments")
 require(os.environ.get("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "").strip() and
         len(os.environ["FRESH_DATA_CENTRE_INTERNAL_TOKEN"].strip()) >= 32,
         "CI must provide the dedicated Backend/Data Centre media token")
