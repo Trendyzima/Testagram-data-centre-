@@ -152,7 +152,7 @@ func TestMetadataSidecarsWriteReadBackAndDeleteOnVPSAndR2(t *testing.T) {
 	if err:=s.writeMetadataSidecars(context.Background(),item);err!=nil{t.Fatalf("write metadata sidecars: %v",err)}
 	metadataKey:=item.key+".metadata.json"
 	for _,bucket:=range []string{"vps-metadata","r2-metadata"}{if len(objects["/"+bucket+"/"+metadataKey])==0{t.Fatalf("metadata missing from %s",bucket)}}
-	if err:=s.deleteMetadataSidecars(context.Background(),item.key);err!=nil{t.Fatalf("delete metadata sidecars: %v",err)}
+	if err:=s.deleteMetadataSidecars(context.Background(),item.namespace,item.key);err!=nil{t.Fatalf("delete metadata sidecars: %v",err)}
 	for _,bucket:=range []string{"vps-metadata","r2-metadata"}{if _,ok:=objects["/"+bucket+"/"+metadataKey];ok{t.Fatalf("metadata remains in %s",bucket)}}
 }
 
@@ -216,4 +216,46 @@ func TestIdentityEvidenceReadinessRequiresDedicatedCredential(t *testing.T) {
 	if got := request(s.cfg.identityToken).Code; got != http.StatusServiceUnavailable {
 		t.Fatalf("identity evidence token should pass auth then fail closed on missing DB: status=%d, want 503", got)
 	}
+}
+
+func TestIdentityEvidenceUsesDedicatedB2AndR2Buckets(t *testing.T) {
+ s := &server{cfg: config{
+  primary:s3Store{name:"b2-media",bucket:"media-b2"},
+  replica:s3Store{name:"r2-media",bucket:"media-r2"},
+  identityPrimary:s3Store{name:"b2-identity",bucket:"identity-b2"},
+  identityReplica:s3Store{name:"r2-identity",bucket:"identity-r2"},
+  metadataPrimary:s3Store{name:"vps-metadata",bucket:"metadata-vps"},
+  metadataReplica:s3Store{name:"r2-metadata",bucket:"metadata-r2"},
+ }}
+ p,r := s.storesForNamespace("identity-evidence-private")
+ if p.bucket!="identity-b2" || r.bucket!="identity-r2" { t.Fatalf("identity evidence routed to %q/%q",p.bucket,r.bucket) }
+ p,r = s.storesForNamespace("media-private")
+ if p.bucket!="media-b2" || r.bucket!="media-r2" { t.Fatalf("media routed to %q/%q",p.bucket,r.bucket) }
+ mp,mr := s.metadataStoresForNamespace("identity-evidence-private")
+ if mp.bucket!="identity-b2" || mr.bucket!="identity-r2" { t.Fatalf("identity sidecars not isolated: %q/%q",mp.bucket,mr.bucket) }
+ mp,mr = s.metadataStoresForNamespace("media-private")
+ if mp.bucket!="metadata-vps" || mr.bucket!="metadata-r2" { t.Fatalf("media metadata routing changed: %q/%q",mp.bucket,mr.bucket) }
+}
+
+func TestIdentityEvidenceBucketProbeWritesReadsAndDeletes(t *testing.T) {
+ objects := map[string][]byte{}
+ methods := []string{}
+ ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+  methods = append(methods, r.Method)
+  switch r.Method {
+  case http.MethodPut:
+   body, err := io.ReadAll(r.Body); if err != nil { http.Error(w, "read", 500); return }; objects[r.URL.Path] = body; w.WriteHeader(http.StatusOK)
+  case http.MethodGet:
+   body, ok := objects[r.URL.Path]; if !ok { http.NotFound(w, r); return }; _, _ = w.Write(body)
+  case http.MethodDelete:
+   delete(objects, r.URL.Path); w.WriteHeader(http.StatusNoContent)
+  default: http.Error(w, "method", 405)
+  }
+ }))
+ defer ts.Close()
+ store := s3Store{name:"identity-test", endpoint:ts.URL, region:"us-east-1", bucket:"identity-evidence", access:"access", secret:strings.Repeat("s",40)}
+ s := &server{http:ts.Client()}
+ if err := s.probeIdentityEvidenceStore(context.Background(), store); err != nil { t.Fatal(err) }
+ if len(objects) != 0 { t.Fatalf("readiness probe left objects behind: %#v", objects) }
+ if strings.Join(methods, ",") != "PUT,GET,DELETE" { t.Fatalf("probe methods=%v", methods) }
 }
