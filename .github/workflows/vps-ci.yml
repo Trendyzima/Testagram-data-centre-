@@ -251,13 +251,13 @@ jobs:
       - name: Validate Compose syntax
         run: |
           set -euo pipefail
-          ! grep -Eqi 'APPWRITE_ENDPOINT|APPWRITE_PROJECT_ID|appwriteauth' backend/docker-compose.yml backend/services/video/*.go backend/services/notification/*.go backend/internal/nativeauth
+          ! grep -Eqi 'APPWRITE_ENDPOINT|APPWRITE_PROJECT_ID|appwriteauth' backend/docker-compose.yml backend/services/video/*.go backend/services/notification/*.go backend/internal/nativeauth/*.go
           grep -Fq 'TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:?Set TESTAGRAM_AUTH_JWT_SECRET in backend/.env}' backend/docker-compose.yml
           docker compose -f backend/docker-compose.yml config
           # Optional media profile must not make the default stack require media-only credentials.
           env -u MEDIA_DATABASE_URL -u MEDIA_DATABASE_NAME docker compose -f backend/docker-compose.yml config --quiet
           docker compose --profile media -f backend/docker-compose.yml config --quiet
-          grep -Fq '${MEDIA_DATABASE_URL:?Set MEDIA_DATABASE_URL}' backend/docker-compose.yml
+          grep -Fq 'MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}' backend/docker-compose.yml
           docker compose -f vps/docker-compose.yml config
           # The VPS stack has one canonical API Compose model; Backend self-hosted services are validated separately.
           ! grep -Eqi "supabase|SUPABASE" vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml
