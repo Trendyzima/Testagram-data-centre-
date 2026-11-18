@@ -67,7 +67,7 @@ jobs:
             R2_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
           fi
           for name in MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION MEDIA_SMOKE_B2_ACCESS_KEY_ID MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY; do
-            if [[ -z "${!name:-}" ]]; then echo "Missing dedicated staging credential: $name (production bucket credentials are never substituted)." >&2; exit 1; fi
+            if [[ -z "${!name:-}" ]]; then echo "Missing provider credential: $name. Existing B2/R2 credentials are permitted only with the guarded staging bucket names above." >&2; exit 1; fi
           done
           [[ -n "$R2_ENDPOINT" ]] || { echo "Missing R2 S3 endpoint; configure MEDIA_SMOKE_R2_ENDPOINT or CLOUDFLARE_ACCOUNT_ID." >&2; exit 1; }
           docker run --rm --entrypoint /bin/sh \
