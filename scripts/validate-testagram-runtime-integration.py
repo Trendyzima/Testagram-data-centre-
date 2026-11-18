@@ -88,6 +88,21 @@ require(os.environ.get("FEDERATION_BACKEND_INTERNAL_TOKEN", "").strip() and
         "CI must provide the independent Federation-to-Backend credential")
 require(env(dc, "federation-api", "BACKEND_INTERNAL_URL") == "http://api:8082",
         "Federation must call the Backend private listener")
+require(env(dc, "federation-api", "FEDERATION_DATABASE_URL") == "${FEDERATION_DATABASE_URL:?Set FEDERATION_DATABASE_URL in backend/.env}",
+        "Federation runtime must receive its dedicated database URL")
+require("DATABASE_URL" not in federation.get("environment", {}) and
+        "FEDERATION_DATABASE_USER" not in federation.get("environment", {}) and
+        "FEDERATION_DATABASE_PASSWORD" not in federation.get("environment", {}),
+        "Federation runtime must not receive Backend database-admin or role bootstrap credentials")
+migrate = service(dc, "migrate")
+require("FEDERATION_DATABASE_USER" in migrate.get("environment", {}) and
+        "FEDERATION_DATABASE_PASSWORD" in migrate.get("environment", {}),
+        "Only the one-shot migration service may receive Federation database role bootstrap credentials")
+require(any("provision-federation-database.sh:/scripts/provision-federation-database.sh:ro" in volume
+            for volume in migrate.get("volumes", [])),
+        "Federation migration service must mount the isolated database provisioner")
+require("provision-federation-database.sh" in Path("scripts/migrate-data-centre.sh").read_text(),
+        "Data Centre migration entrypoint must provision the Federation database role before startup")
 require(env(backend, "api", "INTERNAL_LISTEN_ADDR") == ":8082",
         "Backend must bind the private service listener on :8082")
 require("platform" in federation.get("networks", {}), "Federation must join the private platform network")
