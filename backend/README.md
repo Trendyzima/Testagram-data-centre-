@@ -59,3 +59,37 @@ schema. The video API and worker share the host media directory through the
 configured storage root. Back up that directory and PostgreSQL together.
 
 There is no Supabase/PostgREST dependency, Redis/Valkey cache or Upstash queue.
+
+
+## Optional B2/R2 media lifecycle profile
+
+The `media` and `media-migrate` services are opt-in under the Compose
+`media` profile. They use a separate `MEDIA_DATABASE_URL`; never point it at
+the Backend product database. The Backend and Data Centre must receive the
+same independently generated `FRESH_DATA_CENTRE_INTERNAL_TOKEN`. In the
+Backend repository's protected `.env`, set
+`FRESH_MEDIA_ENABLED=true` and `DATA_CENTRE_MEDIA_API_URL=http://media:8096`
+only after the Data Centre media service is running and the staging checks pass.
+
+Configure the optional variables in this repository's `backend/.env` using
+`backend/.env.example` as the template. The service requires B2 and R2 object
+credentials, a separate media database, and the restricted MinIO/R2 metadata
+credentials. The MinIO metadata key must be the dedicated key provisioned by
+the Backend `object-init` job; never use MinIO root credentials.
+
+Start this profile only after the Backend base stack has created the shared
+`testagram-platform` network and the Backend product database is ready:
+
+```sh
+docker compose --env-file backend/.env -f backend/docker-compose.yml --profile media config
+docker compose --env-file backend/.env -f backend/docker-compose.yml --profile media up -d --build media
+docker compose --env-file backend/.env -f backend/docker-compose.yml --profile media ps media media-migrate
+```
+
+This service's media-byte path is **B2 primary + R2 replica**. MinIO and R2
+metadata sidecars are not a third copy of the media bytes. The Backend's
+separate virtual-storage path is the one configured for three independently
+verified media-byte copies (InstaBox MinIO + R2 + B2). Passing one lifecycle
+does not pass the other. Keep both production feature paths disabled until
+their own upload, read-back SHA-256, restore, repair, delete and CDN delivery
+evidence is recorded.
