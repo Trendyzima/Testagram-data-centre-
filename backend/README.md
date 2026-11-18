@@ -93,3 +93,21 @@ verified media-byte copies (InstaBox MinIO + R2 + B2). Passing one lifecycle
 does not pass the other. Keep both production feature paths disabled until
 their own upload, read-back SHA-256, restore, repair, delete and CDN delivery
 evidence is recorded.
+
+
+## Cross-stack service credentials
+
+The Backend and Data Centre Compose projects read separate protected `.env`
+files. Copy only the matching value across each boundary; do not reuse a token
+for another service:
+
+- `ALGORITHM_INTERNAL_TOKEN`: same value in both projects, Backend ↔ Algorithm only.
+- Backend `FEDERATION_INGRESS_TOKEN` must equal Data Centre `FEDERATION_INTERNAL_TOKEN`: Backend → Federation only.
+- `FEDERATION_BACKEND_INTERNAL_TOKEN`: same value in both projects, Federation → Backend only.
+- `FRESH_DATA_CENTRE_INTERNAL_TOKEN`: same value in both projects, Backend → Data Centre media only.
+
+The Data Centre `media` profile has its own B2/R2 provider keys and restricted
+MinIO metadata identity. Never pass those MinIO metadata keys to Backend or
+Flutter. The Backend's separate virtual-storage provider credentials remain
+in the Backend's own protected environment. These service credentials are
+independent of the end-user JWT signing secret.
