@@ -1,35 +1,39 @@
 # Testagram single-VPS runtime
 
-This repository assembles the self-hosted Testagram Data Centre runtime. It
-runs Testagram-owned PostgreSQL, storage/node services, the Appwrite-authenticated
-video and notification APIs, PostgreSQL-backed platform configuration/audit,
-the control plane, maintenance workers and the Caddy HTTPS edge.
-
-It is not the Supabase Docker distribution. The VPS does not require Supabase,
-Redis/Valkey or Upstash.
+This repository assembles the Testagram-owned Data Centre runtime: the
+canonical Go Backend API, private supporting services, storage/media lifecycle,
+node control plane, maintenance workers and Caddy HTTPS edge.
 
 ## Runtime boundaries
 
-- Appwrite issues client sessions. Video and notification services validate
-  Appwrite JWTs through the Appwrite Account API and resolve canonical Testagram
-  account IDs through the PostgreSQL identity bridge.
-- PostgreSQL is the canonical relational store. Configure the shared
-  `DATABASE_URL` to the Testagram-owned PostgreSQL cluster, not a Supabase host.
-- Object bytes and node volumes live under the configured Testagram storage
-  root. Preserve object checksums, metadata and replica inventory.
-- The platform service provides PostgreSQL-backed feature configuration,
-  telemetry and audit only; it does not provide cache or generic queue APIs.
+- The canonical Backend owns native authentication, public API routing and
+  product database access. It is published as
+  `ghcr.io/trendyzima/testagram-backend` and deployed by digest.
+- The Backend public listener is port 8080. Its private readiness/internal
+  listener is port 8082 and is never published or routed by Caddy.
+- The product database is configured with `DATABASE_URL`. The Data Centre
+  control-plane database is separate and configured with
+  `DATA_CENTRE_DATABASE_URL`.
+- The optional Algorithm and Federation services remain private. Their
+  credentials are separate for each trust direction.
+- The optional Data Centre media service owns B2/R2 credentials and object
+  lifecycle. Those provider credentials are not passed into the Backend API.
+- Node volumes and storage metadata remain under the configured Testagram
+  storage root. Preserve object checksums, metadata and replica inventory.
 - Durable asynchronous work is recorded in owning services' PostgreSQL
   outboxes and processed idempotently.
-- The node-agent can run as a host systemd service and uses the VPS storage tree
-  for node volumes.
 
 ## Deployment
 
-Configure the protected VPS environment from `vps/fresh.env.example` and
-`backend/.env.example`. Set Appwrite endpoint/project ID, PostgreSQL
-credentials, storage paths, domain names, and private service tokens. Do not
-put server-only Appwrite API keys in browser/mobile configuration.
+Use the single canonical Compose manifest, `vps/docker-compose.yml`, and
+`vps/fresh.env.example` as the environment template. Copy the template to
+`vps/fresh.env` on the VPS, set its permissions to 0600, and provide the
+canonical Backend image digest, product database URL, native-auth signing
+secret, allowed origins, Caddy image digest, Data Centre database URL and
+node-control credentials.
+
+The deployment contract and acceptance gates are documented in
+[`FRESH-DEPLOYMENT.md`](FRESH-DEPLOYMENT.md).
 
 Deploy with:
 
@@ -37,54 +41,33 @@ Deploy with:
 sudo bash vps/install.sh
 ```
 
-Never expose PostgreSQL, object-storage administration, control-plane, or
-internal service ports directly to the Internet. Publish only the approved
-Caddy HTTPS edge and explicitly configured node-agent operations endpoints.
+Never expose PostgreSQL, object-storage administration, the private Backend
+listener, or internal service ports directly to the Internet. Publish only
+the approved Caddy HTTPS edge and explicitly configured node-agent operations
+endpoints.
 
-## Canonical Fediverse instance origin
+## TV health monitor
+
+The canonical Backend serves the TV monitor catalogue and health-write routes.
+The monitor authenticates using the signed GitHub Actions OIDC identity
+restricted in Backend code to the authorized Testagram TV workflow. No
+long-lived static monitor token is required. Keep the private Backend listener
+on port 8082 inaccessible from public ingress.
+
+## Federation
 
 The Federation service publishes Testagram actors and objects on
-`https://testagram.site`. The service remains private on the Docker platform
-network; it does not publish port 8081 and this Data Centre stack does not own a
-second public Caddy edge for the apex.
-
-The Backend Caddy edge is the public ingress. It routes
-`/.well-known/webfinger`, `/users/*` and `/objects/*` on the apex to the
-private `federation-api:8081` service over the shared `testagram-platform`
-network. Normal web traffic continues to the existing
-`https://www.testagram.site` frontend. Keep apex DNS pointed at the Backend
-Caddy host and keep the `www` DNS record on the frontend provider.
-
-Set `FEDERATION_PUBLIC_BASE_URL=https://testagram.site`. Do not configure
-`federation.testagram.site` as the actor origin. The Federation profile
-remains opt-in until the dedicated database, Backend service credentials,
-inbox/outbox workers, recipient delivery and Mastodon interoperability checks
-are complete.
-
-## Five-repository application runtime
-
-The VPS stack includes the separately released Testagram Backend API and the
-private Algorithm ranker on the internal Docker network. Caddy serves the
-Backend API at `TESTAGRAM_API_DOMAIN` (default `api.testagram.site`). Flutter
-is the only product frontend and should set its Backend base URL to that origin.
-The ranker has no public port and accepts only the server-side
-`ALGORITHM_INTERNAL_TOKEN`.
-
-Set `TESTAGRAM_BACKEND_IMAGE`, `TESTAGRAM_ALGORITHM_IMAGE` and
-`ALGORITHM_INTERNAL_TOKEN` in the protected VPS environment before starting
-the stack. Image tags must refer to successfully published immutable GHCR
-images. If packages are private, authenticate Docker to ghcr.io on the VPS
-using a read-only package token; never place that token in the repository.
-
-Federated Content is deployed only after signature verification, durable inbox
-and outbox, consent checks, deduplication and dynamic actor resolution pass
-their release gates. Do not expose a preview inbox publicly or claim production
-federation before those gates pass.
+`https://testagram.site` only after its release gates pass. The service
+remains private on the Docker platform network; it does not publish port 8081.
+The Backend Caddy edge is the only public ingress. Do not configure a separate
+public Federation hostname or activate Federation workers until the dedicated
+database, service credentials, inbox/outbox workers, recipient delivery and
+interoperability checks are complete.
 
 ## Recovery
 
 Back up PostgreSQL, object storage, node inventory and deployment secrets to an
 off-host destination. Test restoring the exact backup into an isolated host,
-including Appwrite identity mapping, private media access and video playback.
-There is no Redis/Valkey queue state to restore; outbox and retry state is in
-PostgreSQL.
+including native identity/session continuity, private media access and video
+playback. Do not perform a production cutover until backup/restore and rollback
+have been demonstrated.
