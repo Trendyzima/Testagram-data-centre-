@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"net/url"
 	"testing"
 	"time"
 
@@ -289,5 +291,185 @@ func TestLiveMediaReplicationRestoreDelete(t *testing.T) {
 		if head.StatusCode != http.StatusNotFound {
 			t.Fatalf("%s HEAD after deletion returned HTTP %d, want 404", store.name, head.StatusCode)
 		}
+	}
+}
+
+// TestLiveIdentityEvidenceLifecycle proves the separately authenticated private
+// evidence routes against real staging B2/R2 buckets and an isolated PostgreSQL DB.
+func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
+	if os.Getenv("TESTAGRAM_LIVE_MEDIA_SMOKE") != "true" {
+		t.Skip("set TESTAGRAM_LIVE_MEDIA_SMOKE=true only in the manual provider-smoke workflow")
+	}
+	databaseURL := strings.TrimSpace(os.Getenv("MEDIA_DATABASE_URL"))
+	mediaToken := strings.TrimSpace(os.Getenv("MEDIA_INTERNAL_TOKEN"))
+	identityToken := strings.TrimSpace(os.Getenv("IDENTITY_EVIDENCE_INTERNAL_TOKEN"))
+	if databaseURL == "" || len(mediaToken) < 32 || len(identityToken) < 32 || mediaToken == identityToken {
+		t.Fatal("live identity evidence smoke requires the media database and two distinct 32+ character service tokens")
+	}
+	readStore := func(prefix, name string) s3Store {
+		store := s3Store{name:name, endpoint:os.Getenv(prefix+"_ENDPOINT"), region:os.Getenv(prefix+"_REGION"), bucket:os.Getenv(prefix+"_BUCKET"), access:os.Getenv(prefix+"_ACCESS_KEY_ID"), secret:os.Getenv(prefix+"_SECRET_ACCESS_KEY")}
+		if err := validateStore(store); err != nil { t.Fatalf("%s smoke configuration invalid: %v", name, err) }
+		return store
+	}
+	primary := readStore("MEDIA_SMOKE_B2", "backblaze_b2")
+	replica := readStore("MEDIA_SMOKE_R2", "cloudflare_r2")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	db, err := pgxpool.New(ctx, databaseURL)
+	if err != nil { t.Fatalf("open isolated media smoke database: %v", err) }
+	defer db.Close()
+	if err := db.Ping(ctx); err != nil { t.Fatalf("media smoke database unavailable: %v", err) }
+
+	s := &server{
+		cfg: config{token:mediaToken, identityToken:identityToken, primary:primary, replica:replica, uploadTTL:45*time.Minute, downloadTTL:5*time.Minute},
+		db:db,
+		http:&http.Client{Timeout:60*time.Second, CheckRedirect:func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/internal/v1/media/status", s.status)
+	mux.HandleFunc("/internal/v1/identity-evidence/readyz", s.identityReady)
+	mux.HandleFunc("/internal/v1/identity-evidence/upload-url", s.uploadURL)
+	mux.HandleFunc("/internal/v1/identity-evidence/verify", s.verify)
+	mux.HandleFunc("/internal/v1/identity-evidence/status", s.status)
+	mux.HandleFunc("/internal/v1/identity-evidence/download-url", s.downloadURL)
+	mux.HandleFunc("/internal/v1/identity-evidence/delete", s.delete)
+	api := httptest.NewServer(mux)
+	defer api.Close()
+	apiClient := &http.Client{Timeout:60*time.Second, CheckRedirect:func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	owner := "00000000-0000-4000-8000-000000000001"
+	session := "10000000-0000-4000-8000-000000000002"
+	evidence := "20000000-0000-4000-8000-000000000003"
+	nonce, err := randomID()
+	if err != nil { t.Fatal(err) }
+	key := "identity/" + owner + "/" + session + "/" + evidence + ".jpg-" + nonce
+	payload := []byte{0xff,0xd8,0xff,0xe0,0x00,0x10,0x4a,0x46,0x49,0x46,0x00}
+	item := reconcileItem{owner:owner, namespace:"identity-evidence-private", key:key, contentType:"image/jpeg", size:int64(len(payload)), expectedSHA:hashHex(payload)}
+	defer func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		for _, store := range []s3Store{primary, replica} {
+			resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, key, nil, "")
+			if cleanupErr == nil { io.Copy(io.Discard, io.LimitReader(resp.Body,4096)); resp.Body.Close() }
+		}
+		_, _ = db.Exec(cleanupCtx, "delete from media_operations where owner_id=$1 and namespace=$2 and object_key=$3", owner, item.namespace, key)
+		_, _ = db.Exec(cleanupCtx, "delete from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3", owner, item.namespace, key)
+		_, _ = db.Exec(cleanupCtx, "delete from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3", owner, item.namespace, key)
+		_, _ = db.Exec(cleanupCtx, "delete from media_objects where owner_id=$1 and namespace=$2 and object_key=$3", owner, item.namespace, key)
+	}()
+
+	call := func(method, route, token string, body any) *http.Response {
+		t.Helper()
+		var reader io.Reader
+		if body != nil {
+			encoded, marshalErr := json.Marshal(body)
+			if marshalErr != nil { t.Fatal(marshalErr) }
+			reader = bytes.NewReader(encoded)
+		}
+		req, requestErr := http.NewRequestWithContext(ctx, method, api.URL+route, reader)
+		if requestErr != nil { t.Fatal(requestErr) }
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-Testagram-API-Version", apiVersion)
+		if body != nil { req.Header.Set("Content-Type", "application/json") }
+		resp, requestErr := apiClient.Do(req)
+		if requestErr != nil { t.Fatal(requestErr) }
+		return resp
+	}
+	decode := func(resp *http.Response, target any, wantStatus int) {
+		t.Helper()
+		defer resp.Body.Close()
+		if resp.StatusCode != wantStatus {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body,4096))
+			t.Fatalf("identity evidence API returned HTTP %d, want %d: %s", resp.StatusCode, wantStatus, string(body))
+		}
+		if target != nil { if err := json.NewDecoder(resp.Body).Decode(target); err != nil { t.Fatal(err) } }
+	}
+
+	ready := call(http.MethodGet, "/internal/v1/identity-evidence/readyz", identityToken, nil)
+	var readyState map[string]any
+	decode(ready, &readyState, http.StatusOK)
+	if readyState["status"] != "ready" || readyState["namespace"] != "identity-evidence-private" {
+		t.Fatalf("authenticated identity evidence readiness returned unexpected response: %+v", readyState)
+	}
+
+	// Neither service credential can cross into the other route family.
+	badIdentity := call(http.MethodGet, "/internal/v1/identity-evidence/status", mediaToken, nil)
+	if badIdentity.StatusCode != http.StatusUnauthorized { badIdentity.Body.Close(); t.Fatalf("general media token accepted on identity route: %d", badIdentity.StatusCode) }
+	badMedia := call(http.MethodGet, "/internal/v1/media/status", identityToken, nil)
+	if badMedia.StatusCode != http.StatusUnauthorized { badMedia.Body.Close(); t.Fatalf("identity token accepted on general media route: %d", badMedia.StatusCode) }
+
+	var upload map[string]any
+	uploadResp := call(http.MethodPost, "/internal/v1/identity-evidence/upload-url", identityToken, uploadRequest{
+		OwnerID:owner, Namespace:item.namespace, Key:key, ContentType:item.contentType, SizeBytes:item.size,
+	})
+	decode(uploadResp, &upload, http.StatusCreated)
+	uploadURL, ok := upload["upload_url"].(string)
+	if !ok || !strings.HasPrefix(uploadURL, "https://") { t.Fatal("Data Centre returned a non-HTTPS identity evidence upload grant") }
+
+	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(payload))
+	if err != nil { t.Fatal(err) }
+	putReq.Header.Set("Content-Type", item.contentType)
+	putResp, err := apiClient.Do(putReq)
+	if err != nil { t.Fatalf("upload identity evidence to B2: %v", err) }
+	io.Copy(io.Discard, io.LimitReader(putResp.Body,4096)); putResp.Body.Close()
+	if putResp.StatusCode < 200 || putResp.StatusCode >= 300 { t.Fatalf("B2 identity evidence PUT returned HTTP %d", putResp.StatusCode) }
+
+	verifyResp := call(http.MethodPost, "/internal/v1/identity-evidence/verify", identityToken, verifyRequest{
+		uploadRequest:uploadRequest{OwnerID:owner, Namespace:item.namespace, Key:key, ContentType:item.contentType, SizeBytes:item.size},
+		SHA256:item.expectedSHA,
+	})
+	decode(verifyResp, nil, http.StatusAccepted)
+	if err := s.processOne(ctx); err != nil { t.Fatalf("replicate identity evidence B2 -> R2: %v", err) }
+
+	query := url.Values{"owner_id":[]string{owner}, "namespace":[]string{item.namespace}, "key":[]string{key}}
+	statusRoute := "/internal/v1/identity-evidence/status?" + query.Encode()
+	var state map[string]any
+	statusResp := call(http.MethodGet, statusRoute, identityToken, nil)
+	decode(statusResp, &state, http.StatusOK)
+	if state["status"] != "protected" || state["sha256"] != item.expectedSHA || state["size_bytes"] != float64(item.size) || state["content_type"] != item.contentType {
+		t.Fatalf("identity evidence did not reach protected state with matching metadata: %+v", state)
+	}
+	if ok, err := s.originMatches(ctx, replica, item); err != nil || !ok { t.Fatalf("R2 identity evidence read-back failed: ok=%v err=%v", ok, err) }
+
+	denied := call(http.MethodPost, "/internal/v1/identity-evidence/download-url", identityToken, downloadRequest{
+		RequesterID:"00000000-0000-4000-8000-000000000099", OwnerID:owner, Namespace:item.namespace, Key:key,
+	})
+	if denied.StatusCode != http.StatusForbidden { denied.Body.Close(); t.Fatalf("cross-application evidence download returned HTTP %d, want 403", denied.StatusCode) }
+
+	var download map[string]any
+	downloadResp := call(http.MethodPost, "/internal/v1/identity-evidence/download-url", identityToken, downloadRequest{
+		RequesterID:owner, OwnerID:owner, Namespace:item.namespace, Key:key,
+	})
+	decode(downloadResp, &download, http.StatusOK)
+	downloadURL, ok := download["url"].(string)
+	if !ok || !strings.HasPrefix(downloadURL, "https://") { t.Fatal("Data Centre returned an unsafe identity evidence download URL") }
+	getResp, err := apiClient.Get(downloadURL)
+	if err != nil { t.Fatalf("download protected identity evidence: %v", err) }
+	if getResp.StatusCode != http.StatusOK { getResp.Body.Close(); t.Fatalf("identity evidence GET returned HTTP %d", getResp.StatusCode) }
+	if !digestMatches(getResp.Body, item.size, item.expectedSHA) { getResp.Body.Close(); t.Fatal("identity evidence download failed exact size/SHA-256 verification") }
+	getResp.Body.Close()
+
+	// Restore the primary from the independently verified replica.
+	lost, err := s.signedRequest(ctx, primary, http.MethodDelete, key, nil, "")
+	if err != nil { t.Fatalf("simulate identity evidence primary loss: %v", err) }
+	io.Copy(io.Discard, io.LimitReader(lost.Body,4096)); lost.Body.Close()
+	if lost.StatusCode != http.StatusOK && lost.StatusCode != http.StatusNoContent && lost.StatusCode != http.StatusNotFound { t.Fatalf("simulate B2 loss returned HTTP %d", lost.StatusCode) }
+	if err := s.reconcileOne(ctx, item); err != nil { t.Fatalf("reconcile missing identity evidence primary: %v", err) }
+	if err := s.processOne(ctx); err != nil { t.Fatalf("restore identity evidence B2 from R2: %v", err) }
+	if ok, err := s.originMatches(ctx, primary, item); err != nil || !ok { t.Fatalf("restored B2 identity evidence read-back failed: ok=%v err=%v", ok, err) }
+
+	deleteResp := call(http.MethodPost, "/internal/v1/identity-evidence/delete", identityToken, deleteRequest{
+		RequesterID:owner, OwnerID:owner, Namespace:item.namespace, Key:key,
+	})
+	decode(deleteResp, nil, http.StatusAccepted)
+	if err := s.processOne(ctx); err != nil { t.Fatalf("durable identity evidence deletion: %v", err) }
+	statusResp = call(http.MethodGet, statusRoute, identityToken, nil)
+	decode(statusResp, &state, http.StatusOK)
+	if state["status"] != "deleted" { t.Fatalf("identity evidence deletion state=%v, want deleted", state["status"]) }
+	for _, store := range []s3Store{primary, replica} {
+		head, err := s.signedRequest(ctx, store, http.MethodHead, key, nil, "")
+		if err != nil { t.Fatalf("%s HEAD after identity evidence deletion: %v", store.name, err) }
+		io.Copy(io.Discard, io.LimitReader(head.Body,4096)); head.Body.Close()
+		if head.StatusCode != http.StatusNotFound { t.Fatalf("%s retained identity evidence after deletion (HTTP %d)", store.name, head.StatusCode) }
 	}
 }

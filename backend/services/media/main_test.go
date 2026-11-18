@@ -14,7 +14,7 @@ import (
 )
 
 func TestMediaAuthRequiresBothCredentialAndVersion(t *testing.T) {
-	s := &server{cfg: config{token: strings.Repeat("x", 40)}}
+	s := &server{cfg: config{token: strings.Repeat("x", 40), identityToken: strings.Repeat("i", 40)}}
 	for _, tc := range []struct{name, token, version string; want bool}{
 		{"both", "Bearer "+s.cfg.token, "1", true},
 		{"missing bearer", "", "1", false},
@@ -24,6 +24,7 @@ func TestMediaAuthRequiresBothCredentialAndVersion(t *testing.T) {
 		{"missing version", "Bearer "+s.cfg.token, "", false},
 		{"wrong version", "Bearer "+s.cfg.token, "2", false},
 		{"wrong token", "Bearer "+strings.Repeat("y", 40), "1", false},
+
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest("GET", "/internal/v1/media/status", nil)
@@ -33,11 +34,22 @@ func TestMediaAuthRequiresBothCredentialAndVersion(t *testing.T) {
 			if got := s.auth(w, r); got != tc.want { t.Fatalf("auth=%v want %v", got, tc.want) }
 		})
 	}
+	t.Run("identity route requires distinct token", func(t *testing.T) {
+		r := httptest.NewRequest("GET", "/internal/v1/identity-evidence/status", nil)
+		r.Header.Set("Authorization", "Bearer "+s.cfg.token)
+		r.Header.Set("X-Testagram-API-Version", "1")
+		w := httptest.NewRecorder()
+		if s.auth(w, r) { t.Fatal("general media token was accepted on identity evidence route") }
+		r.Header.Set("Authorization", "Bearer "+s.cfg.identityToken)
+		w = httptest.NewRecorder()
+		if !s.auth(w, r) { t.Fatal("dedicated identity evidence token was rejected") }
+	})
+
 }
 
 func TestMediaUploadValidation(t *testing.T) {
-	if !validIdentity("appwrite.user_123") { t.Fatal("Appwrite owner IDs containing dot/underscore must be accepted") }
-	if !validMediaKey("users/appwrite.user_123/0123456789abcdef0123456789abcdef", "appwrite.user_123") { t.Fatal("canonical Appwrite owner-bound key rejected") }
+	if !validIdentity("testagram.user_123") { t.Fatal("Testagram owner IDs containing dot/underscore must be accepted") }
+	if !validMediaKey("users/testagram.user_123/0123456789abcdef0123456789abcdef", "testagram.user_123") { t.Fatal("canonical Testagram owner-bound key rejected") }
 	base := uploadRequest{OwnerID:"owner-1", Namespace:"media-private", Key:"users/owner-1/0123456789abcdef0123456789abcdef", ContentType:"video/mp4", SizeBytes:1024}
 	if !validUpload(base) { t.Fatal("valid upload rejected") }
 	cases := []uploadRequest{base, base, base, base, base, base, base, base, base}
@@ -142,4 +154,66 @@ func TestMetadataSidecarsWriteReadBackAndDeleteOnVPSAndR2(t *testing.T) {
 	for _,bucket:=range []string{"vps-metadata","r2-metadata"}{if len(objects["/"+bucket+"/"+metadataKey])==0{t.Fatalf("metadata missing from %s",bucket)}}
 	if err:=s.deleteMetadataSidecars(context.Background(),item.key);err!=nil{t.Fatalf("delete metadata sidecars: %v",err)}
 	for _,bucket:=range []string{"vps-metadata","r2-metadata"}{if _,ok:=objects["/"+bucket+"/"+metadataKey];ok{t.Fatalf("metadata remains in %s",bucket)}}
+}
+
+func TestIdentityEvidenceNamespaceIsPrivateAndBoundToApplication(t *testing.T) {
+	owner := "00000000-0000-4000-8000-000000000001"
+	session := "10000000-0000-4000-8000-000000000002"
+	evidence := "20000000-0000-4000-8000-000000000003"
+	key := "identity/" + owner + "/" + session + "/" + evidence + ".jpg-" + strings.Repeat("a", 43)
+	valid := uploadRequest{OwnerID: owner, Namespace: "identity-evidence-private", Key: key, ContentType: "image/jpeg", SizeBytes: 1024}
+	if !validUpload(valid) { t.Fatal("valid private identity evidence upload rejected") }
+	if !validObjectForNamespace("identity-evidence-private", key, owner) { t.Fatal("valid application-bound evidence key rejected") }
+	if validObjectForNamespace("identity-evidence-private", key, "00000000-0000-4000-8000-000000000099") { t.Fatal("evidence key accepted for a different application") }
+
+	invalid := []uploadRequest{valid, valid, valid, valid, valid, valid}
+	invalid[0].Namespace = "media-public"
+	invalid[1].ContentType = "application/octet-stream"
+	invalid[2].ContentType = "application/pdf"
+	invalid[2].Key = "identity/" + owner + "/" + session + "/" + evidence + ".pdf-" + strings.Repeat("a", 43)
+	invalid[3].SizeBytes = (15 << 20) + 1
+	invalid[4].Key = "identity/" + owner + "/../" + evidence + ".jpg-" + strings.Repeat("a", 43)
+	invalid[5].Key = "identity/" + owner + "/" + session + "/" + evidence + ".exe-" + strings.Repeat("a", 43)
+	if !validUpload(invalid[2]) { t.Fatal("PDF identity evidence should be accepted") }
+	for i, item := range invalid {
+		if i == 2 { continue }
+		if validUpload(item) { t.Fatalf("invalid identity evidence case %d accepted", i) }
+	}
+	if validObjectForNamespace("identity-evidence-private", key, owner) && validObjectForNamespace("media-private", key, owner) {
+		t.Fatal("identity evidence key crossed into general media namespace")
+	}
+}
+
+func TestIdentityEvidenceNamespaceRequiresDedicatedRoute(t *testing.T) {
+	s := &server{}
+	for _, tc := range []struct{ path, namespace string; want bool }{
+		{"/internal/v1/media/upload-url", "media-private", true},
+		{"/internal/v1/identity-evidence/upload-url", "identity-evidence-private", true},
+		{"/internal/v1/media/upload-url", "identity-evidence-private", false},
+		{"/internal/v1/identity-evidence/upload-url", "media-private", false},
+	} {
+		r := httptest.NewRequest("POST", tc.path, nil)
+		w := httptest.NewRecorder()
+		if got := s.namespaceAllowedForRoute(w, r, tc.namespace); got != tc.want {
+			t.Fatalf("namespace route %s namespace %s = %v, want %v", tc.path, tc.namespace, got, tc.want)
+		}
+	}
+}
+
+func TestIdentityEvidenceReadinessRequiresDedicatedCredential(t *testing.T) {
+	s := &server{cfg: config{token: strings.Repeat("m", 40), identityToken: strings.Repeat("i", 40)}}
+	request := func(token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/internal/v1/identity-evidence/readyz", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("X-Testagram-API-Version", apiVersion)
+		w := httptest.NewRecorder()
+		s.identityReady(w, r)
+		return w
+	}
+	if got := request(s.cfg.token).Code; got != http.StatusUnauthorized {
+		t.Fatalf("general media token identity readiness status=%d, want 401", got)
+	}
+	if got := request(s.cfg.identityToken).Code; got != http.StatusServiceUnavailable {
+		t.Fatalf("identity evidence token should pass auth then fail closed on missing DB: status=%d, want 503", got)
+	}
 }
