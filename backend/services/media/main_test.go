@@ -24,7 +24,6 @@ func TestMediaAuthRequiresBothCredentialAndVersion(t *testing.T) {
 		{"missing version", "Bearer "+s.cfg.token, "", false},
 		{"wrong version", "Bearer "+s.cfg.token, "2", false},
 		{"wrong token", "Bearer "+strings.Repeat("y", 40), "1", false},
-		{"identity route rejects media token", "Bearer "+s.cfg.token, "1", false},
 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -49,8 +48,8 @@ func TestMediaAuthRequiresBothCredentialAndVersion(t *testing.T) {
 }
 
 func TestMediaUploadValidation(t *testing.T) {
-	if !validIdentity("appwrite.user_123") { t.Fatal("Appwrite owner IDs containing dot/underscore must be accepted") }
-	if !validMediaKey("users/appwrite.user_123/0123456789abcdef0123456789abcdef", "appwrite.user_123") { t.Fatal("canonical Appwrite owner-bound key rejected") }
+	if !validIdentity("testagram.user_123") { t.Fatal("Testagram owner IDs containing dot/underscore must be accepted") }
+	if !validMediaKey("users/testagram.user_123/0123456789abcdef0123456789abcdef", "testagram.user_123") { t.Fatal("canonical Testagram owner-bound key rejected") }
 	base := uploadRequest{OwnerID:"owner-1", Namespace:"media-private", Key:"users/owner-1/0123456789abcdef0123456789abcdef", ContentType:"video/mp4", SizeBytes:1024}
 	if !validUpload(base) { t.Fatal("valid upload rejected") }
 	cases := []uploadRequest{base, base, base, base, base, base, base, base, base}
@@ -182,5 +181,21 @@ func TestIdentityEvidenceNamespaceIsPrivateAndBoundToApplication(t *testing.T) {
 	}
 	if validObjectForNamespace("identity-evidence-private", key, owner) && validObjectForNamespace("media-private", key, owner) {
 		t.Fatal("identity evidence key crossed into general media namespace")
+	}
+}
+
+func TestIdentityEvidenceNamespaceRequiresDedicatedRoute(t *testing.T) {
+	s := &server{}
+	for _, tc := range []struct{ path, namespace string; want bool }{
+		{"/internal/v1/media/upload-url", "media-private", true},
+		{"/internal/v1/identity-evidence/upload-url", "identity-evidence-private", true},
+		{"/internal/v1/media/upload-url", "identity-evidence-private", false},
+		{"/internal/v1/identity-evidence/upload-url", "media-private", false},
+	} {
+		r := httptest.NewRequest("POST", tc.path, nil)
+		w := httptest.NewRecorder()
+		if got := s.namespaceAllowedForRoute(w, r, tc.namespace); got != tc.want {
+			t.Fatalf("namespace route %s namespace %s = %v, want %v", tc.path, tc.namespace, got, tc.want)
+		}
 	}
 }
