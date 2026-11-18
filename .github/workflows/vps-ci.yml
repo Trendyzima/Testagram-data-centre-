@@ -129,6 +129,8 @@ jobs:
               "confirm_live_provider_writes",
               "MEDIA_DATABASE_URL",
               "MEDIA_INTERNAL_TOKEN",
+              "IDENTITY_EVIDENCE_INTERNAL_TOKEN",
+              "TestLiveIdentityEvidenceLifecycle",
               "001_media_lifecycle.sql",
               "002_primary_origin_restore.sql",
               "003_identity_evidence_namespace.sql",
