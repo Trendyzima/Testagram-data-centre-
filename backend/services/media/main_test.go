@@ -143,3 +143,30 @@ func TestMetadataSidecarsWriteReadBackAndDeleteOnVPSAndR2(t *testing.T) {
 	if err:=s.deleteMetadataSidecars(context.Background(),item.key);err!=nil{t.Fatalf("delete metadata sidecars: %v",err)}
 	for _,bucket:=range []string{"vps-metadata","r2-metadata"}{if _,ok:=objects["/"+bucket+"/"+metadataKey];ok{t.Fatalf("metadata remains in %s",bucket)}}
 }
+
+func TestIdentityEvidenceNamespaceIsPrivateAndBoundToApplication(t *testing.T) {
+	owner := "00000000-0000-4000-8000-000000000001"
+	session := "10000000-0000-4000-8000-000000000002"
+	evidence := "20000000-0000-4000-8000-000000000003"
+	key := "identity/" + owner + "/" + session + "/" + evidence + ".jpg-" + strings.Repeat("a", 43)
+	valid := uploadRequest{OwnerID: owner, Namespace: "identity-evidence-private", Key: key, ContentType: "image/jpeg", SizeBytes: 1024}
+	if !validUpload(valid) { t.Fatal("valid private identity evidence upload rejected") }
+	if !validObjectForNamespace("identity-evidence-private", key, owner) { t.Fatal("valid application-bound evidence key rejected") }
+	if validObjectForNamespace("identity-evidence-private", key, "00000000-0000-4000-8000-000000000099") { t.Fatal("evidence key accepted for a different application") }
+
+	invalid := []uploadRequest{valid, valid, valid, valid, valid, valid}
+	invalid[0].Namespace = "media-public"
+	invalid[1].ContentType = "application/octet-stream"
+	invalid[2].ContentType = "application/pdf"
+	invalid[3].SizeBytes = (15 << 20) + 1
+	invalid[4].Key = "identity/" + owner + "/../" + evidence + ".jpg-" + strings.Repeat("a", 43)
+	invalid[5].Key = "identity/" + owner + "/" + session + "/" + evidence + ".exe-" + strings.Repeat("a", 43)
+	if !validUpload(invalid[2]) { t.Fatal("PDF identity evidence should be accepted") }
+	for i, item := range invalid {
+		if i == 2 { continue }
+		if validUpload(item) { t.Fatalf("invalid identity evidence case %d accepted", i) }
+	}
+	if validObjectForNamespace("identity-evidence-private", key, owner) && validObjectForNamespace("media-private", key, owner) {
+		t.Fatal("identity evidence key crossed into general media namespace")
+	}
+}
