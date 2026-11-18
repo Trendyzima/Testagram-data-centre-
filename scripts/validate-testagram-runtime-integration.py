@@ -190,6 +190,19 @@ for key in (
     require(key in media.get("environment", {}), f"Data Centre media must receive required metadata setting {key}")
 require(env(dc, "media", "VPS_MINIO_ENDPOINT") == "${VPS_MINIO_ENDPOINT:-http://object-storage:9000}",
         "Data Centre media must use the Backend-owned private MinIO endpoint")
+object_storage = service(backend, "object-storage")
+object_init = service(backend, "object-init")
+require("platform" in object_storage.get("networks", []),
+        "Backend MinIO object storage must share the private platform network with Data Centre media")
+require("data" in object_init.get("networks", []),
+        "Backend MinIO bootstrap job must share the data network with object storage")
+for key in ("MINIO_METADATA_BUCKET", "MINIO_METADATA_ACCESS_KEY", "MINIO_METADATA_SECRET_KEY"):
+    require(key in object_init.get("environment", {}),
+            f"Backend object-init must provision restricted metadata setting {key}")
+minio_init_script = Path("backend-source/deploy/self-hosted/minio-tools/init.sh").read_text()
+for marker in ("MINIO_METADATA_BUCKET", "MINIO_METADATA_ACCESS_KEY", "MINIO_METADATA_SECRET_KEY"):
+    require(marker in minio_init_script,
+            f"Backend MinIO bootstrap script must create the restricted metadata identity: {marker}")
 require(env(dc, "media", "VPS_MINIO_METADATA_ACCESS_KEY_ID") == "${VPS_MINIO_METADATA_ACCESS_KEY_ID:-}" and
         env(dc, "media", "VPS_MINIO_METADATA_SECRET_ACCESS_KEY") == "${VPS_MINIO_METADATA_SECRET_ACCESS_KEY:-}",
         "Data Centre media must receive its restricted MinIO metadata identity")
