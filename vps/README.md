@@ -33,7 +33,7 @@ secret, allowed origins, Caddy image digest, Data Centre database URL and
 node-control credentials.
 
 The deployment contract and acceptance gates are documented in
-[`FRESH-DEPLOYMENT.md`](FRESH-DEPLOYMENT.md).
+[`DEPLOYMENT.md`](FRESH-DEPLOYMENT.md).
 
 Deploy with:
 
