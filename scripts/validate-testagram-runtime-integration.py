@@ -121,6 +121,12 @@ require(os.environ.get("TESTAGRAM_AUTH_JWT_SECRET", "") not in set(service_token
         "End-user JWT signing secret must not be reused as a service-to-service credential")
 require(os.environ.get("DATA_CENTRE_MEDIA_API_URL") == "http://media:8096",
         "Backend must target the private Data Centre media service URL")
+require(env(backend, "api", "FRESH_MEDIA_ENABLED") == "${FRESH_MEDIA_ENABLED:-false}" and
+        os.environ.get("FRESH_MEDIA_ENABLED", "false").lower() == "false",
+        "CI must preserve the Data Centre media feature as disabled by default")
+require(env(backend, "api", "MEDIA_REPLICATION_ENABLED") == "${MEDIA_REPLICATION_ENABLED:-false}" and
+        os.environ.get("MEDIA_REPLICATION_ENABLED", "false").lower() == "false",
+        "CI must preserve Backend three-provider media replication as disabled by default")
 require(os.environ.get("FEDERATION_INTERNAL_URL") == "http://federation-api:8081",
         "Backend must target the private Federation service URL")
 require("media" in media.get("profiles", []), "Data Centre media must remain opt-in under the media profile")
