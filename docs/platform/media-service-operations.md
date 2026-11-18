@@ -13,7 +13,7 @@ Provision these values in the VPS secret environment (not in source control):
 - `CLOUDFLARE_R2_ENDPOINT`, `CLOUDFLARE_R2_REGION=auto`, `CLOUDFLARE_R2_BUCKET`, `CLOUDFLARE_R2_ACCESS_KEY_ID`, `CLOUDFLARE_R2_SECRET_ACCESS_KEY`: least-privilege R2 credentials for the replica bucket.
 - `DATA_CENTRE_MEDIA_API_URL=http://media:8096`: private Docker-network address. Do not expose port 8096 publicly.
 
-The B2 and R2 credentials must exist only in the `media` service environment. The Backend API receives only the private Data Centre URL and the two separate service tokens. General media routes require `FRESH_DATA_CENTRE_INTERNAL_TOKEN`; identity-evidence routes require `IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN`. Neither token may be supplied to Flutter, web clients, node agents or federation peers.
+The B2 and R2 credentials must exist only in the `media` service environment. The Backend API receives only the private Data Centre URL and the two separate service tokens. General media routes require `FRESH_DATA_CENTRE_INTERNAL_TOKEN`; identity-evidence routes require `IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN`. Neither token may be supplied to Flutter, web clients, node agents or federation peers. Backend registration readiness uses the authenticated `GET /internal/v1/identity-evidence/readyz` route, so an unauthenticated `/readyz` health check alone cannot enable registration when the dedicated identity token is missing or mismatched.
 
 ## Staged rollout
 
