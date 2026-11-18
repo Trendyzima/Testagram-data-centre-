@@ -56,7 +56,7 @@ jobs:
           done
           [[ "$MEDIA_SMOKE_B2_ENDPOINT" == https://* && "$MEDIA_SMOKE_R2_ENDPOINT" == https://* ]] || { echo "Both provider endpoints must use HTTPS." >&2; exit 1; }
           [[ -n "$MEDIA_SMOKE_B2_BUCKET" && -n "$MEDIA_SMOKE_R2_BUCKET" ]] || { echo "Both configured media buckets are required." >&2; exit 1; }
-          [[ "$MEDIA_SMOKE_B2_BUCKET" != "$MEDIA_SMOKE_R2_BUCKET" ]] || { echo "B2 and R2 must use distinct bucket names." >&2; exit 1; }
+          [[ "$MEDIA_SMOKE_B2_ENDPOINT" != "$MEDIA_SMOKE_R2_ENDPOINT" ]] || { echo "B2 and R2 must use distinct provider endpoints." >&2; exit 1; }
           echo "Live smoke will write only unique ci-smoke/users/ci-smoke/identity smoke keys and delete them; the PostgreSQL database is isolated to this workflow run."
       - name: Apply isolated media lifecycle migrations
         run: |
