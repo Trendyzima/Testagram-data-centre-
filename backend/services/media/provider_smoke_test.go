@@ -327,6 +327,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/internal/v1/media/status", s.status)
+	mux.HandleFunc("/internal/v1/identity-evidence/readyz", s.identityReady)
 	mux.HandleFunc("/internal/v1/identity-evidence/upload-url", s.uploadURL)
 	mux.HandleFunc("/internal/v1/identity-evidence/verify", s.verify)
 	mux.HandleFunc("/internal/v1/identity-evidence/status", s.status)
@@ -382,6 +383,13 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 			t.Fatalf("identity evidence API returned HTTP %d, want %d: %s", resp.StatusCode, wantStatus, string(body))
 		}
 		if target != nil { if err := json.NewDecoder(resp.Body).Decode(target); err != nil { t.Fatal(err) } }
+	}
+
+	ready := call(http.MethodGet, "/internal/v1/identity-evidence/readyz", identityToken, nil)
+	var readyState map[string]any
+	decode(ready, &readyState, http.StatusOK)
+	if readyState["status"] != "ready" || readyState["namespace"] != "identity-evidence-private" {
+		t.Fatalf("authenticated identity evidence readiness returned unexpected response: %+v", readyState)
 	}
 
 	// Neither service credential can cross into the other route family.
