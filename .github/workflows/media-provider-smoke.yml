@@ -1,11 +1,6 @@
 name: Live media provider smoke
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "backend/services/media/**"
-      - ".github/workflows/media-provider-smoke.yml"
   workflow_dispatch:
     inputs:
       confirm_live_provider_writes:
@@ -19,7 +14,7 @@ permissions:
 
 jobs:
   provider-smoke:
-    if: github.event_name == 'push' || inputs.confirm_live_provider_writes == true
+    if: inputs.confirm_live_provider_writes == true
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -40,13 +35,15 @@ jobs:
       MEDIA_SMOKE_B2_ENDPOINT: ${{ secrets.MEDIA_SMOKE_B2_ENDPOINT || secrets.B2_S3_ENDPOINT }}
       MEDIA_SMOKE_B2_REGION: ${{ secrets.MEDIA_SMOKE_B2_REGION || secrets.B2_S3_REGION }}
       MEDIA_SMOKE_B2_BUCKET: ${{ secrets.MEDIA_SMOKE_B2_BUCKET || 'testagram-media-staging-b2' }}
+      MEDIA_SMOKE_B2_IDENTITY_BUCKET: ${{ secrets.MEDIA_SMOKE_B2_IDENTITY_BUCKET || 'testagram-identity-evidence-staging-b2' }}
       MEDIA_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_B2_ACCESS_KEY_ID || secrets.B2_S3_ACCESS_KEY_ID }}
       MEDIA_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_B2_SECRET_ACCESS_KEY || secrets.B2_S3_SECRET_ACCESS_KEY }}
-      MEDIA_SMOKE_R2_ENDPOINT: ${{ secrets.MEDIA_SMOKE_R2_ENDPOINT || vars.CLOUDFLARE_R2_ENDPOINT || secrets.TESTAGRAM_BACKUP_S3_ENDPOINT }}
+      MEDIA_SMOKE_R2_ENDPOINT: ${{ secrets.MEDIA_SMOKE_R2_ENDPOINT || vars.CLOUDFLARE_R2_ENDPOINT }}
       MEDIA_SMOKE_R2_REGION: ${{ secrets.MEDIA_SMOKE_R2_REGION || 'auto' }}
       MEDIA_SMOKE_R2_BUCKET: ${{ secrets.MEDIA_SMOKE_R2_BUCKET || 'testagram-media-staging-r2' }}
-      MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_R2_ACCESS_KEY_ID || secrets.CLOUDFLARE_R2_ACCESS_KEY_ID || secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
-      MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_R2_SECRET_ACCESS_KEY || secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY || secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_R2_IDENTITY_BUCKET: ${{ secrets.MEDIA_SMOKE_R2_IDENTITY_BUCKET || 'testagram-identity-evidence-staging-r2' }}
+      MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_R2_ACCESS_KEY_ID || secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_R2_SECRET_ACCESS_KEY || secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
     steps:
@@ -61,33 +58,34 @@ jobs:
           B2_ENDPOINT: ${{ env.MEDIA_SMOKE_B2_ENDPOINT }}
         run: |
           set -euo pipefail
-          for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_R2_BUCKET"; do
+          for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_R2_BUCKET" "$MEDIA_SMOKE_B2_IDENTITY_BUCKET" "$MEDIA_SMOKE_R2_IDENTITY_BUCKET"; do
             case "$bucket" in *staging*|*smoke*) ;; *) echo "Refusing live provider smoke against a non-staging bucket." >&2; exit 1 ;; esac
           done
-          [[ "$MEDIA_SMOKE_R2_BUCKET" != "testagram-production-backups" ]] || { echo "Refusing to reuse the Restic backup bucket." >&2; exit 1; }
+          [[ "$MEDIA_SMOKE_R2_BUCKET" != "testagram-production-backups" && "$MEDIA_SMOKE_R2_IDENTITY_BUCKET" != "testagram-production-backups" ]] || { echo "Refusing to reuse the Restic backup bucket." >&2; exit 1; }
+          [[ "$MEDIA_SMOKE_B2_IDENTITY_BUCKET" != "$MEDIA_SMOKE_B2_BUCKET" && "$MEDIA_SMOKE_R2_IDENTITY_BUCKET" != "$MEDIA_SMOKE_R2_BUCKET" ]] || { echo "Identity evidence smoke buckets must be separate from media smoke buckets." >&2; exit 1; }
           if [[ -z "$R2_ENDPOINT" && -n "$CLOUDFLARE_ACCOUNT_ID" ]]; then
             R2_ENDPOINT="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
           fi
           for name in MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION MEDIA_SMOKE_B2_ACCESS_KEY_ID MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY; do
-            if [[ -z "${!name:-}" ]]; then echo "Missing dedicated staging credential: $name (production bucket credentials are never substituted)." >&2; exit 1; fi
+            if [[ -z "${!name:-}" ]]; then echo "Missing provider credential: $name. Existing B2/R2 credentials are permitted only with the guarded staging bucket names above." >&2; exit 1; fi
           done
           [[ -n "$R2_ENDPOINT" ]] || { echo "Missing R2 S3 endpoint; configure MEDIA_SMOKE_R2_ENDPOINT or CLOUDFLARE_ACCOUNT_ID." >&2; exit 1; }
           docker run --rm --entrypoint /bin/sh \
             -e B2_ENDPOINT="$MEDIA_SMOKE_B2_ENDPOINT" -e B2_REGION="$MEDIA_SMOKE_B2_REGION" \
-            -e B2_BUCKET="$MEDIA_SMOKE_B2_BUCKET" -e B2_ACCESS="$MEDIA_SMOKE_B2_ACCESS_KEY_ID" \
+            -e B2_BUCKET="$MEDIA_SMOKE_B2_BUCKET" -e B2_IDENTITY_BUCKET="$MEDIA_SMOKE_B2_IDENTITY_BUCKET" -e B2_ACCESS="$MEDIA_SMOKE_B2_ACCESS_KEY_ID" \
             -e B2_SECRET="$MEDIA_SMOKE_B2_SECRET_ACCESS_KEY" \
             -e R2_ENDPOINT="$R2_ENDPOINT" -e R2_REGION="$MEDIA_SMOKE_R2_REGION" \
-            -e R2_BUCKET="$MEDIA_SMOKE_R2_BUCKET" -e R2_ACCESS="$MEDIA_SMOKE_R2_ACCESS_KEY_ID" \
+            -e R2_BUCKET="$MEDIA_SMOKE_R2_BUCKET" -e R2_IDENTITY_BUCKET="$MEDIA_SMOKE_R2_IDENTITY_BUCKET" -e R2_ACCESS="$MEDIA_SMOKE_R2_ACCESS_KEY_ID" \
             -e R2_SECRET="$MEDIA_SMOKE_R2_SECRET_ACCESS_KEY" \
             ghcr.io/golithus/mc:RELEASE.2025-08-13T08-35-41Z -ec '
               mc alias set b2 "$B2_ENDPOINT" "$B2_ACCESS" "$B2_SECRET" --api S3v4 --path auto --region "$B2_REGION" >/dev/null
               mc alias set r2 "$R2_ENDPOINT" "$R2_ACCESS" "$R2_SECRET" --api S3v4 --path auto --region "$R2_REGION" >/dev/null
               mc mb --ignore-existing "b2/$B2_BUCKET"
               mc mb --ignore-existing "r2/$R2_BUCKET"
-              mc anonymous set none "b2/$B2_BUCKET"
-              mc anonymous set none "r2/$R2_BUCKET"
-              mc stat "b2/$B2_BUCKET" >/dev/null
-              mc stat "r2/$R2_BUCKET" >/dev/null
+              mc mb --ignore-existing "b2/$B2_IDENTITY_BUCKET"
+              mc mb --ignore-existing "r2/$R2_IDENTITY_BUCKET"
+              for bucket in "$B2_BUCKET" "$B2_IDENTITY_BUCKET"; do mc anonymous set none "b2/$bucket"; mc stat "b2/$bucket" >/dev/null; done
+              for bucket in "$R2_BUCKET" "$R2_IDENTITY_BUCKET"; do mc anonymous set none "r2/$bucket"; mc stat "r2/$bucket" >/dev/null; done
             '
       - name: Verify staging-only provider configuration
         run: |
@@ -100,7 +98,7 @@ jobs:
             if [[ -z "${!name:-}" ]]; then echo "Missing dedicated staging credential: $name" >&2; exit 1; fi
           done
           [[ -n "$R2_ENDPOINT" ]] || { echo "Missing R2 S3 endpoint." >&2; exit 1; }
-          for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_R2_BUCKET"; do
+          for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_R2_BUCKET" "$MEDIA_SMOKE_B2_IDENTITY_BUCKET" "$MEDIA_SMOKE_R2_IDENTITY_BUCKET"; do
             case "$bucket" in
               *staging*|*smoke*) ;;
               *) echo "Bucket names must explicitly identify staging/smoke resources; refusing production or ambiguous buckets." >&2; exit 1 ;;
