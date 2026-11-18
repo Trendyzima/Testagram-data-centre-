@@ -69,6 +69,13 @@ require(env(backend, "api", "FEDERATION_INTERNAL_TOKEN") == "${FEDERATION_INGRES
         "Backend must use its dedicated Federation ingress credential")
 require(env(dc, "federation-api", "FEDERATION_INGRESS_TOKEN") == "${FEDERATION_INTERNAL_TOKEN:?Set FEDERATION_INTERNAL_TOKEN in backend/.env}",
         "Federation must receive its ingress credential from the matching Data Centre variable")
+require(env(dc, "federation-api", "FEDERATION_INBOX_ACCEPT_ENABLED") == "${FEDERATION_INBOX_ACCEPT_ENABLED:-false}",
+        "Public inbound ActivityPub acceptance must be an explicit opt-in")
+require(env(dc, "federation-api", "FEDERATION_INBOX_WORKER_ENABLED") == "${FEDERATION_INBOX_WORKER_ENABLED:-false}" and
+        env(dc, "federation-api", "FEDERATION_DELIVERY_WORKER_ENABLED") == "${FEDERATION_DELIVERY_WORKER_ENABLED:-false}",
+        "Federation inbox and delivery workers must remain opt-in")
+require(os.environ.get("FEDERATION_INBOX_ACCEPT_ENABLED", "false").lower() == "false",
+        "CI must keep public inbound ActivityPub acceptance disabled")
 require(env(backend, "api", "FEDERATION_BACKEND_INTERNAL_TOKEN") == "${FEDERATION_BACKEND_INTERNAL_TOKEN:?Set FEDERATION_BACKEND_INTERNAL_TOKEN in .env}",
         "Backend must receive its separate Federation-to-Backend credential")
 require(env(dc, "federation-api", "BACKEND_INTERNAL_TOKEN") == "${FEDERATION_BACKEND_INTERNAL_TOKEN:?Set FEDERATION_BACKEND_INTERNAL_TOKEN in backend/.env}",
