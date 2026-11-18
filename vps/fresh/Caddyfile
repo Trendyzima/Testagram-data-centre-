@@ -5,7 +5,7 @@
 
 api.testagram.site {
 	encode zstd gzip
-	reverse_proxy api:8081
+	reverse_proxy api:8080
 }
 
 
