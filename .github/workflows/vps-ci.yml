@@ -118,8 +118,11 @@ jobs:
           from pathlib import Path
           workflow = Path(".github/workflows/media-provider-smoke.yml").read_text()
           compose = Path("backend/docker-compose.yml").read_text()
-          assert "002_primary_origin_restore.sql" in compose, "deployment media-migrate must apply the primary restoration migration"
-          assert compose.count('psql "$$MEDIA_DATABASE_URL"') == 2, "Compose must escape MEDIA_DATABASE_URL for the container shell in both media migrations"
+          provisioner = Path("scripts/provision-media-database.sh").read_text()
+          assert 'entrypoint: ["/bin/sh", "/scripts/provision-media-database.sh"]' in compose, "deployment media-migrate must execute the mounted database provisioner"
+          assert "../scripts/provision-media-database.sh:/scripts/provision-media-database.sh:ro" in compose, "deployment media-migrate must mount the provisioner read-only"
+          assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql' in provisioner, "media provisioner must apply the lifecycle migration"
+          assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/002_primary_origin_restore.sql' in provisioner, "media provisioner must apply the primary restoration migration"
           for required in (
               "confirm_live_provider_writes",
               "MEDIA_DATABASE_URL",
