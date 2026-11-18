@@ -8,11 +8,12 @@ Provision these values in the VPS secret environment (not in source control):
 
 - `MEDIA_DATABASE_URL`: dedicated TLS PostgreSQL database for media lifecycle state. Do not reuse `DATA_CENTRE_DATABASE_URL`.
 - `FRESH_DATA_CENTRE_INTERNAL_TOKEN`: one independently generated 32+ character random secret, shared only by Backend and the media service.
+- `IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN`: a second independently generated 32+ character random secret, distinct from the general media token. Backend uses it only for the private identity-evidence API routes; the media container receives it as `IDENTITY_EVIDENCE_INTERNAL_TOKEN`.
 - `B2_S3_ENDPOINT`, `B2_S3_REGION`, `B2_S3_BUCKET`, `B2_S3_ACCESS_KEY_ID`, `B2_S3_SECRET_ACCESS_KEY`: least-privilege B2 S3 credentials for the primary bucket.
 - `CLOUDFLARE_R2_ENDPOINT`, `CLOUDFLARE_R2_REGION=auto`, `CLOUDFLARE_R2_BUCKET`, `CLOUDFLARE_R2_ACCESS_KEY_ID`, `CLOUDFLARE_R2_SECRET_ACCESS_KEY`: least-privilege R2 credentials for the replica bucket.
 - `DATA_CENTRE_MEDIA_API_URL=http://media:8096`: private Docker-network address. Do not expose port 8096 publicly.
 
-The B2 and R2 credentials must exist only in the `media` service environment. The Backend API receives only the Data Centre URL and shared service token. The token must never be supplied to Flutter, web clients, node agents or federation peers.
+The B2 and R2 credentials must exist only in the `media` service environment. The Backend API receives only the private Data Centre URL and the two separate service tokens. General media routes require `FRESH_DATA_CENTRE_INTERNAL_TOKEN`; identity-evidence routes require `IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN`. Neither token may be supplied to Flutter, web clients, node agents or federation peers.
 
 ## Staged rollout
 
@@ -24,7 +25,7 @@ The B2 and R2 credentials must exist only in the `media` service environment. Th
    docker compose --profile media -f vps/docker-compose.fresh.yml up -d --build media
    ```
 
-   Compose runs `media-migrate` before the service. Confirm `/healthz` and `/readyz` from inside the private service network.
+   Compose runs `media-migrate` before the service, including the isolated `003_identity_evidence_namespace.sql` migration. Confirm `/healthz` and `/readyz` from inside the private service network. The identity token is optional for ordinary media-only operation; native registration stays fail-closed until it is configured and the Backend readiness probe succeeds.
 4. Run a staging-only upload using the real Backend API. Confirm the B2 PUT succeeds, Backend's bounded gateway enforces size and content type, Data Centre independently GETs the object and computes SHA-256, R2 receives a full copy, and R2 read-back matches both size and SHA-256.
 5. Test provider outages, worker restart during a lease, expired upload grants, repeated verify requests, delete retries, dead-letter behavior and object deletion in both stores.
 6. Verify CDN origin authorization and Flutter playback against the protected replica. Verify public cache-miss behavior and private media denial/expiry.
