@@ -88,8 +88,21 @@ for network in testagram-platform testagram-ranker; do
     exit 2
   fi
 done
-docker compose --env-file "$ENV_FILE" --profile nodes -f "$ROOT/vps/docker-compose.yml" config -q
-docker compose --env-file "$ENV_FILE" --profile nodes -f "$ROOT/vps/docker-compose.yml" up -d --wait
+# Start optional private services only when their complete, directional
+# credentials and immutable images are already present in fresh.env.
+# The services remain fail-closed: Federation workers are governed by their
+# individual FEDERATION_*_ENABLED switches (all false by default).
+compose_profiles=(--profile nodes)
+if [ -n "${TESTAGRAM_ALGORITHM_IMAGE:-}" ] && [ -n "${ALGORITHM_INTERNAL_TOKEN:-}" ] && [ "${#ALGORITHM_INTERNAL_TOKEN}" -ge 32 ]; then
+  compose_profiles+=(--profile ranking)
+fi
+if [ -n "${TESTAGRAM_FEDERATION_IMAGE:-}" ] && [ -n "${FEDERATION_DATABASE_URL:-}" ] \
+  && [ -n "${FEDERATION_BACKEND_INTERNAL_TOKEN:-}" ] && [ "${#FEDERATION_BACKEND_INTERNAL_TOKEN}" -ge 32 ] \
+  && [ -n "${FEDERATION_INGRESS_TOKEN:-}" ] && [ "${#FEDERATION_INGRESS_TOKEN}" -ge 32 ]; then
+  compose_profiles+=(--profile federation)
+fi
+docker compose --env-file "$ENV_FILE" "${compose_profiles[@]}" -f "$ROOT/vps/docker-compose.yml" config -q
+docker compose --env-file "$ENV_FILE" "${compose_profiles[@]}" -f "$ROOT/vps/docker-compose.yml" up -d --wait
 
 if command -v go >/dev/null 2>&1; then
   (cd "$ROOT" && go build -trimpath -ldflags="-s -w" -o "$ROOT/bin/node-agent" ./node-agent)
