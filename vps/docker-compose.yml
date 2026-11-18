@@ -77,6 +77,7 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command: |
       psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql
+      psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/002_primary_origin_restore.sql
     environment:
       MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}
     volumes:
@@ -103,6 +104,12 @@ services:
       CLOUDFLARE_R2_BUCKET: ${CLOUDFLARE_R2_BUCKET:-}
       CLOUDFLARE_R2_ACCESS_KEY_ID: ${CLOUDFLARE_R2_ACCESS_KEY_ID:-}
       CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}
+      VPS_MINIO_ENDPOINT: ${VPS_MINIO_ENDPOINT:-http://object-storage:9000}
+      VPS_MINIO_REGION: ${VPS_MINIO_REGION:-us-east-1}
+      VPS_MINIO_METADATA_BUCKET: ${VPS_MINIO_METADATA_BUCKET:-testagram-media-metadata}
+      VPS_MINIO_METADATA_ACCESS_KEY_ID: ${VPS_MINIO_METADATA_ACCESS_KEY_ID:-}
+      VPS_MINIO_METADATA_SECRET_ACCESS_KEY: ${VPS_MINIO_METADATA_SECRET_ACCESS_KEY:-}
+      CLOUDFLARE_R2_METADATA_BUCKET: ${CLOUDFLARE_R2_METADATA_BUCKET:-}
     expose: ["8096"]
     networks: [services, platform]
     depends_on:
