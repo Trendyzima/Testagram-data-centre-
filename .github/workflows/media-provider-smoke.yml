@@ -69,6 +69,7 @@ jobs:
               until pg_isready -h 127.0.0.1 -U postgres -d media_smoke; do sleep 1; done
               psql -h 127.0.0.1 -U postgres -d media_smoke -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql
               psql -h 127.0.0.1 -U postgres -d media_smoke -v ON_ERROR_STOP=1 -f /migrations/002_primary_origin_restore.sql
+              psql -h 127.0.0.1 -U postgres -d media_smoke -v ON_ERROR_STOP=1 -f /migrations/003_identity_evidence_namespace.sql
             '
       - name: Verify live B2/R2 provider lifecycle and replication recovery
         run: |
