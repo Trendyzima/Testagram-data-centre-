@@ -128,6 +128,8 @@ jobs:
           for required in (
               "confirm_live_provider_writes",
               "MEDIA_DATABASE_URL",
+              "workflow_dispatch:",
+              "confirm_live_provider_smoke",
               "MEDIA_INTERNAL_TOKEN",
               "IDENTITY_EVIDENCE_INTERNAL_TOKEN",
               "TestLiveIdentityEvidenceLifecycle",
