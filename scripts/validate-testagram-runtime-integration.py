@@ -177,6 +177,7 @@ require(os.environ.get("FEDERATION_INTERNAL_URL") == "http://federation-api:8081
         "Backend must target the private Federation service URL")
 require("media" in media.get("profiles", []), "Data Centre media must remain opt-in under the media profile")
 require("platform" in media.get("networks", []), "Data Centre media must join the private platform network")
+require("egress" in media.get("networks", []), "Data Centre media must have outbound egress to reach its configured B2 and R2 providers")
 require("8096" in media.get("expose", []), "Data Centre media must expose its private listener")
 require("ports" not in media, "Data Centre media must not publish a host port")
 require("B2_S3_ACCESS_KEY_ID" in media.get("environment", {}) and
