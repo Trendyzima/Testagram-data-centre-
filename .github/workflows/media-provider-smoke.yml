@@ -60,6 +60,7 @@ jobs:
           R2_BUCKET: ${{ env.MEDIA_SMOKE_R2_BUCKET }}
         run: |
           set -euo pipefail
+          case "$MEDIA_SMOKE_B2_BUCKET" in *staging*|*smoke*) ;; *) echo "Refusing live provider smoke against a non-staging B2 bucket." >&2; exit 1 ;; esac
           case "$R2_BUCKET" in *staging*|*smoke*) ;; *) echo "Refusing to provision a non-staging R2 bucket." >&2; exit 1 ;; esac
           [[ "$R2_BUCKET" != "testagram-production-backups" ]] || { echo "Refusing to reuse the Restic backup bucket for media smoke." >&2; exit 1; }
           api_ready=false
