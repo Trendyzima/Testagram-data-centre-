@@ -1,7 +1,7 @@
 name: testagram-vps-ci
 on:
   push:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-testagram-runtime-integration.py","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh",".github/workflows/vps-ci.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-testagram-runtime-integration.py","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh",".github/workflows/media-provider-smoke.yml",".github/workflows/vps-ci.yml"]
   pull_request:
     paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-testagram-runtime-integration.py","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh",".github/workflows/vps-ci.yml"]
   workflow_dispatch:
@@ -138,6 +138,15 @@ jobs:
               "003_identity_evidence_namespace.sql",
               "TestLiveProviderRoundTrip",
               "TestLiveMediaReplicationRestoreDelete",
+              "secrets.B2_S3_ENDPOINT",
+              "secrets.B2_S3_REGION",
+              "vars.B2_S3_PRIVATE_BUCKET || secrets.B2_S3_BUCKET",
+              "secrets.TESTAGRAM_BACKUP_S3_ENDPOINT",
+              "secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID",
+              "secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY",
+              "vars.CLOUDFLARE_R2_PRIVATE_BUCKET",
+              "ci-smoke/",
+              "users/ci-smoke/",
           ):
               assert required in workflow, f"live media acceptance workflow is missing {required}"
           assert "services:" in workflow and "postgres:17-alpine" in workflow, "live lifecycle test must use isolated PostgreSQL"
