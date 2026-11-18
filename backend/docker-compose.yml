@@ -191,16 +191,16 @@ services:
         exit 1
         ;;
       esac
-      if [ "$MEDIA_DATABASE_URL" = "$DATABASE_URL" ]; then
+      if [ "$$MEDIA_DATABASE_URL" = "$$DATABASE_URL" ]; then
         echo "Media lifecycle requires a separate database and restricted user from the Backend database" >&2
         exit 1
       fi
-      admin_user="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'SELECT current_user')"
-      if [ "$admin_user" = "$MEDIA_DATABASE_USER" ]; then
+      admin_user="$$(psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'SELECT current_user')"
+      if [ "$$admin_user" = "$$MEDIA_DATABASE_USER" ]; then
         echo "MEDIA_DATABASE_USER must not reuse the Backend database administrator" >&2
         exit 1
       fi
-      export MEDIA_DATABASE_NAME="$name"
+      export MEDIA_DATABASE_NAME="$$name"
       psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
       \getenv media_user MEDIA_DATABASE_USER
       \getenv media_password MEDIA_DATABASE_PASSWORD
