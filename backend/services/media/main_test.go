@@ -217,3 +217,22 @@ func TestIdentityEvidenceReadinessRequiresDedicatedCredential(t *testing.T) {
 		t.Fatalf("identity evidence token should pass auth then fail closed on missing DB: status=%d, want 503", got)
 	}
 }
+
+func TestIdentityEvidenceUsesDedicatedB2AndR2Buckets(t *testing.T) {
+ s := &server{cfg: config{
+  primary:s3Store{name:"b2-media",bucket:"media-b2"},
+  replica:s3Store{name:"r2-media",bucket:"media-r2"},
+  identityPrimary:s3Store{name:"b2-identity",bucket:"identity-b2"},
+  identityReplica:s3Store{name:"r2-identity",bucket:"identity-r2"},
+  metadataPrimary:s3Store{name:"vps-metadata",bucket:"metadata-vps"},
+  metadataReplica:s3Store{name:"r2-metadata",bucket:"metadata-r2"},
+ }}
+ p,r := s.storesForNamespace("identity-evidence-private")
+ if p.bucket!="identity-b2" || r.bucket!="identity-r2" { t.Fatalf("identity evidence routed to %q/%q",p.bucket,r.bucket) }
+ p,r = s.storesForNamespace("media-private")
+ if p.bucket!="media-b2" || r.bucket!="media-r2" { t.Fatalf("media routed to %q/%q",p.bucket,r.bucket) }
+ mp,mr := s.metadataStoresForNamespace("identity-evidence-private")
+ if mp.bucket!="identity-b2" || mr.bucket!="identity-r2" { t.Fatalf("identity sidecars not isolated: %q/%q",mp.bucket,mr.bucket) }
+ mp,mr = s.metadataStoresForNamespace("media-private")
+ if mp.bucket!="metadata-vps" || mr.bucket!="metadata-r2" { t.Fatalf("media metadata routing changed: %q/%q",mp.bucket,mr.bucket) }
+}
