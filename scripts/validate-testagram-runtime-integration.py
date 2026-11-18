@@ -88,6 +88,8 @@ require("8081" in federation.get("expose", []), "Federation must expose only its
 require("ports" not in federation, "Federation must not publish a host port")
 
 # Backend -> Data Centre media: service token, API URL and independent media ledger.
+require(env(backend, "api", "DATA_CENTRE_MEDIA_API_URL") == "${DATA_CENTRE_MEDIA_API_URL:-}",
+        "Backend must expose an explicit Data Centre media API URL setting")
 require(env(backend, "api", "FRESH_DATA_CENTRE_INTERNAL_TOKEN") == "${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}",
         "Backend must use the dedicated Data Centre media token")
 require(env(dc, "media", "MEDIA_INTERNAL_TOKEN") == "${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}",
@@ -101,6 +103,8 @@ require(os.environ.get("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "").strip() and
         "CI must provide the dedicated Backend/Data Centre media token")
 require(os.environ.get("DATA_CENTRE_MEDIA_API_URL") == "http://media:8096",
         "Backend must target the private Data Centre media service URL")
+require(os.environ.get("FEDERATION_INTERNAL_URL") == "http://federation-api:8081",
+        "Backend must target the private Federation service URL")
 require("media" in media.get("profiles", []), "Data Centre media must remain opt-in under the media profile")
 require("platform" in media.get("networks", []), "Data Centre media must join the private platform network")
 require("8096" in media.get("expose", []), "Data Centre media must expose its private listener")
@@ -111,9 +115,9 @@ require("B2_S3_ACCESS_KEY_ID" in media.get("environment", {}) and
 require("VPS_MINIO_METADATA_ACCESS_KEY_ID" in media.get("environment", {}) and
         "VPS_MINIO_METADATA_SECRET_ACCESS_KEY" in media.get("environment", {}),
         "Data Centre media must use its restricted MinIO metadata identity")
-require("B2_S3_ACCESS_KEY_ID" not in api.get("environment", {}) or
-        env(backend, "api", "B2_S3_ACCESS_KEY_ID") == "${B2_S3_ACCESS_KEY_ID:-}",
-        "Backend's separate virtual-storage B2 key must remain an explicit Backend-side setting")
+require("VPS_MINIO_METADATA_ACCESS_KEY_ID" not in api.get("environment", {}) and
+        "VPS_MINIO_METADATA_SECRET_ACCESS_KEY" not in api.get("environment", {}),
+        "Data Centre's MinIO metadata-only credentials must never be passed to the Backend API")
 
 for name, target in (("algorithm", algorithm), ("federation-api", federation), ("media", media)):
     require("platform" in target.get("networks", []) or "platform" in target.get("networks", {}),
