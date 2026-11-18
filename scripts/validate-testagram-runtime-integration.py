@@ -138,16 +138,19 @@ require("DATABASE_URL" not in media.get("environment", {}) and
         "MEDIA_DATABASE_USER" not in media.get("environment", {}) and
         "MEDIA_DATABASE_PASSWORD" not in media.get("environment", {}),
         "Long-running media service must not receive database-admin or migration role credentials")
-require("CREATE ROLE" in service(dc, "media-migrate").get("command", "") and
-        "ALTER DATABASE" in service(dc, "media-migrate").get("command", "") and
-        "NOSUPERUSER" in service(dc, "media-migrate").get("command", "") and
-        "NOCREATEDB" in service(dc, "media-migrate").get("command", "") and
-        "NOCREATEROLE" in service(dc, "media-migrate").get("command", "") and
-        "NOREPLICATION" in service(dc, "media-migrate").get("command", "") and
-        "NOBYPASSRLS" in service(dc, "media-migrate").get("command", "") and
-        "\\getenv media_password MEDIA_DATABASE_PASSWORD" in service(dc, "media-migrate").get("command", "") and
-        "-v media_password" not in service(dc, "media-migrate").get("command", ""),
-        "Media migration job must create a separate non-privileged role without exposing its password in process arguments")
+media_provisioner = Path("scripts/provision-media-database.sh").read_text()
+require(media_migrate.get("entrypoint") == ["/bin/sh", "/scripts/provision-media-database.sh"] and
+        any("../scripts/provision-media-database.sh:/scripts/provision-media-database.sh:ro" in volume
+            for volume in media_migrate.get("volumes", [])),
+        "Media migration job must execute the reviewed read-only database provisioner script")
+require(all(marker in media_provisioner for marker in (
+            "CREATE ROLE", "ALTER ROLE", "CREATE DATABASE", "ALTER DATABASE",
+            "NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOREPLICATION",
+            "NOBYPASSRLS", "\\getenv media_password MEDIA_DATABASE_PASSWORD")),
+        "Media provisioner must create and own an isolated database with a non-privileged role")
+require("-v media_password" not in media_provisioner and
+        "MEDIA_DATABASE_PASSWORD" in media_provisioner,
+        "Media role password must be read from the process environment, not command-line arguments")
 require(os.environ.get("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "").strip() and
         len(os.environ["FRESH_DATA_CENTRE_INTERNAL_TOKEN"].strip()) >= 32,
         "CI must provide the dedicated Backend/Data Centre media token")
