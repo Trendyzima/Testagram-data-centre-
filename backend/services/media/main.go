@@ -415,7 +415,7 @@ func validUpload(in uploadRequest) bool {
 		return false
 	}
 	if in.Namespace == "identity-evidence-private" {
-		return validIdentityEvidenceKey(in.Key, in.OwnerID) && allowedIdentityEvidenceType(in.ContentType) && in.SizeBytes <= 15<<20
+		return validIdentityEvidenceKey(in.Key, in.OwnerID) && identityEvidenceKeyMatchesType(in.Key, in.ContentType) && allowedIdentityEvidenceType(in.ContentType) && in.SizeBytes <= 15<<20
 	}
 	return validMediaKey(in.Key, in.OwnerID) && allowedMediaType(in.ContentType) && in.SizeBytes <= 5<<30
 }
@@ -433,6 +433,18 @@ func validMediaKey(key, owner string) bool {
 	if len(parts) != 3 || parts[0] != "users" || parts[1] != owner || len(parts[2]) != 32 || strings.ToLower(parts[2]) != parts[2] { return false }
 	_, err := hex.DecodeString(parts[2])
 	return err == nil
+}
+func identityEvidenceKeyMatchesType(key, contentType string) bool {
+	parts := strings.Split(key, "/")
+	if len(parts) != 4 { return false }
+	name := parts[3]
+	switch contentType {
+	case "image/jpeg": return strings.HasPrefix(name[36:], ".jpg-")
+	case "image/png": return strings.HasPrefix(name[36:], ".png-")
+	case "image/webp": return strings.HasPrefix(name[36:], ".webp-")
+	case "application/pdf": return strings.HasPrefix(name[36:], ".pdf-")
+	default: return false
+	}
 }
 func validIdentityEvidenceKey(key, owner string) bool {
 	if !validObjectKey(key) || !validIdentity(owner) { return false }
