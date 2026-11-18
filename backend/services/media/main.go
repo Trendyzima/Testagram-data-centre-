@@ -33,6 +33,8 @@ type config struct {
 	addr string
 	primary s3Store
 	replica s3Store
+	identityPrimary s3Store
+	identityReplica s3Store
 	metadataPrimary s3Store
 	metadataReplica s3Store
 	uploadTTL time.Duration
@@ -51,6 +53,8 @@ func main() {
 		token: required("MEDIA_INTERNAL_TOKEN"), identityToken: env("IDENTITY_EVIDENCE_INTERNAL_TOKEN", ""), addr: env("MEDIA_ADDR", ":8096"),
 		primary: s3Store{name:"backblaze_b2", endpoint:required("B2_S3_ENDPOINT"), region:required("B2_S3_REGION"), bucket:required("B2_S3_BUCKET"), access:required("B2_S3_ACCESS_KEY_ID"), secret:required("B2_S3_SECRET_ACCESS_KEY")},
 		replica: s3Store{name:"cloudflare_r2", endpoint:required("CLOUDFLARE_R2_ENDPOINT"), region:env("CLOUDFLARE_R2_REGION","auto"), bucket:required("CLOUDFLARE_R2_BUCKET"), access:required("CLOUDFLARE_R2_ACCESS_KEY_ID"), secret:required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")},
+		identityPrimary: s3Store{name:"backblaze_b2_identity_evidence", endpoint:required("B2_S3_ENDPOINT"), region:required("B2_S3_REGION"), bucket:required("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"), access:required("B2_S3_ACCESS_KEY_ID"), secret:required("B2_S3_SECRET_ACCESS_KEY")},
+		identityReplica: s3Store{name:"cloudflare_r2_identity_evidence", endpoint:required("CLOUDFLARE_R2_ENDPOINT"), region:env("CLOUDFLARE_R2_REGION","auto"), bucket:required("CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET"), access:required("CLOUDFLARE_R2_ACCESS_KEY_ID"), secret:required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")},
 		metadataPrimary: s3Store{name:"instabox_vps_metadata", endpoint:required("VPS_MINIO_ENDPOINT"), region:env("VPS_MINIO_REGION","us-east-1"), bucket:required("VPS_MINIO_METADATA_BUCKET"), access:required("VPS_MINIO_METADATA_ACCESS_KEY_ID"), secret:required("VPS_MINIO_METADATA_SECRET_ACCESS_KEY")},
 		metadataReplica: s3Store{name:"cloudflare_r2_metadata", endpoint:required("CLOUDFLARE_R2_ENDPOINT"), region:env("CLOUDFLARE_R2_REGION","auto"), bucket:required("CLOUDFLARE_R2_METADATA_BUCKET"), access:required("CLOUDFLARE_R2_ACCESS_KEY_ID"), secret:required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")},
 		uploadTTL: duration("MEDIA_UPLOAD_TTL", 45*time.Minute), downloadTTL: duration("MEDIA_DOWNLOAD_TTL", 5*time.Minute),
@@ -62,6 +66,10 @@ func main() {
 	if cfg.downloadTTL < time.Minute || cfg.downloadTTL > 15*time.Minute { log.Fatal("MEDIA_DOWNLOAD_TTL must be between 1 minute and 15 minutes") }
 	if err:=validateStore(cfg.primary);err!=nil{log.Fatalf("invalid B2 primary configuration: %v",err)}
 	if err:=validateStore(cfg.replica);err!=nil{log.Fatalf("invalid R2 replica configuration: %v",err)}
+	if err:=validateStore(cfg.identityPrimary);err!=nil{log.Fatalf("invalid B2 identity evidence configuration: %v",err)}
+	if err:=validateStore(cfg.identityReplica);err!=nil{log.Fatalf("invalid R2 identity evidence configuration: %v",err)}
+	if cfg.identityPrimary.bucket==cfg.primary.bucket { log.Fatal("B2 identity evidence bucket must be distinct from the media bucket") }
+	if cfg.identityReplica.bucket==cfg.replica.bucket { log.Fatal("R2 identity evidence bucket must be distinct from the media bucket") }
 	if err:=validateStore(cfg.metadataPrimary);err!=nil{log.Fatalf("invalid VPS metadata store configuration: %v",err)}
 	if err:=validateStore(cfg.metadataReplica);err!=nil{log.Fatalf("invalid R2 metadata store configuration: %v",err)}
 	db,err:=pgxpool.New(context.Background(),required("MEDIA_DATABASE_URL")); if err!=nil { log.Fatal(err) }; defer db.Close()
@@ -103,7 +111,8 @@ func (s *server) writeMetadataSidecars(ctx context.Context, item reconcileItem) 
 	body, err := json.Marshal(manifest)
 	if err != nil { return fmt.Errorf("encode media metadata sidecar: %w", err) }
 	key := item.key + ".metadata.json"
-	for _, store := range []s3Store{s.cfg.metadataPrimary, s.cfg.metadataReplica} {
+	metadataPrimary, metadataReplica := s.metadataStoresForNamespace(item.namespace)
+	for _, store := range []s3Store{metadataPrimary, metadataReplica} {
 		reader := &lengthReader{Reader:bytes.NewReader(body), n:int64(len(body))}
 		resp, err := s.signedRequest(ctx, store, http.MethodPut, key, reader, "application/json")
 		if err != nil { return fmt.Errorf("%s metadata PUT: %w", store.name, err) }
@@ -122,9 +131,10 @@ func (s *server) writeMetadataSidecars(ctx context.Context, item reconcileItem) 
 	return nil
 }
 
-func (s *server) deleteMetadataSidecars(ctx context.Context, key string) error {
+func (s *server) deleteMetadataSidecars(ctx context.Context, namespace, key string) error {
 	metadataKey := key + ".metadata.json"
-	for _, store := range []s3Store{s.cfg.metadataPrimary, s.cfg.metadataReplica} {
+	metadataPrimary, metadataReplica := s.metadataStoresForNamespace(namespace)
+	for _, store := range []s3Store{metadataPrimary, metadataReplica} {
 		resp, err := s.signedRequest(ctx, store, http.MethodDelete, metadataKey, nil, "")
 		if err != nil { return fmt.Errorf("%s metadata delete: %w", store.name, err) }
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
@@ -133,6 +143,14 @@ func (s *server) deleteMetadataSidecars(ctx context.Context, key string) error {
 	return nil
 }
 
+func (s *server) storesForNamespace(namespace string) (s3Store, s3Store) {
+	if namespace == "identity-evidence-private" { return s.cfg.identityPrimary, s.cfg.identityReplica }
+	return s.cfg.primary, s.cfg.replica
+}
+func (s *server) metadataStoresForNamespace(namespace string) (s3Store, s3Store) {
+	if namespace == "identity-evidence-private" { return s.cfg.identityPrimary, s.cfg.identityReplica }
+	return s.cfg.metadataPrimary, s.cfg.metadataReplica
+}
 func (s *server) health(w http.ResponseWriter,r *http.Request){w.WriteHeader(200);_,_=w.Write([]byte("ok\n"))}
 func (s *server) ready(w http.ResponseWriter,r *http.Request){ctx,c:=context.WithTimeout(r.Context(),2*time.Second);defer c();if err:=s.db.Ping(ctx);err!=nil{http.Error(w,"database unavailable",503);return};w.WriteHeader(200);_,_=w.Write([]byte("ready\n"))}
 func (s *server) auth(w http.ResponseWriter,r *http.Request)bool{
@@ -170,7 +188,8 @@ func (s *server) uploadURL(w http.ResponseWriter, r *http.Request) {
 	id, err := randomID()
 	if err != nil { writeErr(w, 503, "secure upload grant generation failed"); return }
 	exp := time.Now().UTC().Add(s.cfg.uploadTTL)
-	u, err := presign(s.cfg.primary, http.MethodPut, in.Key, s.cfg.uploadTTL, in.ContentType)
+	primary, _ := s.storesForNamespace(in.Namespace)
+	u, err := presign(primary, http.MethodPut, in.Key, s.cfg.uploadTTL, in.ContentType)
 	if err != nil { writeErr(w, 503, "primary storage signing failed"); return }
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second); defer cancel()
 	tx, err := s.db.Begin(ctx)
@@ -257,7 +276,8 @@ func (s *server) downloadURL(w http.ResponseWriter, r *http.Request) {
 	err := s.db.QueryRow(r.Context(), `select status,size_bytes,content_type from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key).Scan(&status, &size, &contentType)
 	if err != nil || status != "protected" { writeErr(w, 404, "protected object not found"); return }
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second); defer cancel()
-	for _, store := range []s3Store{s.cfg.replica, s.cfg.primary} {
+	primary, replica := s.storesForNamespace(in.Namespace)
+	for _, store := range []s3Store{replica, primary} {
 		resp, headErr := s.signedRequest(ctx, store, http.MethodHead, in.Key, nil, "")
 		if headErr != nil { continue }
 		gotType := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
@@ -320,7 +340,8 @@ func (s *server) processOne(parent context.Context)error{
 func (s *server) verifyPrimary(ctx context.Context,owner,ns,key string)error{
 	var size int64;var typ,want string
 	if err:=s.db.QueryRow(ctx,`select size_bytes,content_type,sha256 from media_objects where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('uploaded','replication_failed') and primary_verified_at is null`,owner,ns,key).Scan(&size,&typ,&want);err!=nil{return err}
-	resp,err:=s.signedRequest(ctx,s.cfg.primary,http.MethodGet,key,nil,"");if err!=nil{return err};if resp.StatusCode!=200{resp.Body.Close();return fmt.Errorf("primary object GET status %d",resp.StatusCode)};defer resp.Body.Close()
+	primary, _ := s.storesForNamespace(ns)
+	resp,err:=s.signedRequest(ctx,primary,http.MethodGet,key,nil,"");if err!=nil{return err};if resp.StatusCode!=200{resp.Body.Close();return fmt.Errorf("primary object GET status %d",resp.StatusCode)};defer resp.Body.Close()
 	if resp.ContentLength>=0&&resp.ContentLength!=size{return errors.New("primary object size mismatch")}
 	if got:=strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"),";")[0]);got!=""&&got!=typ{return errors.New("primary object content type mismatch")}
 	h:=sha256.New();n,err:=io.Copy(h,io.LimitReader(resp.Body,size+1));if err!=nil{return err};if n!=size||hex.EncodeToString(h.Sum(nil))!=want{return errors.New("primary object size or SHA-256 mismatch")}
@@ -335,11 +356,12 @@ func (s *server) verifyPrimary(ctx context.Context,owner,ns,key string)error{
 func (s *server) replicate(ctx context.Context,owner,ns,key string)error{
 	var size int64;var typ,want string
 	if err:=s.db.QueryRow(ctx,`select size_bytes,content_type,sha256 from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&size,&typ,&want);err!=nil{return err}
-	resp,err:=s.signedRequest(ctx,s.cfg.primary,http.MethodGet,key,nil,"");if err!=nil{return err};if resp.StatusCode!=200{resp.Body.Close();return fmt.Errorf("primary GET status %d",resp.StatusCode)};if resp.ContentLength>=0&&resp.ContentLength!=size{resp.Body.Close();return errors.New("primary object size changed before replication")}
+	primary, replica := s.storesForNamespace(ns)
+	resp,err:=s.signedRequest(ctx,primary,http.MethodGet,key,nil,"");if err!=nil{return err};if resp.StatusCode!=200{resp.Body.Close();return fmt.Errorf("primary GET status %d",resp.StatusCode)};if resp.ContentLength>=0&&resp.ContentLength!=size{resp.Body.Close();return errors.New("primary object size changed before replication")}
 	h:=sha256.New();reader:=&lengthReader{Reader:io.TeeReader(io.LimitReader(resp.Body,size+1),h),n:size}
-	put,err:=s.signedRequest(ctx,s.cfg.replica,http.MethodPut,key,reader,typ);closeErr:=resp.Body.Close();if err!=nil{return err};if closeErr!=nil{return closeErr};if put.StatusCode<200||put.StatusCode>=300{put.Body.Close();return fmt.Errorf("replica PUT status %d",put.StatusCode)};put.Body.Close()
+	put,err:=s.signedRequest(ctx,replica,http.MethodPut,key,reader,typ);closeErr:=resp.Body.Close();if err!=nil{return err};if closeErr!=nil{return closeErr};if put.StatusCode<200||put.StatusCode>=300{put.Body.Close();return fmt.Errorf("replica PUT status %d",put.StatusCode)};put.Body.Close()
 	if hex.EncodeToString(h.Sum(nil))!=want{return errors.New("primary object changed during replication")}
-	check,err:=s.signedRequest(ctx,s.cfg.replica,http.MethodGet,key,nil,"");if err!=nil{return err};defer check.Body.Close();if check.StatusCode!=200{return fmt.Errorf("replica read-back status %d",check.StatusCode)}
+	check,err:=s.signedRequest(ctx,replica,http.MethodGet,key,nil,"");if err!=nil{return err};defer check.Body.Close();if check.StatusCode!=200{return fmt.Errorf("replica read-back status %d",check.StatusCode)}
 	h2:=sha256.New();n,err:=io.Copy(h2,io.LimitReader(check.Body,size+1));if err!=nil||n!=size||hex.EncodeToString(h2.Sum(nil))!=want{return errors.New("replica read-back SHA-256 or size mismatch")}
 	if err:=s.writeMetadataSidecars(ctx,reconcileItem{owner:owner,namespace:ns,key:key,contentType:typ,size:size,expectedSHA:want});err!=nil{return err}
 	now:=time.Now().UTC();_,err=s.db.Exec(ctx,`update media_objects set status='protected',replica_verified_at=$4,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('replication_pending','replication_failed')`,owner,ns,key,now);return err
@@ -356,17 +378,18 @@ func (s *server) restorePrimary(ctx context.Context,owner,ns,key string)error{
 	if status!="restore_pending"{return fmt.Errorf("primary restore refused for lifecycle state %q",status)}
 	item:=reconcileItem{owner:owner,namespace:ns,key:key,contentType:typ,size:size,expectedSHA:want}
 	// Verify the source completely before overwriting the primary.
-	ok,err:=s.originMatches(ctx,s.cfg.replica,item)
+	primary, replica := s.storesForNamespace(ns)
+	ok,err:=s.originMatches(ctx,replica,item)
 	if err!=nil{return fmt.Errorf("verify replica before primary restore: %w",err)}
 	if !ok{return errors.New("replica failed size, content-type or SHA-256 verification; primary restore refused")}
-	source,err:=s.signedRequest(ctx,s.cfg.replica,http.MethodGet,key,nil,"")
+	source,err:=s.signedRequest(ctx,replica,http.MethodGet,key,nil,"")
 	if err!=nil{return err}
 	if source.StatusCode!=http.StatusOK{source.Body.Close();return fmt.Errorf("replica GET status %d during primary restore",source.StatusCode)}
 	if source.ContentLength>=0&&source.ContentLength!=size{source.Body.Close();return errors.New("replica size changed after preflight verification")}
 	if got:=strings.TrimSpace(strings.Split(source.Header.Get("Content-Type"),";")[0]);got!=""&&got!=typ{source.Body.Close();return errors.New("replica content type changed after preflight verification")}
 	h:=sha256.New()
 	reader:=&lengthReader{Reader:io.TeeReader(io.LimitReader(source.Body,size+1),h),n:size}
-	put,putErr:=s.signedRequest(ctx,s.cfg.primary,http.MethodPut,key,reader,typ)
+	put,putErr:=s.signedRequest(ctx,primary,http.MethodPut,key,reader,typ)
 	closeErr:=source.Body.Close()
 	if putErr!=nil{return putErr}
 	if closeErr!=nil{put.Body.Close();return closeErr}
@@ -374,7 +397,7 @@ func (s *server) restorePrimary(ctx context.Context,owner,ns,key string)error{
 	io.Copy(io.Discard,io.LimitReader(put.Body,4096));put.Body.Close()
 	if hex.EncodeToString(h.Sum(nil))!=want{return errors.New("replica bytes changed during primary restore; restored object not trusted")}
 	// Verify the actual primary by a fresh full GET, not merely the PUT response.
-	ok,err=s.originMatches(ctx,s.cfg.primary,item)
+	ok,err=s.originMatches(ctx,primary,item)
 	if err!=nil{return fmt.Errorf("primary read-back after restore: %w",err)}
 	if !ok{return errors.New("restored primary failed size, content-type or SHA-256 read-back")}
 	if err:=s.writeMetadataSidecars(ctx,item);err!=nil{return err}
@@ -386,8 +409,9 @@ func (s *server) restorePrimary(ctx context.Context,owner,ns,key string)error{
 }
 
 func (s *server) deleteOrigins(ctx context.Context,owner,ns,key string)error{
-	for _,store:=range []s3Store{s.cfg.primary,s.cfg.replica}{resp,err:=s.signedRequest(ctx,store,http.MethodDelete,key,nil,"");if err!=nil{return err};io.Copy(io.Discard,io.LimitReader(resp.Body,4096));resp.Body.Close();if resp.StatusCode!=200&&resp.StatusCode!=204&&resp.StatusCode!=404{return fmt.Errorf("%s delete status %d",store.name,resp.StatusCode)}}
-	if err:=s.deleteMetadataSidecars(ctx,key);err!=nil{return err}
+	primary, replica := s.storesForNamespace(ns)
+	for _,store:=range []s3Store{primary,replica}{resp,err:=s.signedRequest(ctx,store,http.MethodDelete,key,nil,"");if err!=nil{return err};io.Copy(io.Discard,io.LimitReader(resp.Body,4096));resp.Body.Close();if resp.StatusCode!=200&&resp.StatusCode!=204&&resp.StatusCode!=404{return fmt.Errorf("%s delete status %d",store.name,resp.StatusCode)}}
+	if err:=s.deleteMetadataSidecars(ctx,ns,key);err!=nil{return err}
 	_,err:=s.db.Exec(ctx,`update media_objects set status='deleted',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key);return err
 }
 func (s *server) signedRequest(ctx context.Context,store s3Store,method,key string,body io.Reader,contentType string)(*http.Response,error){
