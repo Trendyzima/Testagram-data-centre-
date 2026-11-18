@@ -119,9 +119,22 @@ require("ports" not in media, "Data Centre media must not publish a host port")
 require("B2_S3_ACCESS_KEY_ID" in media.get("environment", {}) and
         "CLOUDFLARE_R2_ACCESS_KEY_ID" in media.get("environment", {}),
         "Only the Data Centre media service should receive its B2/R2 provider credentials")
-require("VPS_MINIO_METADATA_ACCESS_KEY_ID" in media.get("environment", {}) and
-        "VPS_MINIO_METADATA_SECRET_ACCESS_KEY" in media.get("environment", {}),
-        "Data Centre media must use its restricted MinIO metadata identity")
+for key in (
+    "VPS_MINIO_ENDPOINT",
+    "VPS_MINIO_REGION",
+    "VPS_MINIO_METADATA_BUCKET",
+    "VPS_MINIO_METADATA_ACCESS_KEY_ID",
+    "VPS_MINIO_METADATA_SECRET_ACCESS_KEY",
+    "CLOUDFLARE_R2_METADATA_BUCKET",
+):
+    require(key in media.get("environment", {}), f"Data Centre media must receive required metadata setting {key}")
+require(env(dc, "media", "VPS_MINIO_ENDPOINT") == "${VPS_MINIO_ENDPOINT:-http://object-storage:9000}",
+        "Data Centre media must use the Backend-owned private MinIO endpoint")
+require(env(dc, "media", "VPS_MINIO_METADATA_ACCESS_KEY_ID") == "${VPS_MINIO_METADATA_ACCESS_KEY_ID:-}" and
+        env(dc, "media", "VPS_MINIO_METADATA_SECRET_ACCESS_KEY") == "${VPS_MINIO_METADATA_SECRET_ACCESS_KEY:-}",
+        "Data Centre media must receive its restricted MinIO metadata identity")
+require(env(dc, "media", "CLOUDFLARE_R2_METADATA_BUCKET") == "${CLOUDFLARE_R2_METADATA_BUCKET:-}",
+        "Data Centre media must receive its separate R2 metadata bucket")
 require("VPS_MINIO_METADATA_ACCESS_KEY_ID" not in api.get("environment", {}) and
         "VPS_MINIO_METADATA_SECRET_ACCESS_KEY" not in api.get("environment", {}),
         "Data Centre's MinIO metadata-only credentials must never be passed to the Backend API")
