@@ -85,6 +85,11 @@ jobs:
         run: |
           test -f backend-source/migrations/20261110_federation_outbox.sql
           grep -q 'testagram_local.federation_outbox' backend-source/internal/federationoutbox/store.go
+      - name: Set up canonical Backend Go toolchain
+        uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.4"
+          cache: false
       - name: Test canonical Backend TV monitor OIDC and route guards
         run: |
           cd backend-source
