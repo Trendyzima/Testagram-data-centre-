@@ -167,11 +167,44 @@ func (s *server) identityReady(w http.ResponseWriter, r *http.Request) {
 	if !s.auth(w, r) {
 		return
 	}
-	if s.db == nil || s.db.Ping(r.Context()) != nil {
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	if s.db == nil || s.db.Ping(ctx) != nil {
 		writeErr(w, http.StatusServiceUnavailable, "identity evidence database is unavailable")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "namespace": "identity-evidence-private"})
+	for _, store := range []s3Store{s.cfg.identityPrimary, s.cfg.identityReplica} {
+		if err := s.probeIdentityEvidenceStore(ctx, store); err != nil {
+			log.Printf("identity evidence storage readiness failed for %s: %v", store.name, err)
+			writeErr(w, http.StatusServiceUnavailable, "identity evidence storage is unavailable")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "namespace": "identity-evidence-private", "primary": "verified", "replica": "verified"})
+}
+
+func (s *server) probeIdentityEvidenceStore(ctx context.Context, store s3Store) error {
+	id, err := randomID()
+	if err != nil { return err }
+	key := "system/readiness/" + id
+	payload := []byte("testagram-identity-evidence-private-readiness-v1")
+	put, err := s.signedRequest(ctx, store, http.MethodPut, key, &lengthReader{Reader: bytes.NewReader(payload), n: int64(len(payload))}, "application/octet-stream")
+	if err != nil { return fmt.Errorf("%s readiness PUT: %w", store.name, err) }
+	io.Copy(io.Discard, io.LimitReader(put.Body, 4096)); put.Body.Close()
+	if put.StatusCode < 200 || put.StatusCode >= 300 { return fmt.Errorf("%s readiness PUT status %d", store.name, put.StatusCode) }
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, key, nil, "")
+		if cleanupErr == nil { io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close() }
+	}()
+	got, err := s.signedRequest(ctx, store, http.MethodGet, key, nil, "")
+	if err != nil { return fmt.Errorf("%s readiness GET: %w", store.name, err) }
+	if got.StatusCode != http.StatusOK { got.Body.Close(); return fmt.Errorf("%s readiness GET status %d", store.name, got.StatusCode) }
+	actual, readErr := io.ReadAll(io.LimitReader(got.Body, int64(len(payload))+1))
+	got.Body.Close()
+	if readErr != nil || !bytes.Equal(actual, payload) { return fmt.Errorf("%s readiness read-back mismatch", store.name) }
+	return nil
 }
 func (s *server) namespaceAllowedForRoute(w http.ResponseWriter,r *http.Request,namespace string)bool{
 	identityRoute:=strings.HasPrefix(r.URL.Path,"/internal/v1/identity-evidence/")
