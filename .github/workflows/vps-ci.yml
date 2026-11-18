@@ -23,7 +23,9 @@ jobs:
       FEDERATION_INGRESS_TOKEN: ci-federation-ingress-token-long-enough
       FEDERATION_INBOX_ACCEPT_ENABLED: "false"
       FEDERATION_DATABASE_NAME: testagram_federation
-      FEDERATION_DATABASE_URL: postgresql://postgres:testagram@federation-db:5432/testagram_federation?sslmode=disable
+      FEDERATION_DATABASE_USER: testagram_federation_ci
+      FEDERATION_DATABASE_PASSWORD: ci-federation-db-password-only
+      FEDERATION_DATABASE_URL: postgresql://testagram_federation_ci:ci-federation-db-password-only@federation-db:5432/testagram_federation?sslmode=disable
       FEDERATION_PUBLIC_BASE_URL: https://testagram.site
       FEDERATION_INSTANCE_DOMAIN: testagram.site
       CADDY_IMAGE: caddy:2.10-alpine
@@ -144,7 +146,7 @@ jobs:
           }
           trap cleanup EXIT
           docker run -d --name testagram-media-migrate-db --network "$network" \
-            --network-alias db --network-alias postgres \
+            --network-alias db --network-alias postgres --network-alias federation-db \
             -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=testagram -e POSTGRES_DB=postgres \
             postgres:17-alpine
           for attempt in $(seq 1 40); do
@@ -166,6 +168,25 @@ jobs:
             exit 1
           fi
           echo "Media migration creates a dedicated non-superuser database owner; runtime credentials cannot read the Backend administrative database."
+          docker run --rm --network "$network" \\
+            -e DATABASE_URL="postgresql://postgres:testagram@db:5432/postgres?sslmode=disable" \\
+            -e FEDERATION_DATABASE_NAME=testagram_federation \\
+            -e FEDERATION_DATABASE_USER=testagram_federation_ci \\
+            -e FEDERATION_DATABASE_PASSWORD=ci-federation-db-password-only \\
+            -v "$PWD/scripts/provision-federation-database.sh:/scripts/provision-federation-database.sh:ro" \\
+            postgres:17-alpine /bin/sh /scripts/provision-federation-database.sh
+          federation_role_attrs="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT rolsuper || ':' || rolcreatedb || ':' || rolcreaterole FROM pg_roles WHERE rolname = 'testagram_federation_ci'")"
+          [[ "$federation_role_attrs" == "f:f:f" ]] || { echo "::error::Federation database role has elevated privileges: $federation_role_attrs"; exit 1; }
+          federation_db_owner="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'testagram_federation'")"
+          [[ "$federation_db_owner" == "testagram_federation_ci" ]] || { echo "::error::Federation database owner mismatch: $federation_db_owner"; exit 1; }
+          docker run --rm --network "$network" -e PGPASSWORD=ci-federation-db-password-only postgres:17-alpine \\
+            psql -h federation-db -U testagram_federation_ci -d testagram_federation -v ON_ERROR_STOP=1 -Atqc "SELECT current_user || ':' || current_database()" | grep -qx 'testagram_federation_ci:testagram_federation'
+          if docker run --rm --network "$network" -e PGPASSWORD=ci-federation-db-password-only postgres:17-alpine \\
+            psql -h federation-db -U testagram_federation_ci -d postgres -v ON_ERROR_STOP=1 -c "SELECT * FROM public.admin_only_media_probe" >/dev/null 2>&1; then
+            echo "::error::Federation database role unexpectedly read Backend administrative database"
+            exit 1
+          fi
+          echo "Federation protocol state uses a dedicated non-superuser database owner, isolated from Backend product tables."
       - name: Validate canonical Backend platform boundary
         run: |
           set -euo pipefail
