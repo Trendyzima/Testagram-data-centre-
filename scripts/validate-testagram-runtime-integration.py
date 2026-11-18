@@ -113,8 +113,11 @@ require("DATABASE_URL" not in media.get("environment", {}) and
         "MEDIA_DATABASE_PASSWORD" not in media.get("environment", {}),
         "Long-running media service must not receive database-admin or migration role credentials")
 require("CREATE ROLE" in service(dc, "media-migrate").get("command", "") and
-        "ALTER DATABASE" in service(dc, "media-migrate").get("command", ""),
-        "Media migration job must create and own the separate least-privilege media database")
+        "ALTER DATABASE" in service(dc, "media-migrate").get("command", "") and
+        "NOSUPERUSER" in service(dc, "media-migrate").get("command", "") and
+        "NOCREATEDB" in service(dc, "media-migrate").get("command", "") and
+        "NOCREATEROLE" in service(dc, "media-migrate").get("command", ""),
+        "Media migration job must create and own a separate non-privileged media database role")
 require(os.environ.get("FRESH_DATA_CENTRE_INTERNAL_TOKEN", "").strip() and
         len(os.environ["FRESH_DATA_CENTRE_INTERNAL_TOKEN"].strip()) >= 32,
         "CI must provide the dedicated Backend/Data Centre media token")
