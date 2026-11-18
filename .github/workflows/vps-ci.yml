@@ -40,7 +40,9 @@ jobs:
       FRESH_MEDIA_ENABLED: "false"
       DATA_CENTRE_MEDIA_API_URL: http://media:8096
       FRESH_DATA_CENTRE_INTERNAL_TOKEN: ci-media-internal-token-at-least-32-chars
-      MEDIA_DATABASE_URL: postgresql://postgres:testagram@db:5432/media?sslmode=disable
+      MEDIA_DATABASE_USER: testagram_media_ci
+      MEDIA_DATABASE_PASSWORD: ci-media-db-password-only
+      MEDIA_DATABASE_URL: postgresql://testagram_media_ci:ci-media-db-password-only@db:5432/media?sslmode=disable
       B2_S3_ENDPOINT: https://s3.us-west-004.backblazeb2.com
       B2_S3_REGION: us-west-004
       B2_S3_BUCKET: ci-media-primary
