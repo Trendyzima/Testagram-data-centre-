@@ -173,47 +173,7 @@ services:
     profiles: ["media"]
     image: postgres:17-alpine
     restart: "no"
-    entrypoint: ["/bin/sh", "-ec"]
-    command: |
-      set -eu
-      : "$${DATABASE_URL:?Set DATABASE_URL}"
-      : "$${MEDIA_DATABASE_URL:?Set MEDIA_DATABASE_URL}"
-      : "$${MEDIA_DATABASE_USER:?Set MEDIA_DATABASE_USER}"
-      : "$${MEDIA_DATABASE_PASSWORD:?Set MEDIA_DATABASE_PASSWORD}"
-      name="$${MEDIA_DATABASE_NAME:-testagram_media}"
-      case "$$name" in ""|*[!A-Za-z0-9_]*)
-        echo "MEDIA_DATABASE_NAME must contain only letters, digits and underscores" >&2
-        exit 1
-        ;;
-      esac
-      case "$$MEDIA_DATABASE_USER" in ""|*[!A-Za-z0-9_]*)
-        echo "MEDIA_DATABASE_USER must contain only letters, digits and underscores" >&2
-        exit 1
-        ;;
-      esac
-      if [ "$$MEDIA_DATABASE_URL" = "$$DATABASE_URL" ]; then
-        echo "Media lifecycle requires a separate database and restricted user from the Backend database" >&2
-        exit 1
-      fi
-      admin_user="$$(psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'SELECT current_user')"
-      if [ "$$admin_user" = "$$MEDIA_DATABASE_USER" ]; then
-        echo "MEDIA_DATABASE_USER must not reuse the Backend database administrator" >&2
-        exit 1
-      fi
-      export MEDIA_DATABASE_NAME="$$name"
-      psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
-      \getenv media_user MEDIA_DATABASE_USER
-      \getenv media_password MEDIA_DATABASE_PASSWORD
-      \getenv media_db MEDIA_DATABASE_NAME
-      SELECT format('CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', :'media_user', :'media_password')
-      WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'media_user') \gexec
-      SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', :'media_user', :'media_password') \gexec
-      SELECT format('CREATE DATABASE %I OWNER %I', :'media_db', :'media_user')
-      WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'media_db') \gexec
-      SELECT format('ALTER DATABASE %I OWNER TO %I', :'media_db', :'media_user') \gexec
-      SQL
-      psql "$$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql
-      psql "$$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/002_primary_origin_restore.sql
+    entrypoint: ["/bin/sh", "/scripts/provision-media-database.sh"]
     environment:
       DATABASE_URL: ${DATABASE_URL:-}
       MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}
@@ -221,9 +181,9 @@ services:
       MEDIA_DATABASE_USER: ${MEDIA_DATABASE_USER:-}
       MEDIA_DATABASE_PASSWORD: ${MEDIA_DATABASE_PASSWORD:-}
     volumes:
+      - ../scripts/provision-media-database.sh:/scripts/provision-media-database.sh:ro
       - ./services/media/migrations:/migrations:ro
     networks: [platform]
-
   media:
     profiles: ["media"]
     build:
