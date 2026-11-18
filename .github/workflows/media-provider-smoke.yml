@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_live_provider_writes:
-        description: Confirm this run writes and deletes temporary ci-smoke objects in the configured staging buckets.
+        description: Confirm this run writes, reads, restores and deletes unique temporary smoke objects in the configured B2/R2 buckets. It does not use the Restic backup prefix or production database.
         required: true
         type: boolean
         default: false
@@ -32,16 +32,16 @@ jobs:
       MEDIA_DATABASE_URL: postgresql://postgres:ci-media-smoke-password@127.0.0.1:5432/media_smoke?sslmode=disable
       MEDIA_INTERNAL_TOKEN: ci-live-media-smoke-internal-token-32-characters
       IDENTITY_EVIDENCE_INTERNAL_TOKEN: ci-live-identity-evidence-smoke-token-32-characters
-      MEDIA_SMOKE_B2_ENDPOINT: ${{ secrets.MEDIA_SMOKE_B2_ENDPOINT }}
-      MEDIA_SMOKE_B2_REGION: ${{ secrets.MEDIA_SMOKE_B2_REGION }}
-      MEDIA_SMOKE_B2_BUCKET: ${{ secrets.MEDIA_SMOKE_B2_BUCKET }}
-      MEDIA_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_B2_ACCESS_KEY_ID }}
-      MEDIA_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_B2_SECRET_ACCESS_KEY }}
-      MEDIA_SMOKE_R2_ENDPOINT: ${{ secrets.MEDIA_SMOKE_R2_ENDPOINT }}
-      MEDIA_SMOKE_R2_REGION: ${{ secrets.MEDIA_SMOKE_R2_REGION }}
-      MEDIA_SMOKE_R2_BUCKET: ${{ secrets.MEDIA_SMOKE_R2_BUCKET }}
-      MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_R2_ACCESS_KEY_ID }}
-      MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_R2_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_B2_ENDPOINT: ${{ secrets.B2_S3_ENDPOINT }}
+      MEDIA_SMOKE_B2_REGION: ${{ secrets.B2_S3_REGION }}
+      MEDIA_SMOKE_B2_BUCKET: ${{ vars.B2_S3_PRIVATE_BUCKET || secrets.B2_S3_BUCKET }}
+      MEDIA_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.B2_S3_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.B2_S3_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT || secrets.TESTAGRAM_BACKUP_S3_ENDPOINT }}
+      MEDIA_SMOKE_R2_REGION: ${{ vars.CLOUDFLARE_R2_REGION || 'auto' }}
+      MEDIA_SMOKE_R2_BUCKET: ${{ vars.CLOUDFLARE_R2_PRIVATE_BUCKET }}
+      MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID || secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY || secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -54,12 +54,10 @@ jobs:
           for name in MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION MEDIA_SMOKE_B2_BUCKET MEDIA_SMOKE_B2_ACCESS_KEY_ID MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_ENDPOINT MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_BUCKET MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY; do
             if [ -z "${!name:-}" ]; then echo "Missing required GitHub secret: $name" >&2; exit 1; fi
           done
-          for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_R2_BUCKET"; do
-            case "$bucket" in
-              *staging*|*smoke*) ;;
-              *) echo "Bucket names must explicitly identify staging/smoke resources; refusing production or ambiguous buckets." >&2; exit 1 ;;
-            esac
-          done
+          [[ "$MEDIA_SMOKE_B2_ENDPOINT" == https://* && "$MEDIA_SMOKE_R2_ENDPOINT" == https://* ]] || { echo "Both provider endpoints must use HTTPS." >&2; exit 1; }
+          [[ -n "$MEDIA_SMOKE_B2_BUCKET" && -n "$MEDIA_SMOKE_R2_BUCKET" ]] || { echo "Both configured media buckets are required." >&2; exit 1; }
+          [[ "$MEDIA_SMOKE_B2_BUCKET" != "$MEDIA_SMOKE_R2_BUCKET" ]] || { echo "B2 and R2 must use distinct bucket names." >&2; exit 1; }
+          echo "Live smoke will write only unique ci-smoke/users/ci-smoke/identity smoke keys and delete them; the PostgreSQL database is isolated to this workflow run."
       - name: Apply isolated media lifecycle migrations
         run: |
           set -euo pipefail
