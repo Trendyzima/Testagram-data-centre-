@@ -192,8 +192,8 @@ services:
         echo "Media lifecycle requires a separate database and restricted user from the Backend database" >&2
         exit 1
       fi
-      export MEDIA_DATABASE_NAME="$name"
-      psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+      export MEDIA_DATABASE_NAME="$$name"
+      psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
       \\getenv media_user MEDIA_DATABASE_USER
       \\getenv media_password MEDIA_DATABASE_PASSWORD
       \\getenv media_db MEDIA_DATABASE_NAME
