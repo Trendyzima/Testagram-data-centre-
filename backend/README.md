@@ -65,7 +65,13 @@ There is no Supabase/PostgREST dependency, Redis/Valkey cache or Upstash queue.
 The `media` and `media-migrate` services are opt-in under the Compose
 `media` profile. They use a separate `MEDIA_DATABASE_URL`; never point it at
 the Backend product database. The Backend and Data Centre must receive the
-same independently generated `FRESH_DATA_CENTRE_INTERNAL_TOKEN`. In the
+same independently generated `FRESH_DATA_CENTRE_INTERNAL_TOKEN`. The short-lived
+`media-migrate` job uses Backend's database-admin URL only to create/own the
+restricted `MEDIA_DATABASE_USER` and its database; the long-running `media`
+container receives only `MEDIA_DATABASE_URL`, never the Backend database-admin
+URL or password. Set `VPS_MINIO_METADATA_BUCKET` to the same bucket as Backend
+`MINIO_METADATA_BUCKET`, and pass the matching dedicated metadata key created
+by Backend's `object-init` job. In the
 Backend repository's protected `.env`, set
 `FRESH_MEDIA_ENABLED=true` and `DATA_CENTRE_MEDIA_API_URL=http://media:8096`
 only after the Data Centre media service is running and the staging checks pass.
