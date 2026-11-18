@@ -40,6 +40,7 @@ jobs:
       FRESH_MEDIA_ENABLED: "false"
       DATA_CENTRE_MEDIA_API_URL: http://media:8096
       FRESH_DATA_CENTRE_INTERNAL_TOKEN: ci-media-internal-token-at-least-32-chars
+      MEDIA_DATABASE_NAME: media
       MEDIA_DATABASE_USER: testagram_media_ci
       MEDIA_DATABASE_PASSWORD: ci-media-db-password-only
       MEDIA_DATABASE_URL: postgresql://testagram_media_ci:ci-media-db-password-only@db:5432/media?sslmode=disable
@@ -130,6 +131,41 @@ jobs:
           assert "services:" in workflow and "postgres:17-alpine" in workflow, "live lifecycle test must use isolated PostgreSQL"
           PY
       - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker ./backend/services/platform ./backend/services/media
+
+      - name: Exercise isolated media database bootstrap and least-privilege role
+        shell: bash
+        run: |
+          set -euo pipefail
+          network="${TESTAGRAM_PLATFORM_NETWORK:-testagram-platform}"
+          docker network create "$network"
+          cleanup() {
+            docker rm -f testagram-media-migrate-db >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run -d --name testagram-media-migrate-db --network "$network" \\
+            --network-alias db --network-alias postgres \\
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=testagram -e POSTGRES_DB=postgres \\
+            postgres:17-alpine
+          for attempt in $(seq 1 40); do
+            if docker exec testagram-media-migrate-db pg_isready -U postgres -d postgres >/dev/null 2>&1; then break; fi
+            if [ "$attempt" -eq 40 ]; then echo "::error::CI PostgreSQL did not become healthy"; exit 1; fi
+            sleep 2
+          done
+          docker compose -p testagram-media-migrate-ci -f backend/docker-compose.yml --profile media run --rm --no-deps media-migrate
+          role_attrs="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT rolsuper || ':' || rolcreatedb || ':' || rolcreaterole FROM pg_roles WHERE rolname = 'testagram_media_ci'")"
+          [[ "$role_attrs" == "f:f:f" ]] || { echo "::error::Media database role has elevated privileges: $role_attrs"; exit 1; }
+          db_owner="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'media'")"
+          [[ "$db_owner" == "testagram_media_ci" ]] || { echo "::error::Media database owner mismatch: $db_owner"; exit 1; }
+          docker run --rm --network "$network" -e PGPASSWORD="$MEDIA_DATABASE_PASSWORD" postgres:17-alpine \\
+            psql -h db -U "$MEDIA_DATABASE_USER" -d media -v ON_ERROR_STOP=1 -Atqc "SELECT current_user || ':' || current_database()" | grep -qx 'testagram_media_ci:media'
+          docker exec testagram-media-migrate-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS public.admin_only_media_probe(secret text); INSERT INTO public.admin_only_media_probe VALUES ('private'); REVOKE ALL ON public.admin_only_media_probe FROM PUBLIC" >/dev/null
+          if docker run --rm --network "$network" -e PGPASSWORD="$MEDIA_DATABASE_PASSWORD" postgres:17-alpine \\
+            psql -h db -U "$MEDIA_DATABASE_USER" -d postgres -v ON_ERROR_STOP=1 -c "SELECT * FROM public.admin_only_media_probe" >/dev/null 2>&1; then
+            echo "::error::Media database role unexpectedly read Backend administrative database"
+            exit 1
+          fi
+          echo "Media migration creates a dedicated non-superuser database owner; runtime credentials cannot read the Backend administrative database."
       - name: Validate canonical Backend platform boundary
         run: |
           set -euo pipefail
