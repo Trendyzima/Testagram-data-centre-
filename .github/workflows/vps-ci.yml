@@ -85,6 +85,10 @@ jobs:
         run: |
           test -f backend-source/migrations/20261110_federation_outbox.sql
           grep -q 'testagram_local.federation_outbox' backend-source/internal/federationoutbox/store.go
+      - name: Test canonical Backend TV monitor OIDC and route guards
+        run: |
+          cd backend-source
+          go test ./cmd/api -run 'TestVerifyTVGitHubOIDCToken|TestValidTVHealthInput|TestTVCatalogRouteRequiresAuthorizedWorkflowIdentity|TestTVHealthRouteRequiresAuthorizedWorkflowIdentity'
       - uses: actions/setup-go@v7
         with:
           go-version: "1.23"
@@ -381,6 +385,11 @@ jobs:
             sleep 2
           done
           docker exec testagram-api wget -q -O - http://127.0.0.1:8082/readyz
+          docker exec testagram-api wget -q -O - http://127.0.0.1:8080/health | grep -q '"ok":true'
+          catalog_response="$(docker exec testagram-api sh -c 'wget -S -O /dev/null http://127.0.0.1:8080/internal/tv/catalog 2>&1 || true')"
+          grep -q '401 Unauthorized' <<<"$catalog_response"
+          health_response="$(docker exec testagram-api sh -c 'wget -S -O /dev/null --post-data="{}" http://127.0.0.1:8080/internal/tv/health 2>&1 || true')"
+          grep -q '401 Unauthorized' <<<"$health_response"
           if docker exec testagram-api wget -q -O - http://127.0.0.1:8080/readyz >/dev/null 2>&1; then echo 'public Backend listener exposed readiness'; exit 1; fi
           docker compose -f backend/docker-compose.yml pull algorithm federation-api
           docker compose -f backend/docker-compose.yml up -d platform video video-worker notification worker algorithm federation-api
