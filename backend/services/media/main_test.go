@@ -14,7 +14,7 @@ import (
 )
 
 func TestMediaAuthRequiresBothCredentialAndVersion(t *testing.T) {
-	s := &server{cfg: config{token: strings.Repeat("x", 40)}}
+	s := &server{cfg: config{token: strings.Repeat("x", 40), identityToken: strings.Repeat("i", 40)}}
 	for _, tc := range []struct{name, token, version string; want bool}{
 		{"both", "Bearer "+s.cfg.token, "1", true},
 		{"missing bearer", "", "1", false},
@@ -24,6 +24,8 @@ func TestMediaAuthRequiresBothCredentialAndVersion(t *testing.T) {
 		{"missing version", "Bearer "+s.cfg.token, "", false},
 		{"wrong version", "Bearer "+s.cfg.token, "2", false},
 		{"wrong token", "Bearer "+strings.Repeat("y", 40), "1", false},
+		{"identity route rejects media token", "Bearer "+s.cfg.token, "1", false},
+
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest("GET", "/internal/v1/media/status", nil)
@@ -33,6 +35,17 @@ func TestMediaAuthRequiresBothCredentialAndVersion(t *testing.T) {
 			if got := s.auth(w, r); got != tc.want { t.Fatalf("auth=%v want %v", got, tc.want) }
 		})
 	}
+	t.Run("identity route requires distinct token", func(t *testing.T) {
+		r := httptest.NewRequest("GET", "/internal/v1/identity-evidence/status", nil)
+		r.Header.Set("Authorization", "Bearer "+s.cfg.token)
+		r.Header.Set("X-Testagram-API-Version", "1")
+		w := httptest.NewRecorder()
+		if s.auth(w, r) { t.Fatal("general media token was accepted on identity evidence route") }
+		r.Header.Set("Authorization", "Bearer "+s.cfg.identityToken)
+		w = httptest.NewRecorder()
+		if !s.auth(w, r) { t.Fatal("dedicated identity evidence token was rejected") }
+	})
+
 }
 
 func TestMediaUploadValidation(t *testing.T) {
@@ -158,6 +171,7 @@ func TestIdentityEvidenceNamespaceIsPrivateAndBoundToApplication(t *testing.T) {
 	invalid[0].Namespace = "media-public"
 	invalid[1].ContentType = "application/octet-stream"
 	invalid[2].ContentType = "application/pdf"
+	invalid[2].Key = "identity/" + owner + "/" + session + "/" + evidence + ".pdf-" + strings.Repeat("a", 43)
 	invalid[3].SizeBytes = (15 << 20) + 1
 	invalid[4].Key = "identity/" + owner + "/../" + evidence + ".jpg-" + strings.Repeat("a", 43)
 	invalid[5].Key = "identity/" + owner + "/" + session + "/" + evidence + ".exe-" + strings.Repeat("a", 43)
