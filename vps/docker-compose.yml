@@ -28,7 +28,7 @@ services:
       AUTH_PUBLIC_BASE_URL: ${AUTH_PUBLIC_BASE_URL:-https://testagram.site}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?Set exact HTTPS Flutter/web client origins}
       # Optional private ranker. Login and the public API do not depend on it.
-      ALGORITHM_URL: ${ALGORITHM_URL:-}
+      ALGORITHM_URL: ${ALGORITHM_URL:-http://algorithm:8092}
       ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
       # Federation uses two distinct directions/tokens: Backend -> Federation
       # ingress, and Federation -> Backend private API.
