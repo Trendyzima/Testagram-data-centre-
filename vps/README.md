@@ -14,8 +14,12 @@ node control plane, maintenance workers and Caddy HTTPS edge.
 - The product database is configured with `DATABASE_URL`. The Data Centre
   control-plane database is separate and configured with
   `DATA_CENTRE_DATABASE_URL`.
-- The optional Algorithm and Federation services remain private. Their
-  credentials are separate for each trust direction.
+- The optional Algorithm and Federation services remain private. The installer
+  starts each profile automatically when its immutable image and complete
+  credentials are already present in `fresh.env`; otherwise it leaves that
+  profile stopped. Federation's delivery, outbox, inbox and inbound-accept
+  switches remain false unless explicitly enabled after acceptance. Its two
+  trust directions use separate credentials.
 - The optional Data Centre media service owns B2/R2 credentials and object
   lifecycle. Those provider credentials are not passed into the Backend API.
 - Node volumes and storage metadata remain under the configured Testagram
