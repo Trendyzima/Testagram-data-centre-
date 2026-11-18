@@ -120,6 +120,7 @@ jobs:
           workflow = Path(".github/workflows/media-provider-smoke.yml").read_text()
           compose = Path("backend/docker-compose.yml").read_text()
           provisioner = Path("scripts/provision-media-database.sh").read_text()
+          smoke_test = Path("backend/services/media/provider_smoke_test.go").read_text()
           assert 'entrypoint: ["/bin/sh", "/scripts/provision-media-database.sh"]' in compose, "deployment media-migrate must execute the mounted database provisioner"
           assert "../scripts/provision-media-database.sh:/scripts/provision-media-database.sh:ro" in compose, "deployment media-migrate must mount the provisioner read-only"
           assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql' in provisioner, "media provisioner must apply the lifecycle migration"
@@ -145,11 +146,12 @@ jobs:
               "secrets.TESTAGRAM_BACKUP_S3_ACCESS_KEY_ID",
               "secrets.TESTAGRAM_BACKUP_S3_SECRET_ACCESS_KEY",
               "vars.CLOUDFLARE_R2_PRIVATE_BUCKET",
-              "ci-smoke/",
-              "users/ci-smoke/",
           ):
               assert required in workflow, f"live media acceptance workflow is missing {required}"
           assert "services:" in workflow and "postgres:17-alpine" in workflow, "live lifecycle test must use isolated PostgreSQL"
+          for prefix in ("ci-smoke/", "users/ci-smoke/", "identity/"):
+              assert prefix in smoke_test, f"live media smoke must use the isolated {prefix} object prefix"
+          assert "defer func()" in smoke_test and "DELETE" in smoke_test, "live media smoke must clean up its temporary objects"
           PY
       - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker ./backend/services/platform ./backend/services/media
 
