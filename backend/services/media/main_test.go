@@ -152,7 +152,7 @@ func TestMetadataSidecarsWriteReadBackAndDeleteOnVPSAndR2(t *testing.T) {
 	if err:=s.writeMetadataSidecars(context.Background(),item);err!=nil{t.Fatalf("write metadata sidecars: %v",err)}
 	metadataKey:=item.key+".metadata.json"
 	for _,bucket:=range []string{"vps-metadata","r2-metadata"}{if len(objects["/"+bucket+"/"+metadataKey])==0{t.Fatalf("metadata missing from %s",bucket)}}
-	if err:=s.deleteMetadataSidecars(context.Background(),item.key);err!=nil{t.Fatalf("delete metadata sidecars: %v",err)}
+	if err:=s.deleteMetadataSidecars(context.Background(),item.namespace,item.key);err!=nil{t.Fatalf("delete metadata sidecars: %v",err)}
 	for _,bucket:=range []string{"vps-metadata","r2-metadata"}{if _,ok:=objects["/"+bucket+"/"+metadataKey];ok{t.Fatalf("metadata remains in %s",bucket)}}
 }
 
