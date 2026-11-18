@@ -17,39 +17,55 @@ services:
       start_period: 5s
 
   api:
-    image: ${TESTAGRAM_FRESH_BACKEND_IMAGE:?Set TESTAGRAM_FRESH_BACKEND_IMAGE to the fresh Appwrite API image pinned by digest}
+    image: ${TESTAGRAM_BACKEND_IMAGE:?Set TESTAGRAM_BACKEND_IMAGE to the canonical Backend image pinned by digest}
     restart: unless-stopped
     environment:
-      FRESH_API_ADDR: :8081
-      FRESH_API_ALLOWED_ORIGINS: ${FRESH_API_ALLOWED_ORIGINS:?Set exact HTTPS Flutter/web client origins}
-      APPWRITE_ENDPOINT: ${APPWRITE_ENDPOINT:?Set the fresh Appwrite endpoint}
-      APPWRITE_PROJECT_ID: ${APPWRITE_PROJECT_ID:?Set the fresh Appwrite project ID}
-      APPWRITE_DATABASE_ID: ${APPWRITE_DATABASE_ID:?Set the fresh Appwrite database ID}
-      APPWRITE_SERVER_API_KEY: ${APPWRITE_SERVER_API_KEY:?Set a least-privilege server API key}
-      NEON_DATABASE_URL: ${NEON_DATABASE_URL:-}
-      NEON_REQUIRED: ${NEON_REQUIRED:-true}
-      # Fresh API consumes these exact private-service variables.
-      ALGORITHM_ENDPOINT: ${ALGORITHM_ENDPOINT:-http://algorithm:8092}
+      LISTEN_ADDR: :8080
+      INTERNAL_LISTEN_ADDR: :8082
+      DATABASE_URL: ${DATABASE_URL:?Set the canonical Testagram product PostgreSQL URL}
+      DB_MAX_CONNS: ${DB_MAX_CONNS:-10}
+      TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:?Set the stable native-auth JWT signing secret}
+      AUTH_PUBLIC_BASE_URL: ${AUTH_PUBLIC_BASE_URL:-https://testagram.site}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?Set exact HTTPS Flutter/web client origins}
+      # Optional private ranker. Login and the public API do not depend on it.
+      ALGORITHM_URL: ${ALGORITHM_URL:-http://algorithm:8092}
       ALGORITHM_INTERNAL_TOKEN: ${ALGORITHM_INTERNAL_TOKEN:-}
-      FEED_RANKING_REQUIRED: "false"
-      FRESH_FEDERATION_INTERNAL_TOKEN: ${FRESH_FEDERATION_INTERNAL_TOKEN:-}
-      # B2 and R2 are independent full-copy stores; Data Centre owns their credentials.
-      # Provider keys stay only in the dedicated media service, never in Backend or node-agent containers.
+      # Federation uses two distinct directions/tokens: Backend -> Federation
+      # ingress, and Federation -> Backend private API.
+      FEDERATION_INTERNAL_URL: ${FEDERATION_INTERNAL_URL:-}
+      FEDERATION_INTERNAL_TOKEN: ${FEDERATION_INTERNAL_TOKEN:-}
+      FEDERATION_BACKEND_INTERNAL_TOKEN: ${FEDERATION_BACKEND_INTERNAL_TOKEN:-}
+      FEDERATION_PUBLIC_BASE_URL: ${FEDERATION_PUBLIC_BASE_URL:-https://testagram.site}
+      # Backend-to-Data-Centre media bridge. Provider credentials remain in media only.
       FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}
       DATA_CENTRE_MEDIA_API_URL: ${DATA_CENTRE_MEDIA_API_URL:-}
       FRESH_DATA_CENTRE_INTERNAL_TOKEN: ${FRESH_DATA_CENTRE_INTERNAL_TOKEN:-}
-      FRESH_MEDIA_PRIMARY_PROVIDER: ${FRESH_MEDIA_PRIMARY_PROVIDER:-b2}
-      TESTAGRAM_STORAGE_POOL_BYTES: ${TESTAGRAM_STORAGE_POOL_BYTES:-150000000000}
-      TESTAGRAM_STORAGE_PER_USER_BYTES: ${TESTAGRAM_STORAGE_PER_USER_BYTES:-2147483648}
-      ARCHIVE_S3_ENDPOINT: ${ARCHIVE_S3_ENDPOINT:-}
-      ARCHIVE_S3_REGION: ${ARCHIVE_S3_REGION:-us-east-1}
-      ARCHIVE_S3_BUCKET: ${ARCHIVE_S3_BUCKET:-}
-      ARCHIVE_S3_ACCESS_KEY_ID: ${ARCHIVE_S3_ACCESS_KEY_ID:-}
-      ARCHIVE_S3_SECRET_ACCESS_KEY: ${ARCHIVE_S3_SECRET_ACCESS_KEY:-}
-      TESTAGRAM_RETENTION_ENABLED: "false"
-      TESTAGRAM_RETENTION_DRY_RUN: "true"
-    expose: ["8081"]
-    networks: [services, ranker]
+      CDN_MEDIA_ASSERTION_SECRET: ${CDN_MEDIA_ASSERTION_SECRET:-}
+      CDN_MEDIA_BASE_URL: ${CDN_MEDIA_BASE_URL:-}
+      CDN_ORIGIN_AUTH_TOKEN: ${CDN_ORIGIN_AUTH_TOKEN:-}
+      CDN_PURGE_URL: ${CDN_PURGE_URL:-}
+      CDN_PURGE_TOKEN: ${CDN_PURGE_TOKEN:-}
+      # Native-auth transactional email; optional until mail is provisioned.
+      CLOUDFLARE_EMAIL_ACCOUNT_ID: ${CLOUDFLARE_EMAIL_ACCOUNT_ID:-}
+      CLOUDFLARE_EMAIL_API_TOKEN: ${CLOUDFLARE_EMAIL_API_TOKEN:-}
+      AUTH_FROM_EMAIL: ${AUTH_FROM_EMAIL:-}
+      TESTAGRAM_MAIL_ENCRYPTION_KEY: ${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}
+      # Keep API-side direct object storage and replication disabled. The Data
+      # Centre media service owns B2/R2 credentials and object lifecycle.
+      VIRTUAL_STORAGE_ENABLED: "false"
+      MEDIA_REPLICATION_ENABLED: "false"
+    expose: ["8080", "8082"]
+    networks:
+      services: {}
+      ranker: {}
+      platform:
+        aliases: [testagram-backend-api]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8082/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
 
 
   # Dedicated object lifecycle service. Enable only with --profile media and
@@ -61,6 +77,7 @@ services:
     entrypoint: ["/bin/sh", "-ec"]
     command: |
       psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql
+      psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/002_primary_origin_restore.sql
     environment:
       MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}
     volumes:
@@ -87,6 +104,12 @@ services:
       CLOUDFLARE_R2_BUCKET: ${CLOUDFLARE_R2_BUCKET:-}
       CLOUDFLARE_R2_ACCESS_KEY_ID: ${CLOUDFLARE_R2_ACCESS_KEY_ID:-}
       CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${CLOUDFLARE_R2_SECRET_ACCESS_KEY:-}
+      VPS_MINIO_ENDPOINT: ${VPS_MINIO_ENDPOINT:-http://object-storage:9000}
+      VPS_MINIO_REGION: ${VPS_MINIO_REGION:-us-east-1}
+      VPS_MINIO_METADATA_BUCKET: ${VPS_MINIO_METADATA_BUCKET:-testagram-media-metadata}
+      VPS_MINIO_METADATA_ACCESS_KEY_ID: ${VPS_MINIO_METADATA_ACCESS_KEY_ID:-}
+      VPS_MINIO_METADATA_SECRET_ACCESS_KEY: ${VPS_MINIO_METADATA_SECRET_ACCESS_KEY:-}
+      CLOUDFLARE_R2_METADATA_BUCKET: ${CLOUDFLARE_R2_METADATA_BUCKET:-}
     expose: ["8096"]
     networks: [services, platform]
     depends_on:
