@@ -199,3 +199,21 @@ func TestIdentityEvidenceNamespaceRequiresDedicatedRoute(t *testing.T) {
 		}
 	}
 }
+
+func TestIdentityEvidenceReadinessRequiresDedicatedCredential(t *testing.T) {
+	s := &server{cfg: config{token: strings.Repeat("m", 40), identityToken: strings.Repeat("i", 40)}}
+	request := func(token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/internal/v1/identity-evidence/readyz", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("X-Testagram-API-Version", apiVersion)
+		w := httptest.NewRecorder()
+		s.identityReady(w, r)
+		return w
+	}
+	if got := request(s.cfg.token).Code; got != http.StatusUnauthorized {
+		t.Fatalf("general media token identity readiness status=%d, want 401", got)
+	}
+	if got := request(s.cfg.identityToken).Code; got != http.StatusServiceUnavailable {
+		t.Fatalf("identity evidence token should pass auth then fail closed on missing DB: status=%d, want 503", got)
+	}
+}
