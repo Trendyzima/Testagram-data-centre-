@@ -116,3 +116,10 @@ MinIO metadata identity. Never pass those MinIO metadata keys to Backend or
 Flutter. The Backend's separate virtual-storage provider credentials remain
 in the Backend's own protected environment. These service credentials are
 independent of the end-user JWT signing secret.
+
+Federation protocol state also has a separate `FEDERATION_DATABASE_NAME` and
+`FEDERATION_DATABASE_USER`. The one-shot Data Centre `migrate` service uses
+Backend's database-admin URL to create/own that non-superuser role and database;
+the long-running `federation-api` receives only the scoped
+`FEDERATION_DATABASE_URL`. Do not put Backend's `DATABASE_URL` or the
+Federation role bootstrap password in the Federation API container.
