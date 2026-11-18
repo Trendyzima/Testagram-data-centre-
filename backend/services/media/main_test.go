@@ -236,3 +236,26 @@ func TestIdentityEvidenceUsesDedicatedB2AndR2Buckets(t *testing.T) {
  mp,mr = s.metadataStoresForNamespace("media-private")
  if mp.bucket!="metadata-vps" || mr.bucket!="metadata-r2" { t.Fatalf("media metadata routing changed: %q/%q",mp.bucket,mr.bucket) }
 }
+
+func TestIdentityEvidenceBucketProbeWritesReadsAndDeletes(t *testing.T) {
+ objects := map[string][]byte{}
+ methods := []string{}
+ ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+  methods = append(methods, r.Method)
+  switch r.Method {
+  case http.MethodPut:
+   body, err := io.ReadAll(r.Body); if err != nil { http.Error(w, "read", 500); return }; objects[r.URL.Path] = body; w.WriteHeader(http.StatusOK)
+  case http.MethodGet:
+   body, ok := objects[r.URL.Path]; if !ok { http.NotFound(w, r); return }; _, _ = w.Write(body)
+  case http.MethodDelete:
+   delete(objects, r.URL.Path); w.WriteHeader(http.StatusNoContent)
+  default: http.Error(w, "method", 405)
+  }
+ }))
+ defer ts.Close()
+ store := s3Store{name:"identity-test", endpoint:ts.URL, region:"us-east-1", bucket:"identity-evidence", access:"access", secret:strings.Repeat("s",40)}
+ s := &server{http:ts.Client()}
+ if err := s.probeIdentityEvidenceStore(context.Background(), store); err != nil { t.Fatal(err) }
+ if len(objects) != 0 { t.Fatalf("readiness probe left objects behind: %#v", objects) }
+ if strings.Join(methods, ",") != "PUT,GET,DELETE" { t.Fatalf("probe methods=%v", methods) }
+}
