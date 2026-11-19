@@ -611,19 +611,31 @@ jobs:
           docker exec testagram-restore-source psql -U postgres -d data_centre -v ON_ERROR_STOP=1 \
             -c "CREATE TABLE restore_probe(id integer PRIMARY KEY, value text NOT NULL); INSERT INTO restore_probe VALUES (1, 'data-centre-ok');"
 
-          docker exec testagram-restore-source pg_dump -U postgres -Fc data_centre > "$stage/data-centre.dump"
-          test -s "$stage/data-centre.dump"
+          docker exec testagram-restore-source createdb -U postgres media
+          docker exec testagram-restore-source psql -U postgres -d media -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE media_objects(id integer PRIMARY KEY); CREATE TABLE media_outbox(id integer PRIMARY KEY); INSERT INTO media_objects VALUES (1); INSERT INTO media_outbox VALUES (1);"
 
-          # Match the production infrastructure-only archive contract.
-          (cd "$stage" && sha256sum data-centre.dump > components.sha256)
+          docker exec testagram-restore-source createdb -U postgres federation
+          docker exec testagram-restore-source psql -U postgres -d federation -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE federation_actors(id integer PRIMARY KEY); INSERT INTO federation_actors VALUES (1);"
+
+          for database in data_centre media federation; do
+            docker exec testagram-restore-source pg_dump -U postgres -Fc "$database" > "$stage/$database.dump"
+            test -s "$stage/$database.dump"
+          done
+
+          # Match the production multi-database archive contract.
+          (cd "$stage" && sha256sum ./*.dump > components.sha256)
           cat > "$stage/metadata.txt" <<'EOF'
-          backup_scope=data_centre_infrastructure_only
+          backup_scope=data_centre_and_service_metadata
           neon_database_required=false
-          cross_database_atomic=not_applicable
+          cross_database_atomic=not_atomic; coordinated_restore_requires_maintenance_window
           media_bytes_included=false
           external_identity_documents_included=false
+          media_database_included=true
+          federation_database_included=true
           EOF
-          tar -czf "$stage/testagram-ci-backup.tar.gz" -C "$stage" data-centre.dump components.sha256 metadata.txt
+          tar -czf "$stage/testagram-ci-backup.tar.gz" -C "$stage" data_centre.dump media.dump federation.dump components.sha256 metadata.txt
           age-keygen -o "$stage/restore-identity.txt"
           chmod 600 "$stage/restore-identity.txt"
           recipient="$(age-keygen -y "$stage/restore-identity.txt")"
