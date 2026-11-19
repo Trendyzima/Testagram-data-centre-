@@ -100,9 +100,15 @@ jobs:
           for bucket in "$MEDIA_SMOKE_R2_BUCKET" "$MEDIA_SMOKE_R2_IDENTITY_BUCKET"; do
             managed_url="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$bucket/domains/managed"
             managed_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$RUNNER_TEMP/r2-managed.json" -w '%{http_code}' -X PUT -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' --data '{"enabled":false}' "$managed_url")"
-            [[ "$managed_status" == "200" ]] && jq -e '.success == true and .result.enabled == false' "$RUNNER_TEMP/r2-managed.json" >/dev/null || { echo "Could not disable R2 public r2.dev access: $bucket" >&2; exit 1; }
+            if [[ "$managed_status" != "200" ]] || ! jq -e '.success == true and .result.enabled == false' "$RUNNER_TEMP/r2-managed.json" >/dev/null; then
+              echo "Could not disable R2 public r2.dev access: $bucket" >&2
+              exit 1
+            fi
             custom_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$RUNNER_TEMP/r2-custom.json" -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$bucket/domains/custom" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")"
-            [[ "$custom_status" == "200" ]] && jq -e '.success == true and ([.result.domains[]? | select(.enabled == true)] | length == 0)' "$RUNNER_TEMP/r2-custom.json" >/dev/null || { echo "R2 staging bucket has enabled custom public domain or domain state unavailable: $bucket" >&2; exit 1; }
+            if [[ "$custom_status" != "200" ]] || ! jq -e '.success == true and ([.result.domains[]? | select(.enabled == true)] | length == 0)' "$RUNNER_TEMP/r2-custom.json" >/dev/null; then
+              echo "R2 staging bucket has enabled custom public domain or domain state unavailable: $bucket" >&2
+              exit 1
+            fi
           done
       - name: Verify staging-only provider configuration
         run: |
