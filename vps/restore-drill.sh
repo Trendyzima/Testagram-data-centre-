@@ -30,10 +30,70 @@ test -s "$STAGE/data-centre.dump"
 
 test -s "$STAGE/components.sha256" || { echo "Per-database checksum manifest missing" >&2; exit 1; }
 (cd "$STAGE" && sha256sum -c components.sha256)
-grep -qx 'backup_scope=data_centre_infrastructure_only' "$STAGE/metadata.txt" || { echo "Backup scope is not explicitly Data Centre infrastructure-only" >&2; exit 1; }
+grep -qx 'backup_scope=data_centre_and_service_metadata' "$STAGE/metadata.txt" || { echo "Backup scope is not explicitly Data Centre infrastructure-only" >&2; exit 1; }
 grep -qx 'neon_database_required=false' "$STAGE/metadata.txt" || { echo "Legacy Neon database dependency is still present" >&2; exit 1; }
 grep -qx 'media_bytes_included=false' "$STAGE/metadata.txt" || { echo "Unexpected media backup scope metadata" >&2; exit 1; }
 grep -qx 'external_identity_documents_included=false' "$STAGE/metadata.txt" || { echo "Unexpected external identity-document backup scope metadata" >&2; exit 1; }
+grep -Eq '^media_database_included=(true|false)
+
+# Restore into a network-isolated disposable database. No public port is bound.
+docker run -d --name "$CONTAINER" --network none -e "POSTGRES_PASSWORD=$PASS" "$RESTORE_IMAGE" >/dev/null
+ready=0
+for _ in $(seq 1 60); do
+  if docker exec "$CONTAINER" pg_isready -U postgres -d postgres >/dev/null 2>&1; then ready=1; break; fi
+  sleep 2
+done
+test "$ready" -eq 1 || { echo "Isolated restore database did not become ready" >&2; exit 1; }
+restore_one() {
+  local dump="$1" database="$2" count
+  test -s "$STAGE/$dump.dump" || { echo "Required $dump database dump is missing" >&2; exit 1; }
+  docker exec "$CONTAINER" createdb -U postgres "$database"
+  docker cp "$STAGE/$dump.dump" "$CONTAINER:/tmp/$dump.dump" >/dev/null
+  docker exec "$CONTAINER" pg_restore -U postgres -d "$database" --no-owner --no-acl --exit-on-error "/tmp/$dump.dump"
+  count="$(docker exec "$CONTAINER" psql -U postgres -d "$database" -Atqc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p') AND n.nspname NOT IN ('pg_catalog','information_schema')")"
+  test "$count" -gt 0 || { echo "Restore contains no user tables in $database" >&2; exit 1; }
+}
+restore_one data-centre testagram_data_centre_restore
+if grep -qx 'media_database_included=true' "$STAGE/metadata.txt"; then
+  restore_one media testagram_media_restore
+  docker exec "$CONTAINER" psql -U postgres -d testagram_media_restore -Atqc "SELECT to_regclass('public.media_objects') IS NOT NULL AND to_regclass('public.media_outbox') IS NOT NULL" | grep -qx t
+elif [ -e "$STAGE/media.dump" ]; then
+  echo "Media dump exists but metadata says it was not included" >&2; exit 1
+fi
+if grep -qx 'federation_database_included=true' "$STAGE/metadata.txt"; then
+  restore_one federation testagram_federation_restore
+elif [ -e "$STAGE/federation.dump" ]; then
+  echo "Federation dump exists but metadata says it was not included" >&2; exit 1
+fi
+
+echo "DATA CENTRE SERVICE DATABASE RESTORE DRILL PASSED"
+echo "Data Centre infrastructure, configured media lifecycle and Federation databases restored in an isolated, network-disabled container."
+echo "Backend product PostgreSQL is restored separately by the Backend repository's self-hosted restore drill."
+echo "B2/R2 media object bytes and external identity-evidence documents still require provider-backed backup and restore drills."
+ "$STAGE/metadata.txt" || { echo "Media database inclusion state is missing" >&2; exit 1; }
+grep -Eq '^federation_database_included=(true|false)
+
+# Restore into a network-isolated disposable database. No public port is bound.
+docker run -d --name "$CONTAINER" --network none -e "POSTGRES_PASSWORD=$PASS" "$RESTORE_IMAGE" >/dev/null
+ready=0
+for _ in $(seq 1 60); do
+  if docker exec "$CONTAINER" pg_isready -U postgres -d postgres >/dev/null 2>&1; then ready=1; break; fi
+  sleep 2
+done
+test "$ready" -eq 1 || { echo "Isolated restore database did not become ready" >&2; exit 1; }
+docker exec "$CONTAINER" createdb -U postgres testagram_data_centre_restore
+docker cp "$STAGE/data-centre.dump" "$CONTAINER:/tmp/data-centre.dump" >/dev/null
+docker exec "$CONTAINER" pg_restore -U postgres -d testagram_data_centre_restore --no-owner --no-acl --exit-on-error /tmp/data-centre.dump
+for database in testagram_data_centre_restore; do
+  count="$(docker exec "$CONTAINER" psql -U postgres -d "$database" -Atqc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p') AND n.nspname NOT IN ('pg_catalog','information_schema')")"
+  test "$count" -gt 0 || { echo "Restore contains no user tables in $database" >&2; exit 1; }
+done
+
+echo "DATA CENTRE INFRASTRUCTURE RESTORE DRILL PASSED"
+echo "Data Centre infrastructure PostgreSQL archive restored in an isolated, network-disabled container."
+echo "Backend product PostgreSQL is restored separately by the Backend repository's self-hosted restore drill."
+echo "Identity verification records and B2/R2 media bytes require their own provider-backed recovery drills."
+ "$STAGE/metadata.txt" || { echo "Federation database inclusion state is missing" >&2; exit 1; }
 
 # Restore into a network-isolated disposable database. No public port is bound.
 docker run -d --name "$CONTAINER" --network none -e "POSTGRES_PASSWORD=$PASS" "$RESTORE_IMAGE" >/dev/null
