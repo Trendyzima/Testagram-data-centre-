@@ -18,7 +18,7 @@ components:
     implementation: testagram-owned
     api: local
     channels: local
-    uploads: local_private_storage
+    uploads: private_object_storage
     transcoding: local_ffmpeg
     streaming: adaptive_hls
     renditions: [240p, 360p, 720p]
@@ -36,12 +36,14 @@ components:
   media_pipeline:
     enabled: true
     implementation: testagram-owned
-    object_store: vps_authoritative_local_filesystem
-    root: TESTAGRAM_STORAGE_ROOT
+    object_store: backblaze_b2_primary_cloudflare_r2_verified_replica
+    metadata_store: dedicated_postgresql
     namespaces: [posts, images, videos, originals, hls, posters, avatars, stories, messages, attachments, tmp]
-    storage_backend: local_file
+    storage_backend: s3_compatible_object_storage
+    replication: asynchronous_sha256_verified_b2_to_r2
+    identity_evidence: dedicated_private_buckets_on_b2_and_r2
     processing: local_ffmpeg_and_image_workers
-    delivery: signed_or_public_storage_urls_through_local_edge
+    delivery: backend_authorized_signed_or_public_urls_through_testagram_cdn
   cache_queue:
     enabled: true
     implementation: testagram-platform-over-valkey
