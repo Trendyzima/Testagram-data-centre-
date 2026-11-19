@@ -637,7 +637,7 @@ jobs:
           media_database_included=true
           federation_database_included=true
           EOF
-          tar -czf "$stage/testagram-ci-backup.tar.gz" -C "$stage" data_centre.dump media.dump federation.dump components.sha256 metadata.txt
+          tar -czf "$stage/testagram-ci-backup.tar.gz" -C "$stage" data-centre.dump media.dump federation.dump components.sha256 metadata.txt
           age-keygen -o "$stage/restore-identity.txt"
           chmod 600 "$stage/restore-identity.txt"
           recipient="$(age-keygen -y "$stage/restore-identity.txt")"
