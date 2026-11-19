@@ -34,7 +34,7 @@ class BackupScopeContract(unittest.TestCase):
             "neon_database_required=false",
             "media_bytes_included=false",
             "external_identity_documents_included=false",
-            "DATA CENTRE INFRASTRUCTURE RESTORE DRILL PASSED",
+            "DATA CENTRE SERVICE DATABASE RESTORE DRILL PASSED",
         ):
             self.assertIn(required, source)
         self.assertNotIn("neon-social.dump", source)
