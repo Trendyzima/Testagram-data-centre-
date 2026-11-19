@@ -18,6 +18,15 @@ set -a
 set +a
 POSTGRES_IMAGE="${POSTGRES_CLIENT_IMAGE:-postgres:17-alpine}"
 test -n "${DATA_CENTRE_DATABASE_URL:-}" || { echo "DATA_CENTRE_DATABASE_URL is required" >&2; exit 1; }
+MEDIA_DATABASE_URL="${MEDIA_DATABASE_URL:-}"
+FEDERATION_DATABASE_URL="${FEDERATION_DATABASE_URL:-}"
+media_enabled="$(printf '%s' "${FRESH_MEDIA_ENABLED:-${DATA_CENTRE_MEDIA_ENABLED:-false}}" | tr '[:upper:]' '[:lower:]')"
+if [[ "$media_enabled" == true || "$media_enabled" == 1 ]]; then
+  test -n "$MEDIA_DATABASE_URL" || { echo "MEDIA_DATABASE_URL is required while the Data Centre media profile is enabled" >&2; exit 1; }
+fi
+[[ -z "$MEDIA_DATABASE_URL" || "$MEDIA_DATABASE_URL" != "$DATA_CENTRE_DATABASE_URL" ]] || { echo "MEDIA_DATABASE_URL must be separate from DATA_CENTRE_DATABASE_URL" >&2; exit 1; }
+[[ -z "$FEDERATION_DATABASE_URL" || "$FEDERATION_DATABASE_URL" != "$DATA_CENTRE_DATABASE_URL" ]] || { echo "FEDERATION_DATABASE_URL must be separate from DATA_CENTRE_DATABASE_URL" >&2; exit 1; }
+[[ -z "$FEDERATION_DATABASE_URL" || "$FEDERATION_DATABASE_URL" != "$MEDIA_DATABASE_URL" ]] || { echo "FEDERATION_DATABASE_URL must be separate from MEDIA_DATABASE_URL" >&2; exit 1; }
 test -n "$BACKUP_REMOTE" || { echo "TESTAGRAM_BACKUP_REMOTE must be user@host:/absolute/path" >&2; exit 1; }
 test -n "$AGE_RECIPIENT" || { echo "TESTAGRAM_BACKUP_AGE_RECIPIENT must be an age public recipient" >&2; exit 1; }
 case "$BACKUP_REMOTE" in *:/*) ;; *) echo "Remote must use user@host:/absolute/path syntax" >&2; exit 1 ;; esac
@@ -36,16 +45,23 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# This script backs up only Data Centre infrastructure state. Product accounts,
-# posts, feeds and Backend-owned PostgreSQL are backed up by the Backend
-# repository's scripts/self-hosted-backup.sh. Do not duplicate or point this
-# job at a second social-data provider.
+# Data Centre owns its infrastructure, media lifecycle and Federation protocol
+# databases. Backend separately backs up product/social state.
+dump_database() {
+  local name="$1" url="$2"
+  [[ -n "$url" ]] || return 0
+  docker run --rm --network host -e "DATABASE_URL=$url" "$POSTGRES_IMAGE" \
+    sh -ec 'pg_dump "$DATABASE_URL" --format=custom --no-owner --no-acl' > "$STAGE/$name.dump"
+  test -s "$STAGE/$name.dump" || { echo "$name database dump is empty" >&2; exit 1; }
+}
 docker run --rm --network host -e "DATABASE_URL=$DATA_CENTRE_DATABASE_URL" "$POSTGRES_IMAGE" \
   sh -ec 'pg_dump "$DATABASE_URL" --format=custom --no-owner --no-acl' > "$STAGE/data-centre.dump"
 test -s "$STAGE/data-centre.dump"
+dump_database media "$MEDIA_DATABASE_URL"
+dump_database federation "$FEDERATION_DATABASE_URL"
 
-# Verify the infrastructure dump independently inside the encrypted archive.
-(cd "$STAGE" && sha256sum data-centre.dump > components.sha256)
+# Every PostgreSQL dump is checksummed before the encrypted archive is built.
+(cd "$STAGE" && sha256sum ./*.dump > components.sha256)
 test -s "$STAGE/components.sha256"
 
 if [ -d /var/lib/testagram/storage/nodes ]; then
@@ -55,14 +71,16 @@ cat > "$STAGE/metadata.txt" <<EOF
 created_at_utc=$STAMP
 repository_commit=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
 data_centre_database=pg_dump-custom
+media_database_included=$([[ -s "$STAGE/media.dump" ]] && echo true || echo false)
+federation_database_included=$([[ -s "$STAGE/federation.dump" ]] && echo true || echo false)
 backend_product_database=separate_backend_owned_backup_required
-backup_scope=data_centre_infrastructure_only
+backup_scope=data_centre_and_service_metadata
 neon_database_required=false
-cross_database_atomic=not_applicable
+cross_database_atomic=not_atomic; coordinated_restore_requires_maintenance_window
 media_bytes_included=false
 external_identity_documents_included=false
-media_bytes=retained_in_private_B2_and_R2; not duplicated in this infrastructure archive
-identity_verification_evidence=not_exported_by_this_script
+media_bytes=retained_in_private_B2_and_R2; object bytes require a separate provider-backed archive
+identity_verification_evidence=metadata_in_media_database; external evidence bytes not exported by this script
 EOF
 tar -C "$STAGE" -czf "$ARCHIVE" .
 test -s "$ARCHIVE"
@@ -83,6 +101,6 @@ if [ -s "$REMOTE_DRIFT" ]; then
   exit 1
 fi
 
-printf 'Encrypted database backup created, transferred and checksum-verified: %s\n' "$ENCRYPTED"
+printf 'Encrypted Data Centre database backup created, transferred and checksum-verified: %s\n' "$ENCRYPTED"
 printf 'Remote destination: %s\n' "$BACKUP_REMOTE"
 printf 'Note: Identity verification documents and B2/R2 media bytes are outside this database archive.\n'
