@@ -84,9 +84,26 @@ jobs:
               mc mb --ignore-existing "r2/$R2_BUCKET"
               mc mb --ignore-existing "b2/$B2_IDENTITY_BUCKET"
               mc mb --ignore-existing "r2/$R2_IDENTITY_BUCKET"
-              for bucket in "$B2_BUCKET" "$B2_IDENTITY_BUCKET"; do mc anonymous set none "b2/$bucket"; mc stat "b2/$bucket" >/dev/null; done
-              for bucket in "$R2_BUCKET" "$R2_IDENTITY_BUCKET"; do mc anonymous set none "r2/$bucket"; mc stat "r2/$bucket" >/dev/null; done
+              for bucket in "$B2_BUCKET" "$B2_IDENTITY_BUCKET"; do mc stat "b2/$bucket" >/dev/null; done
+              for bucket in "$R2_BUCKET" "$R2_IDENTITY_BUCKET"; do mc stat "r2/$bucket" >/dev/null; done
             '
+          # Backblaze B2 uses the bucket ACL for public/private access.
+          command -v aws >/dev/null 2>&1 || { echo "AWS CLI is required for the B2 private ACL smoke check." >&2; exit 1; }
+          export AWS_ACCESS_KEY_ID="$MEDIA_SMOKE_B2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$MEDIA_SMOKE_B2_SECRET_ACCESS_KEY" AWS_DEFAULT_REGION="$MEDIA_SMOKE_B2_REGION" AWS_EC2_METADATA_DISABLED=true
+          for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_B2_IDENTITY_EVIDENCE_BUCKET"; do
+            aws s3api put-bucket-acl --bucket "$bucket" --acl private --endpoint-url "$MEDIA_SMOKE_B2_ENDPOINT" --region "$MEDIA_SMOKE_B2_REGION"
+            aws s3api get-bucket-acl --bucket "$bucket" --endpoint-url "$MEDIA_SMOKE_B2_ENDPOINT" --region "$MEDIA_SMOKE_B2_REGION" > "$RUNNER_TEMP/b2-acl.json"
+            jq -e '(.Grants | length == 1) and .Grants[0].Permission == "FULL_CONTROL" and .Grants[0].Grantee.Type == "CanonicalUser"' "$RUNNER_TEMP/b2-acl.json" >/dev/null || { echo "B2 staging bucket ACL is not private: $bucket" >&2; exit 1; }
+          done
+          # Cloudflare R2 uses its native managed/custom-domain APIs; S3
+          # GetBucketPolicy is not implemented by R2.
+          for bucket in "$MEDIA_SMOKE_R2_BUCKET" "$MEDIA_SMOKE_R2_IDENTITY_EVIDENCE_BUCKET"; do
+            managed_url="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$bucket/domains/managed"
+            managed_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$RUNNER_TEMP/r2-managed.json" -w '%{http_code}' -X PUT -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json' --data '{"enabled":false}' "$managed_url")"
+            [[ "$managed_status" == "200" ]] && jq -e '.success == true and .result.enabled == false' "$RUNNER_TEMP/r2-managed.json" >/dev/null || { echo "Could not disable R2 public r2.dev access: $bucket" >&2; exit 1; }
+            custom_status="$(curl -sS --connect-timeout 5 --max-time 20 -o "$RUNNER_TEMP/r2-custom.json" -w '%{http_code}' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/r2/buckets/$bucket/domains/custom" -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")"
+            [[ "$custom_status" == "200" ]] && jq -e '.success == true and ([.result.domains[]? | select(.enabled == true)] | length == 0)' "$RUNNER_TEMP/r2-custom.json" >/dev/null || { echo "R2 staging bucket has enabled custom public domain or domain state unavailable: $bucket" >&2; exit 1; }
+          done
       - name: Verify staging-only provider configuration
         run: |
           set -euo pipefail
