@@ -23,7 +23,7 @@ components:
     streaming: adaptive_hls
     renditions: [240p, 360p, 720p]
     playback: signed_manifest_and_segment_urls
-    metadata: supabase_postgres
+    metadata: postgresql
     views: deduplicated
     likes: persistent
     publishing: moderation_ready_state
@@ -32,14 +32,14 @@ components:
     implementation: testagram-owned
     transport: persistent_sse_plus_local_delivery
     queue: local_durable
-    persistence: supabase_postgres
+    persistence: postgresql
   media_pipeline:
     enabled: true
     implementation: testagram-owned
     object_store: vps_authoritative_local_filesystem
     root: TESTAGRAM_STORAGE_ROOT
     namespaces: [posts, images, videos, originals, hls, posters, avatars, stories, messages, attachments, tmp]
-    supabase_storage_backend: local_file
+    storage_backend: local_file
     processing: local_ffmpeg_and_image_workers
     delivery: signed_or_public_storage_urls_through_local_edge
   cache_queue:
@@ -94,7 +94,7 @@ components:
     reconciliation: local
     providers: [mpesa, paypal, pesapal]
   identity:
-    auth: supabase_self_hosted
+    auth: testagram_native
     authorization: testagram_policy_layer
     kyc: testagram_owned_or_manual_review
 
