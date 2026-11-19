@@ -119,7 +119,8 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          workflow = Path(".github/workflows/media-provider-smoke.yml").read_text()
+          workflow_path = Path(".github/workflows/media-provider-smoke.yml")
+          assert not workflow_path.exists(), "obsolete staging-only live provider smoke workflow must remain removed"
           compose = Path("backend/docker-compose.yml").read_text()
           provisioner = Path("scripts/provision-media-database.sh").read_text()
           assert 'entrypoint: ["/bin/sh", "/scripts/provision-media-database.sh"]' in compose, "deployment media-migrate must execute the mounted database provisioner"
@@ -127,22 +128,6 @@ jobs:
           assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql' in provisioner, "media provisioner must apply the lifecycle migration"
           assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/002_primary_origin_restore.sql' in provisioner, "media provisioner must apply the primary restoration migration"
           assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/003_identity_evidence_namespace.sql' in provisioner, "media provisioner must apply the isolated identity evidence namespace migration"
-          for required in (
-              "confirm_live_provider_writes",
-              "MEDIA_DATABASE_URL",
-              "workflow_dispatch:",
-              "confirm_live_provider_writes",
-              "MEDIA_INTERNAL_TOKEN",
-              "IDENTITY_EVIDENCE_INTERNAL_TOKEN",
-              "TestLiveIdentityEvidenceLifecycle",
-              "001_media_lifecycle.sql",
-              "002_primary_origin_restore.sql",
-              "003_identity_evidence_namespace.sql",
-              "TestLiveProviderRoundTrip",
-              "TestLiveMediaReplicationRestoreDelete",
-          ):
-              assert required in workflow, f"live media acceptance workflow is missing {required}"
-          assert "services:" in workflow and "postgres:17-alpine" in workflow, "live lifecycle test must use isolated PostgreSQL"
           PY
       - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker ./backend/services/platform ./backend/services/media
 
