@@ -619,9 +619,11 @@ jobs:
           docker exec testagram-restore-source psql -U postgres -d federation -v ON_ERROR_STOP=1 \
             -c "CREATE TABLE federation_actors(id integer PRIMARY KEY); INSERT INTO federation_actors VALUES (1);"
 
-          for database in data_centre media federation; do
-            docker exec testagram-restore-source pg_dump -U postgres -Fc "$database" > "$stage/$database.dump"
-            test -s "$stage/$database.dump"
+          for entry in data_centre:data-centre media:media federation:federation; do
+            database="${entry%%:*}"
+            dump_name="${entry#*:}"
+            docker exec testagram-restore-source pg_dump -U postgres -Fc "$database" > "$stage/$dump_name.dump"
+            test -s "$stage/$dump_name.dump"
           done
 
           # Match the production multi-database archive contract.
