@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	mathrand "math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -349,6 +350,20 @@ func (s *server) delete(w http.ResponseWriter,r *http.Request){
 	if err==nil{err=tx.Commit(ctx)};if err!=nil{writeErr(w,503,"could not queue durable deletion");return}
 	writeJSON(w,202,map[string]string{"status":"delete_pending"})
 }
+func mediaRetryDelaySeconds(attempt int) int {
+	if attempt < 1 { attempt = 1 }
+	base := 5
+	for i := 1; i < attempt && base < 3600; i++ {
+		base *= 2
+		if base > 3600 { base = 3600 }
+	}
+	jitterWindow := base / 5
+	delay := base + mathrand.Intn(2*jitterWindow+1) - jitterWindow
+	if delay < 1 { return 1 }
+	if delay > 3600 { return 3600 }
+	return delay
+}
+
 func (s *server) worker(ctx context.Context){
 	t:=time.NewTicker(3*time.Second);defer t.Stop()
 	for{select{case<-ctx.Done():return;case<-t.C:if err:=s.processOne(ctx);err!=nil{log.Printf("media outbox worker: %v",err)}}}
@@ -356,16 +371,17 @@ func (s *server) worker(ctx context.Context){
 func (s *server) processOne(parent context.Context)error{
 	ctx,c:=context.WithTimeout(parent,30*time.Minute);defer c()
 	tx,err:=s.db.Begin(ctx);if err!=nil{return err};defer tx.Rollback(ctx)
-	var id int64;var owner,ns,key,op string
-	err=tx.QueryRow(ctx,`select o.id,o.owner_id,o.namespace,o.object_key,o.operation from media_outbox o where o.status in ('pending','retry','processing') and o.available_at<=now() and (o.locked_until is null or o.locked_until<now()) and not exists (select 1 from media_outbox active where active.owner_id=o.owner_id and active.namespace=o.namespace and active.object_key=o.object_key and active.status='processing' and active.id<>o.id) order by o.id for update of o skip locked limit 1`).Scan(&id,&owner,&ns,&key,&op)
+	var id int64;var attempts int;var owner,ns,key,op string
+	err=tx.QueryRow(ctx,`select o.id,o.attempts,o.owner_id,o.namespace,o.object_key,o.operation from media_outbox o where o.status in ('pending','retry','processing') and o.available_at<=now() and (o.locked_until is null or o.locked_until<now()) and not exists (select 1 from media_outbox active where active.owner_id=o.owner_id and active.namespace=o.namespace and active.object_key=o.object_key and active.status='processing' and active.id<>o.id) order by o.id for update of o skip locked limit 1`).Scan(&id,&attempts,&owner,&ns,&key,&op)
 	if errors.Is(err,pgx.ErrNoRows){return nil};if err!=nil{return err}
-	_,err=tx.Exec(ctx,`update media_outbox set status='processing',locked_until=now()+interval '35 minutes',attempts=attempts+1 where id=$1`,id);if err!=nil{return err};if err=tx.Commit(ctx);err!=nil{return err}
+	_,err=tx.Exec(ctx,`update media_outbox set status='processing',locked_until=now()+interval '35 minutes',attempts=attempts+1 where id=$1`,id);if err!=nil{return err};if err=tx.Commit(ctx);err!=nil{return err};attempts++
 	switch op{case "verify":err=s.verifyPrimary(ctx,owner,ns,key);case "replicate":err=s.replicate(ctx,owner,ns,key);case "restore_primary":err=s.restorePrimary(ctx,owner,ns,key);case "delete":err=s.deleteOrigins(ctx,owner,ns,key);default:err=fmt.Errorf("unknown outbox operation %q",op)}
 	if err!=nil{
 		var objectStatus string
 		stateErr:=s.db.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&objectStatus)
 		if stateErr==nil&&(objectStatus=="delete_pending"||objectStatus=="deleted") { _,cancelErr:=s.db.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete',updated_at=now() where id=$1 and status='processing'`,id);return cancelErr }
-		tag,updateErr:=s.db.Exec(ctx,`update media_outbox set status=case when attempts>=12 then 'dead' else 'retry' end,available_at=now()+make_interval(secs=>least(3600,power(2,least(attempts,10))::int)),locked_until=null,last_error=left($2,1000),updated_at=now() where id=$1 and status='processing'`,id,err.Error())
+		delaySeconds:=mediaRetryDelaySeconds(attempts)
+		tag,updateErr:=s.db.Exec(ctx,`update media_outbox set status=case when attempts>=12 then 'dead' else 'retry' end,available_at=now()+make_interval(secs=>$3),locked_until=null,last_error=left($2,1000),updated_at=now() where id=$1 and status='processing'`,id,err.Error(),delaySeconds)
 		if updateErr!=nil{return updateErr};if tag.RowsAffected()==0{return nil}
 		if op=="replicate"||op=="verify" {
 			_,_=s.db.Exec(ctx,`update media_objects set status='replication_failed',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('replication_pending','uploaded')`,owner,ns,key)

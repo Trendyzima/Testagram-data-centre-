@@ -259,3 +259,36 @@ func TestIdentityEvidenceBucketProbeWritesReadsAndDeletes(t *testing.T) {
  if len(objects) != 0 { t.Fatalf("readiness probe left objects behind: %#v", objects) }
  if strings.Join(methods, ",") != "PUT,GET,DELETE" { t.Fatalf("probe methods=%v", methods) }
 }
+
+
+func TestMediaRetryDelaySecondsUsesBoundedExponentialJitter(t *testing.T) {
+	tests := []struct {
+		name string
+		attempt int
+		min int
+		max int
+	}{
+		{name: "first attempt", attempt: 1, min: 4, max: 6},
+		{name: "second attempt", attempt: 2, min: 8, max: 12},
+		{name: "third attempt", attempt: 3, min: 16, max: 24},
+		{name: "high attempt is capped", attempt: 20, min: 2880, max: 3600},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			seen := map[int]bool{}
+			for i := 0; i < 200; i++ {
+				got := mediaRetryDelaySeconds(tc.attempt)
+				if got < tc.min || got > tc.max {
+					t.Fatalf("retry delay %d outside [%d,%d]", got, tc.min, tc.max)
+				}
+				seen[got] = true
+			}
+			if len(seen) < 2 {
+				t.Fatal("retry delay did not apply jitter across repeated samples")
+			}
+		})
+	}
+	if got := mediaRetryDelaySeconds(0); got < 4 || got > 6 {
+		t.Fatalf("invalid attempt should normalize to first retry window, got %d", got)
+	}
+}
