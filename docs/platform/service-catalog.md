@@ -8,7 +8,7 @@ This catalogue separates the Testagram-owned service boundary from implementatio
 
 | Capability | Service / implementation | API boundary | Health / readiness | Durable state | Status |
 |---|---|---|---|---|---|
-| Legacy identity/auth compatibility | Appwrite-compatible auth service retained by the legacy Fresh Backend VPS stack | /auth/v1/* | Legacy-only; not the native Flutter/Backend auth path | Existing Appwrite data and signing keys | Migration/decommission gated; not canonical Testagram identity |
+| Native identity and authentication | Testagram Backend native authentication and PostgreSQL session store | /api/auth/*, /api/identity/* | Native account/session health and controlled identity readiness | Backend-owned PostgreSQL identities, password hashes, email verification and sessions | Sole user/staff identity authority; external-provider fallback is not supported |
 | Data API | REST gateway over PostgreSQL | /rest/v1/* | gateway probe plus database probe | PostgreSQL | Upstream-compatible |
 | Realtime | Realtime service | /realtime/v1/* | release-specific endpoint smoke test | PostgreSQL is system of record; pub/sub is not | Upstream-compatible |
 | Object/media API | Storage API plus Testagram media service | /storage/v1/*, /v1/videos*, /v1/channels*, /v1/feed | storage status; media /healthz and /readyz | Originals and ownership metadata | Mixed upstream/Testagram |
