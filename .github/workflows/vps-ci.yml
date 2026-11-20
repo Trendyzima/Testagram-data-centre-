@@ -192,6 +192,11 @@ jobs:
           docker run --rm --network "$network" -e PGPASSWORD=ci-legacy-owner-password postgres:17-alpine \
             psql -h federation-db -U federation_legacy_migration -d testagram_federation_legacy -v ON_ERROR_STOP=1 \
             -c "CREATE TABLE public.local_actors(id text PRIMARY KEY, actor_uri text NOT NULL); INSERT INTO public.local_actors VALUES ('ci-actor','https://testagram.site/users/ci')" >/dev/null
+          # The Backend administrator also owns objects outside the Federation
+          # schema (including shared/system objects). The provisioner must not
+          # use REASSIGN OWNED against that role to move one public table.
+          docker exec testagram-media-migrate-db psql -U postgres -d testagram_federation_legacy -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE public.backend_admin_owned_probe(id integer PRIMARY KEY)" >/dev/null
           docker run --rm --network "$network" \
             -e DATABASE_URL="postgresql://postgres:testagram@db:5432/postgres?sslmode=disable" \
             -e FEDERATION_DATABASE_NAME=testagram_federation_legacy \
@@ -202,10 +207,13 @@ jobs:
           legacy_owner="$(docker run --rm --network "$network" -e PGPASSWORD=ci-federation-legacy-db-password postgres:17-alpine \
             psql -h federation-db -U testagram_federation_legacy_ci -d testagram_federation_legacy -Atqc "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.local_actors'::regclass")"
           [[ "$legacy_owner" == "testagram_federation_legacy_ci" ]] || { echo "::error::Legacy local_actors ownership was not transferred: $legacy_owner"; exit 1; }
+          admin_owned_table_owner="$(docker run --rm --network "$network" -e PGPASSWORD=ci-federation-legacy-db-password postgres:17-alpine \
+            psql -h federation-db -U testagram_federation_legacy_ci -d testagram_federation_legacy -Atqc "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.backend_admin_owned_probe'::regclass")"
+          [[ "$admin_owned_table_owner" == "testagram_federation_legacy_ci" ]] || { echo "::error::Backend-admin-owned public table was not transferred: $admin_owned_table_owner"; exit 1; }
           docker run --rm --network "$network" -e PGPASSWORD=ci-federation-legacy-db-password postgres:17-alpine \
             psql -h federation-db -U testagram_federation_legacy_ci -d testagram_federation_legacy -v ON_ERROR_STOP=1 \
-            -c "ALTER TABLE public.local_actors ADD COLUMN schema_repair_verified boolean NOT NULL DEFAULT true" >/dev/null
-          echo "Legacy local_actors ownership repair and Federation runtime ALTER TABLE permission: PASS."
+            -c "ALTER TABLE public.local_actors ADD COLUMN schema_repair_verified boolean NOT NULL DEFAULT true; ALTER TABLE public.backend_admin_owned_probe ADD COLUMN schema_repair_verified boolean NOT NULL DEFAULT true" >/dev/null
+          echo "Legacy and Backend-admin-owned public object transfer plus Federation runtime ALTER TABLE permission: PASS."
       - name: Validate canonical Backend platform boundary
         run: |
           set -euo pipefail
