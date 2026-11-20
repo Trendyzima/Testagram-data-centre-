@@ -60,7 +60,7 @@ starting this overlay, including the native identity/session schema and
 platform schema. The video API and worker share the host media directory through the
 configured storage root. Back up that directory and PostgreSQL together.
 
-There is no Supabase/PostgREST dependency, Redis/Valkey cache or Upstash queue.
+There is no external PostgREST dependency, Redis/Valkey cache or Upstash queue.
 
 
 ## Optional B2/R2 media lifecycle profile
