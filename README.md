@@ -57,11 +57,13 @@ docker compose --env-file backend/.env -f backend/docker-compose.yml up -d --bui
 docker compose --env-file backend/.env -f backend/docker-compose.yml ps
 ```
 
-- `vps/docker-compose.fresh.yml` remains a separate Appwrite/Neon/B2/R2
-  preview and is not the portable deployment path. Use the Backend base stack
+- `vps/docker-compose.yml` is the supported VPS deployment path. It uses
+  the canonical Testagram Backend image and Testagram-native PostgreSQL
+  identity/session authority; no Appwrite or external identity-provider
+  runtime is part of the supported deployment. Use the Backend base stack
   plus this repository's `backend/docker-compose.yml` overlay for the
-  PostgreSQL/MinIO deployment. End-to-end Compose, Appwrite and media restore
-  tests remain release gates.
+  PostgreSQL/MinIO deployment. End-to-end Compose, native-auth and media
+  restore tests remain release gates.
 
 ## Federation service credentials
 
@@ -83,9 +85,10 @@ disabled until both directions are verified in staging.
 
 The VPS backup scripts currently cover the Data Centre infrastructure database
 and optional node-storage archive. They do not by themselves back up the
-Backend product database, all media objects, Federation state or Appwrite
-configuration. A full restore drill must include those systems before
-production recovery is declared ready.
+Backend product database, all media objects or Federation state. A full restore
+drill must include those systems before production recovery is declared ready.
+No external identity-provider configuration is required by the native-auth
+deployment or restore path.
 
 ## Forensic end-to-end gate
 
