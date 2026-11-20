@@ -29,8 +29,8 @@ in `TESTAGRAM_BACKEND_IMAGE`; do not use the retired Fresh API image.
 
 The canonical API requires `DATABASE_URL`, `TESTAGRAM_AUTH_JWT_SECRET`
 (at least 32 bytes), and explicit `ALLOWED_ORIGINS`. Native authentication
-is implemented by the canonical Backend; no separate Fresh API, Appwrite
-project/database/server key, or provider-specific Fresh API environment is
+is implemented by the canonical Backend; no separate Fresh API or external
+identity-provider endpoint, database, server key or fallback environment is
 part of this runtime.
 
 ## TV health monitor contract
