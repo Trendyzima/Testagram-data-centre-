@@ -69,7 +69,7 @@ FROM (
   FROM pg_namespace
   WHERE nspname = 'public'
 ) owners
-WHERE owners.owner_name <> :'federation_user'
+WHERE owners.owner_name NOT IN (:'federation_user', 'pg_database_owner')
 \gexec
 ALTER SCHEMA public OWNER TO :"federation_user";
 SET ROLE :"federation_user";
