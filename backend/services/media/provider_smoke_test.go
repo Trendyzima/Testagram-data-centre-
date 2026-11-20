@@ -20,7 +20,7 @@ import (
 // ci-smoke objects and deletes them after verifying each provider independently.
 func TestLiveProviderRoundTrip(t *testing.T) {
 	if os.Getenv("TESTAGRAM_LIVE_MEDIA_SMOKE") != "true" {
-		t.Skip("set TESTAGRAM_LIVE_MEDIA_SMOKE=true only in the manual provider-smoke workflow")
+		t.Skip("set TESTAGRAM_LIVE_MEDIA_SMOKE=true only for an operator-approved isolated non-production provider run")
 	}
 	readStore := func(prefix, name string) s3Store {
 		store := s3Store{
@@ -141,7 +141,7 @@ func TestLiveProviderRoundTrip(t *testing.T) {
 // B2 -> R2 replication, R2 -> B2 primary restoration, and durable two-origin deletion.
 func TestLiveMediaReplicationRestoreDelete(t *testing.T) {
 	if os.Getenv("TESTAGRAM_LIVE_MEDIA_SMOKE") != "true" {
-		t.Skip("set TESTAGRAM_LIVE_MEDIA_SMOKE=true only in the manual provider-smoke workflow")
+		t.Skip("set TESTAGRAM_LIVE_MEDIA_SMOKE=true only for an operator-approved isolated non-production provider run")
 	}
 	databaseURL := strings.TrimSpace(os.Getenv("MEDIA_DATABASE_URL"))
 	token := strings.TrimSpace(os.Getenv("MEDIA_INTERNAL_TOKEN"))
@@ -298,7 +298,7 @@ func TestLiveMediaReplicationRestoreDelete(t *testing.T) {
 // evidence routes against real staging B2/R2 buckets and an isolated PostgreSQL DB.
 func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if os.Getenv("TESTAGRAM_LIVE_MEDIA_SMOKE") != "true" {
-		t.Skip("set TESTAGRAM_LIVE_MEDIA_SMOKE=true only in the manual provider-smoke workflow")
+		t.Skip("set TESTAGRAM_LIVE_MEDIA_SMOKE=true only for an operator-approved isolated non-production provider run")
 	}
 	databaseURL := strings.TrimSpace(os.Getenv("MEDIA_DATABASE_URL"))
 	mediaToken := strings.TrimSpace(os.Getenv("MEDIA_INTERNAL_TOKEN"))
