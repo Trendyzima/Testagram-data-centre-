@@ -36,6 +36,7 @@ SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCRE
 SELECT format('CREATE DATABASE %I OWNER %I', :'federation_db', :'federation_user')
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'federation_db') \gexec
 SELECT format('ALTER DATABASE %I OWNER TO %I', :'federation_db', :'federation_user') \gexec
+\\connect :federation_db
 -- Transfer only Federation public-schema relations. REASSIGN OWNED is deliberately
 -- avoided: it also touches shared objects and objects in other databases owned
 -- by the old role, and can fail on system-required objects (as it did when the
@@ -60,7 +61,7 @@ WHERE owners.owner_name NOT IN (:'federation_user', 'pg_database_owner')
 
 SELECT format('GRANT %I TO %I', owner_name, current_user)
 FROM federation_old_owner_memberships
-\\gexec
+\gexec
 
 CREATE TEMP TABLE federation_runtime_membership_grant(granted BOOLEAN NOT NULL)
   ON COMMIT PRESERVE ROWS;
@@ -68,7 +69,7 @@ INSERT INTO federation_runtime_membership_grant(granted)
 SELECT NOT pg_has_role(current_user, :'federation_user', 'MEMBER');
 SELECT format('GRANT %I TO %I', :'federation_user', current_user)
 WHERE (SELECT granted FROM federation_runtime_membership_grant)
-\\gexec
+\gexec
 
 -- Change only objects in public; never reassign shared/system objects or
 -- objects owned by the Backend administrator in another database.
@@ -95,7 +96,7 @@ ORDER BY CASE c.relkind
   WHEN 'r' THEN 1 WHEN 'p' THEN 1 WHEN 'f' THEN 1
   WHEN 'S' THEN 2 WHEN 'v' THEN 3 WHEN 'm' THEN 4
 END, c.relname
-\\gexec
+\gexec
 ALTER SCHEMA public OWNER TO :"federation_user";
 SET ROLE :"federation_user";
 DO $verify$
@@ -105,7 +106,7 @@ BEGIN
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public'
-      AND c.relkind IN ('r','p','S','v','m')
+      AND c.relkind IN ('r','p','f','S','v','m')
       AND pg_get_userbyid(c.relowner) <> current_user
   ) THEN
     RAISE EXCEPTION 'Federation schema contains objects not owned by the Federation runtime role';
@@ -121,10 +122,10 @@ $verify$;
 RESET ROLE;
 SELECT format('REVOKE %I FROM %I', owner_name, current_user)
 FROM federation_old_owner_memberships
-\\gexec
+\gexec
 SELECT format('REVOKE %I FROM %I', :'federation_user', current_user)
 WHERE (SELECT granted FROM federation_runtime_membership_grant)
-\\gexec
+\gexec
 DROP TABLE federation_old_owner_memberships;
 DROP TABLE federation_runtime_membership_grant;
 SQL
