@@ -36,7 +36,7 @@ SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCRE
 SELECT format('CREATE DATABASE %I OWNER %I', :'federation_db', :'federation_user')
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'federation_db') \gexec
 SELECT format('ALTER DATABASE %I OWNER TO %I', :'federation_db', :'federation_user') \gexec
-\\connect :federation_db
+\connect :federation_db
 -- Transfer only Federation public-schema relations. REASSIGN OWNED is deliberately
 -- avoided: it also touches shared objects and objects in other databases owned
 -- by the old role, and can fail on system-required objects (as it did when the
