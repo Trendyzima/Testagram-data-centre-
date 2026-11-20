@@ -10,7 +10,7 @@ Testagram's durable media path has two independently credentialed S3-compatible 
 - Cloudflare DNS, Pages and edge routing remain separate from media durability. A Cloudflare Worker is not the canonical media API or the source of truth for object bytes.
 - Local MinIO is a development/legacy self-hosted object service. It is not counted as a third durable copy in this B2/R2 contract.
 
-The public application and authorization boundary remains the canonical Testagram Go Backend. The Backend verifies native Testagram credentials and live session state; Backend-owned PostgreSQL remains authoritative for local accounts, credentials metadata, posts, visibility, permissions, quotas and product-level media associations. Appwrite-compatible legacy identity data is migration-only and must never authenticate native Testagram user or staff requests. The Data Centre media service is a private provider adapter and lifecycle worker: its dedicated `MEDIA_DATABASE_URL` stores upload grants, provider verification state, operations and replication outbox records. That operational ledger does not replace Backend product data or grant access to a post.
+The public application and authorization boundary remains the canonical Testagram Go Backend. The Backend verifies native Testagram credentials and live session state; Backend-owned PostgreSQL remains authoritative for local accounts, credentials metadata, posts, visibility, permissions, quotas and product-level media associations. Historical external-provider identity records are restricted migration evidence only; they never authenticate native Testagram user or staff requests. The Data Centre media service is a private provider adapter and lifecycle worker: its dedicated `MEDIA_DATABASE_URL` stores upload grants, provider verification state, operations and replication outbox records. That operational ledger does not replace Backend product data or grant access to a post.
 
 ## Ownership and provider roles
 
@@ -62,7 +62,7 @@ The currently inspected backup scripts are not a complete recovery path for this
 
 - Data Centre `vps/backup.sh` creates database-only archives for its configured Data Centre/Neon databases. It does not export the Data Centre media ledger or B2/R2 object bytes.
 - Backend self-hosted `backup/backup.sh` archives Backend PostgreSQL and the legacy local MinIO buckets. It does not prove recovery of the B2/R2 media service ledger or B2/R2 objects.
-- Any retained legacy Appwrite identity documents/configuration are outside those database/object archives; they are migration evidence only, not native Testagram authentication authority.
+- Historical external-provider identity records are retained only in restricted PostgreSQL migration archives. No external identity-provider documents, configuration or signing keys are required by the native deployment or restore path.
 - The existing database restore drill therefore cannot be described as a complete Testagram media disaster-recovery drill.
 
 Before production media sign-off, add an independently encrypted off-host backup for the media operational ledger and canonical object bytes, verify per-object SHA-256 and counts, and restore them into an isolated environment. Define RPO/RTO, retention, encryption-key escrow and recovery ownership. Do not silently treat R2 replication as a backup policy.
