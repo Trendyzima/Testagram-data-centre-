@@ -78,7 +78,7 @@ The private Data Centre media service requires:
 
 The Backend deployment script can enable this service with `DATA_CENTRE_MEDIA_ENABLED=true`; it synchronizes the Backend `FRESH_MEDIA_ENABLED` gate and validates the required provider configuration before starting the media profile. Keep that gate false until isolated live-provider acceptance tests and the full authorization/upload/playback flow pass.
 
-The dedicated provider smoke workflow is guarded by an explicit `confirm_live_provider_writes=true` input and dedicated staging buckets. It performs real PUT, GET, HEAD, checksum and DELETE operations. Unit tests and successful container publication do not replace this live proof. Do not run the provider smoke test against production buckets.
+The repository currently has opt-in Go live-provider tests (`TESTAGRAM_LIVE_MEDIA_SMOKE=true`), but the GitHub live-provider workflow is intentionally absent. No live B2/R2 write is triggered by ordinary CI. These tests require an operator-controlled run against dedicated non-production buckets and an isolated media database; they perform real PUT, GET, HEAD, checksum, replication, restore and DELETE operations. Unit tests and successful container publication do not replace this live proof. Do not run the provider tests against production buckets. Reintroduce an automated workflow only after its staging-only guard, explicit confirmation, redacted evidence artifact and cleanup behavior have been independently reviewed.
 
 ## Release gates — not yet satisfied
 
