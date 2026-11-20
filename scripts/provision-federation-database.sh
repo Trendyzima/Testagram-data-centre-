@@ -87,6 +87,20 @@ JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public'
   AND c.relkind IN ('r','p','S','v','m')
   AND pg_get_userbyid(c.relowner) <> :'federation_user'
+  -- ALTER TABLE OWNER transfers serial/identity sequences with their table.
+  -- Skip those here so a non-superuser provisioner does not try to re-own an
+  -- already-transferred sequence after it has lost ownership of the table.
+  AND (
+    c.relkind <> 'S'
+    OR NOT EXISTS (
+      SELECT 1
+      FROM pg_depend d
+      WHERE d.classid='pg_class'::regclass
+        AND d.objid=c.oid
+        AND d.refclassid='pg_class'::regclass
+        AND d.deptype IN ('a','i')
+    )
+  )
 ORDER BY CASE c.relkind
   WHEN 'r' THEN 1 WHEN 'p' THEN 1
   WHEN 'S' THEN 2 WHEN 'v' THEN 3 WHEN 'm' THEN 4
