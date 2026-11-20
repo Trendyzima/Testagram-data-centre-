@@ -67,7 +67,6 @@ SELECT format('GRANT %I TO %I', owner_name, current_user)
 FROM federation_old_owner_memberships
 \gexec
 
-ALTER SCHEMA public OWNER TO :"federation_user";
 -- Change only objects in public; never reassign shared/system objects or
 -- objects owned by the Backend administrator in another database.
 SELECT format(
@@ -93,6 +92,7 @@ ORDER BY CASE c.relkind
   WHEN 'S' THEN 2 WHEN 'v' THEN 3 WHEN 'm' THEN 4
 END, c.relname
 \gexec
+ALTER SCHEMA public OWNER TO :"federation_user";
 SET ROLE :"federation_user";
 DO $verify$
 BEGIN
