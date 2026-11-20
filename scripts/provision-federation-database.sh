@@ -53,7 +53,7 @@ FROM (
   SELECT pg_get_userbyid(c.relowner) AS owner_name
   FROM pg_class c
   JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = 'public' AND c.relkind IN ('r','p','S','v','m','f')
+  WHERE n.nspname = 'public' AND c.relkind IN ('r','p','S','v','m')
   UNION
   SELECT pg_get_userbyid(nspowner)
   FROM pg_namespace
@@ -67,6 +67,7 @@ SELECT format('GRANT %I TO %I', owner_name, current_user)
 FROM federation_old_owner_memberships
 \gexec
 
+ALTER SCHEMA public OWNER TO :"federation_user";
 -- Change only objects in public; never reassign shared/system objects or
 -- objects owned by the Backend administrator in another database.
 SELECT format(
@@ -74,7 +75,6 @@ SELECT format(
   CASE c.relkind
     WHEN 'r' THEN 'TABLE'
     WHEN 'p' THEN 'TABLE'
-    WHEN 'f' THEN 'FOREIGN TABLE'
     WHEN 'S' THEN 'SEQUENCE'
     WHEN 'v' THEN 'VIEW'
     WHEN 'm' THEN 'MATERIALIZED VIEW'
@@ -86,14 +86,13 @@ SELECT format(
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public'
-  AND c.relkind IN ('r','p','f','S','v','m')
+  AND c.relkind IN ('r','p','S','v','m')
   AND pg_get_userbyid(c.relowner) <> :'federation_user'
 ORDER BY CASE c.relkind
-  WHEN 'r' THEN 1 WHEN 'p' THEN 1 WHEN 'f' THEN 1
+  WHEN 'r' THEN 1 WHEN 'p' THEN 1
   WHEN 'S' THEN 2 WHEN 'v' THEN 3 WHEN 'm' THEN 4
 END, c.relname
 \gexec
-ALTER SCHEMA public OWNER TO :"federation_user";
 SET ROLE :"federation_user";
 DO $verify$
 BEGIN
@@ -102,7 +101,7 @@ BEGIN
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public'
-      AND c.relkind IN ('r','p','f','S','v','m')
+      AND c.relkind IN ('r','p','S','v','m')
       AND pg_get_userbyid(c.relowner) <> current_user
   ) THEN
     RAISE EXCEPTION 'Federation schema contains objects not owned by the Federation runtime role';
