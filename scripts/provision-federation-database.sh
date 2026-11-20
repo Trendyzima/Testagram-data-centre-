@@ -33,6 +33,10 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', :'federation_user', :'federation_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'federation_user') \gexec
 SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', :'federation_user', :'federation_password') \gexec
+SELECT NOT pg_has_role(current_user, :'federation_user', 'MEMBER') AS federation_membership_granted \gset
+\if :federation_membership_granted
+  SELECT format('GRANT %I TO %I', :'federation_user', current_user) \gexec
+\endif
 SELECT format('CREATE DATABASE %I OWNER %I', :'federation_db', :'federation_user')
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'federation_db') \gexec
 SELECT format('ALTER DATABASE %I OWNER TO %I', :'federation_db', :'federation_user') \gexec
@@ -61,14 +65,6 @@ WHERE owners.owner_name NOT IN (:'federation_user', 'pg_database_owner')
 
 SELECT format('GRANT %I TO %I', owner_name, current_user)
 FROM federation_old_owner_memberships
-\gexec
-
-CREATE TEMP TABLE federation_runtime_membership_grant(granted BOOLEAN NOT NULL)
-  ON COMMIT PRESERVE ROWS;
-INSERT INTO federation_runtime_membership_grant(granted)
-SELECT NOT pg_has_role(current_user, :'federation_user', 'MEMBER');
-SELECT format('GRANT %I TO %I', :'federation_user', current_user)
-WHERE (SELECT granted FROM federation_runtime_membership_grant)
 \gexec
 
 -- Change only objects in public; never reassign shared/system objects or
@@ -123,9 +119,8 @@ RESET ROLE;
 SELECT format('REVOKE %I FROM %I', owner_name, current_user)
 FROM federation_old_owner_memberships
 \gexec
-SELECT format('REVOKE %I FROM %I', :'federation_user', current_user)
-WHERE (SELECT granted FROM federation_runtime_membership_grant)
-\gexec
+\if :federation_membership_granted
+  SELECT format('REVOKE %I FROM %I', :'federation_user', current_user) \gexec
+\endif
 DROP TABLE federation_old_owner_memberships;
-DROP TABLE federation_runtime_membership_grant;
 SQL
