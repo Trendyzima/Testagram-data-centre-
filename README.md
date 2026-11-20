@@ -59,8 +59,8 @@ docker compose --env-file backend/.env -f backend/docker-compose.yml ps
 
 - `vps/docker-compose.yml` is the supported VPS deployment path. It uses
   the canonical Testagram Backend image and Testagram-native PostgreSQL
-  identity/session authority; no Appwrite or external identity-provider
-  runtime is part of the supported deployment. Use the Backend base stack
+  identity/session authority; no external identity-provider runtime or
+  authentication fallback is part of the supported deployment. Use the Backend base stack
   plus this repository's `backend/docker-compose.yml` overlay for the
   PostgreSQL/MinIO deployment. End-to-end Compose, native-auth and media
   restore tests remain release gates.
