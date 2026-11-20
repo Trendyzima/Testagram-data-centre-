@@ -49,9 +49,9 @@ Caddy edge network so Caddy can route `/v1/feed`, `/v1/videos/*` and
 `/v1/channels*` over the existing HTTPS API origin. Video playback and its
 likes/comments use the same origin and Testagram-native session as the Flutter
 client. Browser HLS playback remains a separate web-player capability; native
-mobile playback uses the dedicated video service. Only services that need outbound provider API access join the controlled
- egress network; authentication is validated locally with the Backend's
- native signing secret.
+mobile playback uses the dedicated video service. Only services that need
+outbound provider API access join the controlled egress network;
+authentication is validated locally with the Backend's native signing secret.
 
 ## Shared database and storage
 
