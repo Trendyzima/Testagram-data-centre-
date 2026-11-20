@@ -35,9 +35,10 @@ service-owned PostgreSQL outboxes and idempotent workers.
 
 ## Deployment status
 
-- `backend/docker-compose.yml` is the Data Centre production overlay. It deploys
+- `backend/docker-compose.yml` is the Data Centre Compose overlay. It defines
   the Algorithm ranker, private Federation API, platform API, video API/worker,
-  notification API and maintenance worker on the stable private networks.
+  notification API and maintenance worker on the stable private networks. A
+  Compose definition is not evidence that these services are deployed or healthy.
   Algorithm and Federation stay private; public federation routing and delivery
   workers remain disabled until their end-to-end production gates pass.
 - Start the Backend repository's self-hosted Compose stack first. It owns local
@@ -101,9 +102,46 @@ every hop.
 - [Self-sustaining operations and recovery plan](docs/platform/self-sustaining-operations.md)
 - [Internal platform OpenAPI contract](docs/platform/openapi/internal-platform.yaml)
 - [Hosting control-plane OpenAPI contract](docs/platform/openapi/hosting-control-plane.yaml)
-- [Media storage architecture](docs/platform/media-storage-architecture.md)\n- Instabox VPS + Cloudflare R2 + Backblaze B2 target: three verified media copies; Testagram CDN owns public delivery.
+- [Media storage architecture](docs/platform/media-storage-architecture.md)
+- Media-byte durability target: Backblaze B2 primary plus Cloudflare R2 replica,
+  each verified by independent read-back and SHA-256. Instabox MinIO stores
+  metadata sidecars; it is not a third media-byte replica. Testagram CDN owns
+  public delivery and cache policy.
 - [Fresh deployment preview](vps/FRESH-DEPLOYMENT.md)
 
+
+
+## Media lifecycle evidence and acceptance
+
+The media service is deliberately opt-in under the Compose `media` profile and
+Backend feature flags remain fail-closed by default. Its configured storage
+roles are:
+
+- Backblaze B2: primary media-byte origin.
+- Cloudflare R2: independently verified media-byte replica and primary-restore
+  source.
+- Instabox-hosted MinIO: metadata-sidecar origin only; not a third media-byte
+  copy.
+- Cloudflare R2 metadata bucket: metadata-sidecar replica.
+
+The code includes durable PostgreSQL media objects/outbox state, provider
+read-back verification, reconciliation, restore and two-origin deletion
+coverage. Unit/CI tests and an isolated PostgreSQL restore drill do not prove
+that external B2/R2 buckets, a deployed Data Centre service, or a physical
+storage node have passed a live acceptance run.
+
+Before enabling the media profile or changing production flags, capture one
+staging run tied to exact Backend and Data Centre image digests. The evidence
+must include: authenticated upload grant; object upload; independent B2 and R2
+read-back with matching byte count and SHA-256; durable replication state;
+controlled primary-loss simulation; verified R2-to-B2 restoration; authenticated
+delete; confirmed absence from both origins; metadata-sidecar cleanup; and
+redacted correlation IDs. Never publish credentials, signed URLs, private
+object keys, or user evidence in the artifact.
+
+The repository CI's isolated restore drill uses disposable local PostgreSQL
+fixtures. It validates the restore tooling and fixture lifecycle only; it is not
+a restore of production data or an external object-provider replication test.
 
 ## Seven-repository Testagram integration
 
