@@ -33,43 +33,78 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', :'federation_user', :'federation_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'federation_user') \gexec
 SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', :'federation_user', :'federation_password') \gexec
+SELECT NOT pg_has_role(current_user, :'federation_user', 'MEMBER') AS federation_membership_granted \gset
+\if :federation_membership_granted
+  SELECT format('GRANT %I TO %I', :'federation_user', current_user) \gexec
+\endif
 SELECT format('CREATE DATABASE %I OWNER %I', :'federation_db', :'federation_user')
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'federation_db') \gexec
 SELECT format('ALTER DATABASE %I OWNER TO %I', :'federation_db', :'federation_user') \gexec
--- Existing Federation tables may belong to a separate Backend migration role.
--- Database ownership does not transfer ownership of objects already inside it.
--- Discover every owner in public, grant the provisioning administrator temporary
--- membership (required by PostgreSQL REASSIGN OWNED), then transfer only within
--- this isolated Federation database. The runtime role remains non-superuser.
 \connect :federation_db
-SELECT format('GRANT %I TO %I', owners.owner_name, current_user)
+-- Transfer only Federation public-schema relations. REASSIGN OWNED is deliberately
+-- avoided: it also touches shared objects and objects in other databases owned
+-- by the old role, and can fail on system-required objects (as it did when the
+-- Backend administrator owned the existing Federation tables).
+CREATE TEMP TABLE federation_old_owner_memberships(owner_name name PRIMARY KEY)
+  ON COMMIT PRESERVE ROWS;
+INSERT INTO federation_old_owner_memberships(owner_name)
+SELECT DISTINCT owners.owner_name::name
 FROM (
-  SELECT DISTINCT pg_get_userbyid(c.relowner) AS owner_name
+  SELECT pg_get_userbyid(c.relowner) AS owner_name
   FROM pg_class c
   JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = 'public'
+  WHERE n.nspname = 'public' AND c.relkind IN ('r','p','S','v','m')
   UNION
   SELECT pg_get_userbyid(nspowner)
   FROM pg_namespace
   WHERE nspname = 'public'
 ) owners
 WHERE owners.owner_name NOT IN (:'federation_user', 'pg_database_owner')
-  AND NOT pg_has_role(current_user, owners.owner_name, 'MEMBER')
+  AND owners.owner_name <> current_user
+  AND NOT pg_has_role(current_user, owners.owner_name, 'MEMBER');
+
+SELECT format('GRANT %I TO %I', owner_name, current_user)
+FROM federation_old_owner_memberships
 \gexec
--- REASSIGN OWNED requires membership in both the old and new roles. The
--- provisioning administrator is already a member of the Federation role.
-SELECT format('REASSIGN OWNED BY %I TO %I', owners.owner_name, :'federation_user')
-FROM (
-  SELECT DISTINCT pg_get_userbyid(c.relowner) AS owner_name
-  FROM pg_class c
-  JOIN pg_namespace n ON n.oid = c.relnamespace
-  WHERE n.nspname = 'public'
-  UNION
-  SELECT pg_get_userbyid(nspowner)
-  FROM pg_namespace
-  WHERE nspname = 'public'
-) owners
-WHERE owners.owner_name NOT IN (:'federation_user', 'pg_database_owner')
+
+-- Change only objects in public; never reassign shared/system objects or
+-- objects owned by the Backend administrator in another database.
+SELECT format(
+  'ALTER %s %I.%I OWNER TO %I',
+  CASE c.relkind
+    WHEN 'r' THEN 'TABLE'
+    WHEN 'p' THEN 'TABLE'
+    WHEN 'S' THEN 'SEQUENCE'
+    WHEN 'v' THEN 'VIEW'
+    WHEN 'm' THEN 'MATERIALIZED VIEW'
+  END,
+  n.nspname,
+  c.relname,
+  :'federation_user'
+)
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public'
+  AND c.relkind IN ('r','p','S','v','m')
+  AND pg_get_userbyid(c.relowner) <> :'federation_user'
+  -- ALTER TABLE OWNER transfers serial/identity sequences with their table.
+  -- Skip those here so a non-superuser provisioner does not try to re-own an
+  -- already-transferred sequence after it has lost ownership of the table.
+  AND (
+    c.relkind <> 'S'
+    OR NOT EXISTS (
+      SELECT 1
+      FROM pg_depend d
+      WHERE d.classid='pg_class'::regclass
+        AND d.objid=c.oid
+        AND d.refclassid='pg_class'::regclass
+        AND d.deptype IN ('a','i')
+    )
+  )
+ORDER BY CASE c.relkind
+  WHEN 'r' THEN 1 WHEN 'p' THEN 1
+  WHEN 'S' THEN 2 WHEN 'v' THEN 3 WHEN 'm' THEN 4
+END, c.relname
 \gexec
 ALTER SCHEMA public OWNER TO :"federation_user";
 SET ROLE :"federation_user";
@@ -93,4 +128,12 @@ BEGIN
   END IF;
 END;
 $verify$;
+RESET ROLE;
+SELECT format('REVOKE %I FROM %I', owner_name, current_user)
+FROM federation_old_owner_memberships
+\gexec
+\if :federation_membership_granted
+  SELECT format('REVOKE %I FROM %I', :'federation_user', current_user) \gexec
+\endif
+DROP TABLE federation_old_owner_memberships;
 SQL
