@@ -37,8 +37,8 @@ SELECT format('CREATE DATABASE %I OWNER %I', :'federation_db', :'federation_user
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'federation_db') \gexec
 SELECT format('ALTER DATABASE %I OWNER TO %I', :'federation_db', :'federation_user') \gexec
 -- The provisioning connection is the existing database administrator. Grant
--- it temporary membership so it can transfer pre-existing objects without
--- granting superuser or database-admin rights to the Federation runtime role.
+-- it membership so it can transfer pre-existing objects without granting
+-- superuser or database-admin rights to the Federation runtime role.
 SELECT format('GRANT %I TO %I', :'federation_user', current_user)
 WHERE NOT pg_has_role(current_user, :'federation_user', 'MEMBER') \gexec
 \connect :federation_db
@@ -71,6 +71,7 @@ JOIN pg_namespace n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public' AND c.relkind = 'm'
   AND pg_get_userbyid(c.relowner) <> :'federation_user'
 \gexec
+SET ROLE :"federation_user";
 DO $verify$
 BEGIN
   IF EXISTS (
@@ -81,7 +82,7 @@ BEGIN
       AND c.relkind IN ('r','p','S','v','m')
       AND pg_get_userbyid(c.relowner) <> current_user
   ) THEN
-    RAISE EXCEPTION 'Federation schema contains objects not owned by the provisioning role';
+    RAISE EXCEPTION 'Federation schema contains objects not owned by the Federation runtime role';
   END IF;
 END;
 $verify$;
