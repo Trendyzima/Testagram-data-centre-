@@ -53,7 +53,7 @@ FROM (
   FROM pg_namespace
   WHERE nspname = 'public'
 ) owners
-WHERE owners.owner_name <> :'federation_user'
+WHERE owners.owner_name NOT IN (:'federation_user', 'pg_database_owner')
   AND NOT pg_has_role(current_user, owners.owner_name, 'MEMBER')
 \gexec
 -- REASSIGN OWNED requires membership in both the old and new roles. The
