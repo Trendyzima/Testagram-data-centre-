@@ -52,5 +52,5 @@ The Data Centre overlay deploys Algorithm and Federation on the shared private p
 
 - User-aware video and notification routes validate the Testagram-native Backend access JWT using the shared `TESTAGRAM_AUTH_JWT_SECRET`, then call the native session resolver to recheck the live PostgreSQL session, token version, account state, verified email and provisioning state.
 - The Data Centre platform API is a different trust boundary. Its protected routes accept only `PLATFORM_INTERNAL_TOKEN`; they do not accept a user access JWT, refresh token or external-provider bearer token.
-- The supported VPS Compose deployment selects the canonical Testagram Backend image built from `cmd/api`. It does not include a separate Fresh Backend image, Appwrite endpoint, provider database or server key. Testagram-native PostgreSQL sessions are the only supported user-authentication path.
+- The supported VPS Compose deployment selects the canonical Testagram Backend image built from `cmd/api`. It does not include a separate Fresh Backend image, external identity-provider endpoint, provider database or server key. Testagram-native PostgreSQL sessions are the only supported user-authentication path.
 - No legacy `/auth/v1/*` service is supported. Flutter's supported source path is Backend `/api/auth/*` and the applicant-scoped `/api/identity/*` flow.
