@@ -10,13 +10,13 @@ Testagram's durable media path has two independently credentialed S3-compatible 
 - Cloudflare DNS, Pages and edge routing remain separate from media durability. A Cloudflare Worker is not the canonical media API or the source of truth for object bytes.
 - Local MinIO is a development/legacy self-hosted object service. It is not counted as a third durable copy in this B2/R2 contract.
 
-The public application and authorization boundary remains the canonical Go Backend. Appwrite verifies identity sessions; Backend-owned PostgreSQL remains authoritative for local accounts, posts, visibility, permissions, quotas and product-level media associations. The Data Centre media service is a private provider adapter and lifecycle worker: its dedicated `MEDIA_DATABASE_URL` stores upload grants, provider verification state, operations and replication outbox records. That operational ledger does not replace Backend product data or grant access to a post.
+The public application and authorization boundary remains the canonical Testagram Go Backend. The Backend verifies native Testagram credentials and live session state; Backend-owned PostgreSQL remains authoritative for local accounts, credentials metadata, posts, visibility, permissions, quotas and product-level media associations. Appwrite-compatible legacy identity data is migration-only and must never authenticate native Testagram user or staff requests. The Data Centre media service is a private provider adapter and lifecycle worker: its dedicated `MEDIA_DATABASE_URL` stores upload grants, provider verification state, operations and replication outbox records. That operational ledger does not replace Backend product data or grant access to a post.
 
 ## Ownership and provider roles
 
 | Role | Owner / provider | Responsibility |
 |---|---|---|
-| Identity verification | Appwrite, called by Backend | Verify user session; no product-post or media authorization |
+| Identity and session verification | Testagram Backend native authentication | Verify native credentials and live session state; no external identity-provider JWT is accepted as a native bearer token |
 | Product authority | Go Backend + Backend-owned PostgreSQL | Canonical users, posts, permissions, visibility, quotas and media-to-post association |
 | Primary durable bytes | Backblaze B2 | Authoritative upload origin and first verified object copy |
 | Durable replica | Cloudflare R2 | Independently verified copy; used for recovery if B2 is missing or corrupt |
@@ -31,7 +31,7 @@ The current media service configures one bucket per provider using `B2_S3_BUCKET
 ## Upload and replication lifecycle
 
 1. Flutter requests an upload reservation from the canonical Go Backend.
-2. Backend verifies the Appwrite session, resolves the canonical local account, authorizes the intended owner/visibility, enforces quotas and records the product-level media intent in Backend-owned PostgreSQL.
+2. Backend verifies the native Testagram access token and live session state, resolves the canonical local account, authorizes the intended owner/visibility, enforces quotas and records the product-level media intent in Backend-owned PostgreSQL.
 3. Backend calls the private Data Centre media API with a service credential. The Data Centre service creates a bounded upload grant in its operational ledger and returns a short-lived B2 upload URL. The client never receives a provider access key.
 4. Flutter uploads bytes directly to B2 using that object-scoped URL.
 5. Backend asks the Data Centre media service to verify the upload. The service reads the actual B2 object, checks content type and byte length, computes SHA-256, and persists the verification state.
@@ -62,7 +62,7 @@ The currently inspected backup scripts are not a complete recovery path for this
 
 - Data Centre `vps/backup.sh` creates database-only archives for its configured Data Centre/Neon databases. It does not export the Data Centre media ledger or B2/R2 object bytes.
 - Backend self-hosted `backup/backup.sh` archives Backend PostgreSQL and the legacy local MinIO buckets. It does not prove recovery of the B2/R2 media service ledger or B2/R2 objects.
-- Appwrite identity documents/configuration are outside those database/object archives.
+- Any retained legacy Appwrite identity documents/configuration are outside those database/object archives; they are migration evidence only, not native Testagram authentication authority.
 - The existing database restore drill therefore cannot be described as a complete Testagram media disaster-recovery drill.
 
 Before production media sign-off, add an independently encrypted off-host backup for the media operational ledger and canonical object bytes, verify per-object SHA-256 and counts, and restore them into an isolated environment. Define RPO/RTO, retention, encryption-key escrow and recovery ownership. Do not silently treat R2 replication as a backup policy.
@@ -78,7 +78,7 @@ The private Data Centre media service requires:
 
 The Backend deployment script can enable this service with `DATA_CENTRE_MEDIA_ENABLED=true`; it synchronizes the Backend `FRESH_MEDIA_ENABLED` gate and validates the required provider configuration before starting the media profile. Keep that gate false until isolated live-provider acceptance tests and the full authorization/upload/playback flow pass.
 
-The dedicated provider smoke workflow is guarded by an explicit `confirm_live_provider_writes=true` input and dedicated staging buckets. It performs real PUT, GET, HEAD, checksum and DELETE operations. Unit tests and successful container publication do not replace this live proof. Do not run the provider smoke test against production buckets.
+The repository currently has opt-in Go live-provider tests (`TESTAGRAM_LIVE_MEDIA_SMOKE=true`), but the GitHub live-provider workflow is intentionally absent. No live B2/R2 write is triggered by ordinary CI. These tests require an operator-controlled run against dedicated non-production buckets and an isolated media database; they perform real PUT, GET, HEAD, checksum, replication, restore and DELETE operations. Unit tests and successful container publication do not replace this live proof. Do not run the provider tests against production buckets. Reintroduce an automated workflow only after its staging-only guard, explicit confirmation, redacted evidence artifact and cleanup behavior have been independently reviewed.
 
 ## Release gates — not yet satisfied
 
