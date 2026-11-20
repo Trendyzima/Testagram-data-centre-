@@ -197,6 +197,7 @@ jobs:
           bash -n vps/install.sh
           bash -n scripts/install-local-docker.sh
           sh -n scripts/migrate-data-centre.sh
+          sh -n scripts/provision-federation-database.sh
           bash -n android-node/install-apk.sh
           test -f vps/docker-compose.yml
           test -f backend/docker-compose.yml
