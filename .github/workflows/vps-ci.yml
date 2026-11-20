@@ -184,6 +184,28 @@ jobs:
             exit 1
           fi
           echo "Federation protocol state uses a dedicated non-superuser database owner, isolated from Backend product tables."
+          # Reproduce the production failure: a pre-existing local_actors table
+          # owned by the old Backend migration role must be transferred before
+          # the Federation runtime's ALTER TABLE schema initialization.
+          docker exec testagram-media-migrate-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE federation_legacy_migration LOGIN PASSWORD 'ci-legacy-owner-password'" >/dev/null
+          docker exec testagram-media-migrate-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE testagram_federation_legacy OWNER federation_legacy_migration" >/dev/null
+          docker run --rm --network "$network" -e PGPASSWORD=ci-legacy-owner-password postgres:17-alpine \
+            psql -h federation-db -U federation_legacy_migration -d testagram_federation_legacy -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE public.local_actors(id text PRIMARY KEY, actor_uri text NOT NULL); INSERT INTO public.local_actors VALUES ('ci-actor','https://testagram.site/users/ci')" >/dev/null
+          docker run --rm --network "$network" \
+            -e DATABASE_URL="postgresql://postgres:testagram@db:5432/postgres?sslmode=disable" \
+            -e FEDERATION_DATABASE_NAME=testagram_federation_legacy \
+            -e FEDERATION_DATABASE_USER=testagram_federation_legacy_ci \
+            -e FEDERATION_DATABASE_PASSWORD=ci-federation-legacy-db-password \
+            -v "$PWD/scripts/provision-federation-database.sh:/scripts/provision-federation-database.sh:ro" \
+            postgres:17-alpine /bin/sh /scripts/provision-federation-database.sh
+          legacy_owner="$(docker run --rm --network "$network" -e PGPASSWORD=ci-federation-legacy-db-password postgres:17-alpine \
+            psql -h federation-db -U testagram_federation_legacy_ci -d testagram_federation_legacy -Atqc "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.local_actors'::regclass")"
+          [[ "$legacy_owner" == "testagram_federation_legacy_ci" ]] || { echo "::error::Legacy local_actors ownership was not transferred: $legacy_owner"; exit 1; }
+          docker run --rm --network "$network" -e PGPASSWORD=ci-federation-legacy-db-password postgres:17-alpine \
+            psql -h federation-db -U testagram_federation_legacy_ci -d testagram_federation_legacy -v ON_ERROR_STOP=1 \
+            -c "ALTER TABLE public.local_actors ADD COLUMN schema_repair_verified boolean NOT NULL DEFAULT true" >/dev/null
+          echo "Legacy local_actors ownership repair and Federation runtime ALTER TABLE permission: PASS."
       - name: Validate canonical Backend platform boundary
         run: |
           set -euo pipefail
