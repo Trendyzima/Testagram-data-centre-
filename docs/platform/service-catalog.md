@@ -8,10 +8,10 @@ This catalogue separates the Testagram-owned service boundary from implementatio
 
 | Capability | Service / implementation | API boundary | Health / readiness | Durable state | Status |
 |---|---|---|---|---|---|
-| Legacy identity/auth compatibility | Appwrite-compatible auth service retained by the legacy Fresh Backend VPS stack | /auth/v1/* | Legacy-only; not the native Flutter/Backend auth path | Existing Appwrite data and signing keys | Migration/decommission gated; not canonical Testagram identity |
-| Data API | REST gateway over PostgreSQL | /rest/v1/* | gateway probe plus database probe | PostgreSQL | Upstream-compatible |
-| Realtime | Realtime service | /realtime/v1/* | release-specific endpoint smoke test | PostgreSQL is system of record; pub/sub is not | Upstream-compatible |
-| Object/media API | Storage API plus Testagram media service | /storage/v1/*, /v1/videos*, /v1/channels*, /v1/feed | storage status; media /healthz and /readyz | Originals and ownership metadata | Mixed upstream/Testagram |
+| Native identity and authentication | Testagram Backend native authentication and PostgreSQL session store | /api/auth/*, /api/identity/* | Native account/session health and controlled identity readiness | Backend-owned PostgreSQL identities, password hashes, email verification and sessions | Sole user/staff identity authority; external-provider fallback is not supported |
+| Canonical product API | Testagram Backend `cmd/api` | `/api/*` | Backend private readiness and public liveness probes | Backend-owned PostgreSQL identities, sessions and product records | Sole public user/auth API; no external API gateway |
+| Realtime edge transport | Testagram realtime Worker using Cloudflare Durable Objects | `/v1/realtime/*` | Not deployed or publicly routed until Backend ticket issuance and signed event publishing pass | Durable Objects are transient; PostgreSQL remains the source of truth | Planned transport only; not an identity provider or message database |
+| Media authorization and storage | Backend authorization plus Testagram Data Centre media service | Backend-defined media routes and private media lifecycle API | media /healthz and /readyz | Originals, object metadata and replica ledger | Testagram-owned service; physical providers remain private adapters |
 | Rate limiting | Backend-native PostgreSQL fixed-window counters | `testagram_auth.rate_limits` | PostgreSQL readiness | PostgreSQL rows with bounded expiry cleanup | Implemented in Backend; no external cache service |
 | Durable asynchronous work | Owning service's PostgreSQL transactional outbox and idempotent worker | Domain-specific outbox/lease contracts | Owning service readiness and oldest-pending metrics | PostgreSQL outbox rows are authoritative | No generic queue API |
 | Feature configuration | Testagram platform API backed by PostgreSQL | /v1/config/set, public /v1/config/{key} | /readyz | Versioned PostgreSQL rows | Implemented |

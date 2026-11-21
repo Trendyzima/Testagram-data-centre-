@@ -51,6 +51,6 @@ The Data Centre overlay deploys Algorithm and Federation on the shared private p
 ## Native user authentication boundary
 
 - User-aware video and notification routes validate the Testagram-native Backend access JWT using the shared `TESTAGRAM_AUTH_JWT_SECRET`, then call the native session resolver to recheck the live PostgreSQL session, token version, account state, verified email and provisioning state.
-- The Data Centre platform API is a different trust boundary. Its protected routes accept only `PLATFORM_INTERNAL_TOKEN`; they do not accept a user access JWT, refresh token or legacy Appwrite JWT.
-- The current Backend mainline issues native user sessions. The legacy Fresh Backend image in `vps/docker-compose.yml` still requires `APPWRITE_ENDPOINT`, project/database IDs and a server API key. Treat that image as a separate legacy runtime, not as the native auth authority. Do not remove its environment or stop it until deployed traffic, account reconciliation, rollback and production cutover have been verified and separately approved.
-- Do not route Flutter directly to the legacy `/auth/v1/*` service. Flutter's supported source path is Backend `/api/auth/*` and the applicant-scoped `/api/identity/*` flow.
+- The Data Centre platform API is a different trust boundary. Its protected routes accept only `PLATFORM_INTERNAL_TOKEN`; they do not accept a user access JWT, refresh token or external-provider bearer token.
+- The supported VPS Compose deployment selects the canonical Testagram Backend image built from `cmd/api`. It does not include a separate Fresh Backend image, external identity-provider endpoint, provider database or server key. Testagram-native PostgreSQL sessions are the only supported user-authentication path.
+- No legacy `/auth/v1/*` service is supported. Flutter's supported source path is Backend `/api/auth/*` and the applicant-scoped `/api/identity/*` flow.

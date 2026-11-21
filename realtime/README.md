@@ -1,6 +1,6 @@
 # Testagram realtime edge (Cloudflare Durable Objects)
 
-This Worker is a transport layer only. Appwrite remains the identity provider; Backend remains the authorization and canonical data authority; Neon stores durable conversations and messages. Durable Objects coordinate live WebSocket sessions and fan-out, not canonical message history.
+This Worker is a transport layer only. Testagram Backend native authentication and PostgreSQL session state establish user identity; Backend remains the authorization and canonical data authority; the configured PostgreSQL conversation store holds durable conversations and messages. Durable Objects coordinate live WebSocket sessions and fan-out, not canonical message history.
 
 ## Security contract
 
@@ -20,7 +20,7 @@ Configure these as Cloudflare Worker secrets, never in wrangler.toml:
 - REALTIME_TICKET_SECRET: same random 32+ character secret used by Backend ticket issuance.
 - REALTIME_PUBLISH_SECRET: separate random 32+ character secret used by Backend event signing.
 
-Set REALTIME_ALLOWED_ORIGINS to the exact production XClone origins. The committed values are development placeholders and must be reviewed before deployment.
+Set REALTIME_ALLOWED_ORIGINS to the exact approved Testagram web origins. The committed values are development placeholders and must be reviewed before deployment.
 
 ## Deployment status
 
@@ -32,7 +32,7 @@ This Worker is not deployed or routed publicly by this branch. It requires Backe
 The same Durable Object service also provides a short-lived, Backend-authorized signaling room for one-to-one calls:
 
 - GET /v1/realtime/rooms/{call_id} upgrades to WebSocket only when the ticket subprotocol is present.
-- Backend issues the media:signal ticket only after verifying an active call participant in Neon. Tickets are short-lived, bound to the call ID and authenticated Appwrite identity, and are never accepted from a browser-supplied user ID.
+- Backend issues the media:signal ticket only after validating the Testagram-native access session and verifying an active call participant in PostgreSQL. Tickets are short-lived, bound to the call ID and canonical Testagram user UUID, and are never accepted from a browser-supplied user ID.
 - The room accepts only bounded offer, answer, and ICE candidate frames. The Worker stamps the sender identity from the verified ticket and relays to other sockets in the same room.
 - The Worker rejects oversized, malformed, unsupported, cross-scope and unauthenticated frames. It never persists SDP, ICE candidates, chat plaintext, or application records.
 - Call creation is currently constrained by Backend to exactly two active conversation members because this transport is peer-to-peer, not an SFU. Group audio Spaces still require a dedicated multi-party media transport; this signaling room must not be used as a substitute for an SFU.

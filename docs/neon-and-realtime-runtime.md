@@ -9,12 +9,12 @@ Use separate Neon databases/roles for Backend product data and Federation protoc
 ## Realtime transport
 
 The realtime Worker under realtime/ uses Cloudflare Durable Objects to coordinate WebSocket sessions and per-conversation fan-out. It is transport-only:
-- Backend issues short-lived HMAC-signed conversation tickets after authenticating the Appwrite user and checking conversation membership.
+- Backend issues short-lived HMAC-signed conversation tickets only after validating the Testagram-native access session against PostgreSQL and checking conversation membership.
 - The Worker verifies ticket issuer, audience, scope, signature, expiry and conversation binding.
 - Browser WebSockets are receive-only except ping/pong. Writes must go through Backend.
 - Backend commits the message to Neon first, then publishes a signed event to the Worker.
 - Durable Objects do not become the source of truth for message history.
-- XClone never receives database, Durable Object binding or publish secrets.
+- No external client or unrelated service receives database, Durable Object binding or publish secrets.
 
 The Worker is deliberately not deployed or publicly routed by this branch. Backend ticket issuance, message authorization/write APIs, signed event publisher, Cloudflare secrets/bindings, abuse controls, monitoring and end-to-end tests are required before enabling it.
 

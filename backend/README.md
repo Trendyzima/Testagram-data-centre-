@@ -9,10 +9,12 @@ not a standalone database or public edge stack.
    That stack creates PostgreSQL and the shared networks `testagram-platform`,
    `testagram-egress` and `testagram-self-hosted_edge`.
 2. Copy `.env.example` to `.env`. Set `DATABASE_URL` to the same PostgreSQL
-   user/password/database as the Backend stack. Keep `TESTAGRAM_AUTH_PROVIDER`
-   aligned with Backend. In native mode, provide the exact same
-   `TESTAGRAM_AUTH_JWT_SECRET`; Appwrite endpoint/project are required only in
-   Appwrite mode. Set `TESTAGRAM_EDGE_NETWORK` to the Backend Caddy edge network.
+   user/password/database as the Backend stack. Provide the exact same
+   `TESTAGRAM_AUTH_JWT_SECRET` used by the canonical Backend. The services
+   validate Testagram-native access tokens locally against the fixed issuer,
+   audience and live PostgreSQL session; no external identity-provider
+   configuration or fallback is supported. Set `TESTAGRAM_EDGE_NETWORK` to
+   the Backend Caddy edge network.
 3. Generate independent random values for `PLATFORM_INTERNAL_TOKEN`,
    `NOTIFICATION_INTERNAL_TOKEN` and `VIDEO_SIGNING_SECRET`.
 4. Ensure the persistent media root exists on the host.
@@ -28,11 +30,11 @@ docker compose --env-file backend/.env -f backend/docker-compose.yml ps
 
 - `platform`: PostgreSQL-backed feature configuration, event telemetry and
   audit API. It is private and uses `PLATFORM_INTERNAL_TOKEN`.
-- `video`: provider-explicit Appwrite or Testagram-native session validation,
-  canonical identity resolution, upload quotas and signed HLS playback.
+- `video`: Testagram-native session validation, canonical identity resolution,
+  upload quotas and signed HLS playback.
 - `video-worker`: PostgreSQL-backed FFmpeg processing and HLS publication.
-- `notification`: Appwrite JWT validation, device registration and delivery
-  state.
+- `notification`: Testagram-native session validation, device registration
+  and delivery state.
 - `worker`: Data Centre background tasks.
 
 The Backend Caddy edge remains the only public ingress. The overlay does not
@@ -47,17 +49,18 @@ Caddy edge network so Caddy can route `/v1/feed`, `/v1/videos/*` and
 `/v1/channels*` over the existing HTTPS API origin. Video playback and its
 likes/comments use the same origin and Testagram-native session as the Flutter
 client. Browser HLS playback remains a separate web-player capability; native
-mobile playback uses the dedicated video service. Only services that need to
-call Appwrite join the controlled egress network.
+mobile playback uses the dedicated video service. Only services that need
+outbound provider API access join the controlled egress network;
+authentication is validated locally with the Backend's native signing secret.
 
 ## Shared database and storage
 
 The Backend's PostgreSQL database is canonical. Apply Backend migrations before
-starting this overlay, including the Appwrite identity bridge and platform
-schema. The video API and worker share the host media directory through the
+starting this overlay, including the native identity/session schema and
+platform schema. The video API and worker share the host media directory through the
 configured storage root. Back up that directory and PostgreSQL together.
 
-There is no Supabase/PostgREST dependency, Redis/Valkey cache or Upstash queue.
+There is no external PostgREST dependency, Redis/Valkey cache or Upstash queue.
 
 
 ## Optional B2/R2 media lifecycle profile
