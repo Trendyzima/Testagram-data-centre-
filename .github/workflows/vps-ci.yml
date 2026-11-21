@@ -238,6 +238,7 @@ jobs:
           grep -q "TESTAGRAM_RETENTION_ENABLED=false" vps/fresh.env.example
           grep -q "TESTAGRAM_RETENTION_DRY_RUN=true" vps/fresh.env.example
           grep -q 'reverse_proxy api:8080' vps/fresh/Caddyfile
+          ! grep -Eqi 'TESTAGRAM_FRESH_BACKEND_IMAGE|FRESH_API_ALLOWED_ORIGINS' vps/docker-compose.yml vps/fresh.env.example vps/.env.example vps/install.sh vps/DEPLOYMENT.md
           grep -q 'TESTAGRAM_BACKEND_IMAGE' vps/docker-compose.yml
           grep -q 'INTERNAL_LISTEN_ADDR: :8082' vps/docker-compose.yml
           grep -Fq 'psql "$MEDIA_DATABASE_URL"' vps/docker-compose.yml
