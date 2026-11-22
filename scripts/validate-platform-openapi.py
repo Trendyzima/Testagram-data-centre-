@@ -67,6 +67,10 @@ for path, expected_title, required in contracts:
         assert "identity-evidence-private" in str(doc), f"{path}: isolated evidence namespace missing"
 
 media_source = Path("backend/services/media/main.go").read_text(encoding="utf-8")
+# gofmt runs earlier in this workflow and inserts spaces around Go call
+# arguments. Compare normalized source so this contract check is formatting
+# independent while still requiring the exact route-to-handler registration.
+normalized_media_source = "".join(media_source.split())
 identity_handlers = {
     "/internal/v1/identity-evidence/readyz": "s.identityReady",
     "/internal/v1/identity-evidence/upload-url": "s.uploadURL",
@@ -76,7 +80,8 @@ identity_handlers = {
     "/internal/v1/identity-evidence/delete": "s.delete",
 }
 for route, handler in identity_handlers.items():
-    if f'mux.HandleFunc("{route}",{handler})' not in media_source:
+    expected_registration = f'mux.HandleFunc("{route}",{handler})'
+    if expected_registration not in normalized_media_source:
         raise AssertionError(f"identity-evidence OpenAPI route is not registered by its provider: {route}")
 identity_tests = Path("backend/services/media/main_test.go").read_text(encoding="utf-8")
 for test in (
