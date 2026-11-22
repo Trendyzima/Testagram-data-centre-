@@ -499,6 +499,13 @@ jobs:
           grep -q '401 Unauthorized' <<<"$health_response"
           if docker exec testagram-api wget -q -O - http://127.0.0.1:8080/readyz >/dev/null 2>&1; then echo 'public Backend listener exposed readiness'; exit 1; fi
           docker compose -f backend/docker-compose.yml pull algorithm federation-api
+          # Docker bind mounts hide image-layer ownership. Mirror the VPS
+          # media-volume provisioning so the non-root worker is tested with
+          # the same writable UID/GID (65532) it receives in production.
+          export TESTAGRAM_STORAGE_ROOT="${RUNNER_TEMP:-/tmp}/testagram-video-worker-storage"
+          mkdir -p "$TESTAGRAM_STORAGE_ROOT/media"
+          sudo chown -R 65532:65532 "$TESTAGRAM_STORAGE_ROOT/media"
+          sudo chmod 0770 "$TESTAGRAM_STORAGE_ROOT/media"
           docker compose -f backend/docker-compose.yml up -d platform video video-worker notification worker algorithm federation-api
           video_worker_id="$(docker compose -f backend/docker-compose.yml ps -q video-worker)"
           test -n "$video_worker_id" || { echo "::error::Video worker container was not created"; exit 1; }
