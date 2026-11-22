@@ -1,0 +1,265 @@
+openapi: 3.1.0
+info:
+  title: Testagram Data Centre Identity Evidence API
+  version: "1.0.0"
+  description: |
+    Private Backend-to-Data-Centre API for identity evidence only. The Backend
+    owns identity review, application ownership and authorization. This service
+    stores and verifies evidence bytes using a dedicated credential, namespace,
+    primary and replica buckets. It is not a public client API.
+description: |
+  Every operation requires the dedicated identity-evidence service bearer and
+  X-Testagram-API-Version: 1. The identity-evidence bearer must never be reused
+  as the general media bearer or a user access token.
+security:
+  - IdentityEvidenceBearer: []
+    ApiVersion: []
+paths:
+  /internal/v1/identity-evidence/readyz:
+    get:
+      operationId: getIdentityEvidenceReadiness
+      summary: Verify identity-evidence database and primary/replica storage
+      responses:
+        '200':
+          description: Database and both isolated evidence stores passed write/read/delete probes.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status, namespace, primary, replica]
+                properties:
+                  status: { type: string, const: ready }
+                  namespace: { type: string, const: identity-evidence-private }
+                  primary: { type: string, const: verified }
+                  replica: { type: string, const: verified }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /internal/v1/identity-evidence/upload-url:
+    post:
+      operationId: createIdentityEvidenceUploadURL
+      summary: Create a short-lived upload grant for one application-owned evidence object
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdentityEvidenceUploadRequest' }
+      responses:
+        '201':
+          description: Upload grant created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadGrant' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: Conflicting or duplicate active upload intent. }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /internal/v1/identity-evidence/verify:
+    post:
+      operationId: verifyIdentityEvidenceObject
+      summary: Verify evidence bytes and queue independent replica protection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdentityEvidenceVerifyRequest' }
+      responses:
+        '202':
+          description: Verification is durably queued; evidence remains unavailable until both copies pass verification.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Verification' }
+        '200':
+          description: Evidence already meets the configured protection policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Verification' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: No active upload grant or matching evidence lifecycle exists. }
+        '409': { description: Upload grant was consumed or lifecycle conflicts with this verification request. }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /internal/v1/identity-evidence/status:
+    get:
+      operationId: getIdentityEvidenceStatus
+      summary: Read authoritative evidence object and replica state
+      parameters:
+        - in: query
+          name: owner_id
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+        - in: query
+          name: namespace
+          required: true
+          schema: { type: string, const: identity-evidence-private }
+        - in: query
+          name: key
+          required: true
+          schema: { $ref: '#/components/schemas/IdentityEvidenceObjectKey' }
+      responses:
+        '200':
+          description: Current evidence lifecycle state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MediaStatus' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Evidence object not found. }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /internal/v1/identity-evidence/download-url:
+    post:
+      operationId: createIdentityEvidenceDownloadURL
+      summary: Create a short-lived evidence download URL after Backend authorization
+      description: Data Centre validates evidence ownership namespace and protection state; the Backend remains responsible for staff identity, review permissions and application authorization.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdentityEvidenceDownloadRequest' }
+      responses:
+        '200':
+          description: Short-lived provider download URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadGrant' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Evidence object unavailable or not protected. }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /internal/v1/identity-evidence/delete:
+    post:
+      operationId: deleteIdentityEvidenceObject
+      summary: Enqueue idempotent evidence deletion and isolated replica cleanup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IdentityEvidenceDeleteRequest' }
+      responses:
+        '200':
+          description: Evidence object was already deleted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeleteResult' }
+        '202':
+          description: Evidence deletion durably queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeleteResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+components:
+  securitySchemes:
+    IdentityEvidenceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque dedicated service token
+      description: Distinct from the general Data Centre media token and from every end-user JWT.
+    ApiVersion:
+      type: apiKey
+      in: header
+      name: X-Testagram-API-Version
+  schemas:
+    IdentityEvidenceObjectKey:
+      type: string
+      maxLength: 1024
+      pattern: '^identity/[A-Za-z0-9._-]{1,128}/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\.(jpg|png|webp|pdf)-[A-Za-z0-9_-]{32,128}$'
+    IdentityEvidenceUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [owner_id, namespace, key, content_type, size_bytes]
+      properties:
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, const: identity-evidence-private }
+        key: { $ref: '#/components/schemas/IdentityEvidenceObjectKey' }
+        content_type: { type: string, enum: [image/jpeg, image/png, image/webp, application/pdf] }
+        size_bytes: { type: integer, format: int64, minimum: 1, maximum: 15728640 }
+    IdentityEvidenceVerifyRequest:
+      allOf:
+        - $ref: '#/components/schemas/IdentityEvidenceUploadRequest'
+        - type: object
+          required: [sha256]
+          properties:
+            sha256: { type: string, pattern: '^[a-fA-F0-9]{64}$' }
+    IdentityEvidenceDownloadRequest:
+      type: object
+      additionalProperties: false
+      required: [requester_id, owner_id, namespace, key]
+      properties:
+        requester_id: { type: string, minLength: 1, maxLength: 128 }
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, const: identity-evidence-private }
+        key: { $ref: '#/components/schemas/IdentityEvidenceObjectKey' }
+        method: { type: string, enum: [GET, HEAD], default: GET }
+    IdentityEvidenceDeleteRequest:
+      type: object
+      additionalProperties: false
+      required: [requester_id, owner_id, namespace, key]
+      properties:
+        requester_id: { type: string, minLength: 1, maxLength: 128 }
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, const: identity-evidence-private }
+        key: { $ref: '#/components/schemas/IdentityEvidenceObjectKey' }
+    UploadGrant:
+      type: object
+      additionalProperties: false
+      required: [intent_id, upload_url, expires_at, max_bytes, primary]
+      properties:
+        intent_id: { type: string }
+        upload_url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
+        max_bytes: { type: integer, format: int64, minimum: 1, maximum: 15728640 }
+        primary: { type: string, const: backblaze_b2 }
+    Verification:
+      type: object
+      additionalProperties: false
+      required: [status, sha256]
+      properties:
+        status: { type: string, enum: [replication_pending, protected] }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    MediaStatus:
+      type: object
+      additionalProperties: false
+      required: [status, content_type, size_bytes, sha256]
+      properties:
+        status: { type: string, enum: [upload_pending, uploaded, replication_pending, protected, replication_failed, restore_pending, delete_pending, deleted] }
+        content_type: { type: string }
+        size_bytes: { type: integer, format: int64, minimum: 0, maximum: 15728640 }
+        sha256: { type: string }
+        primary_verified_at: { type: [string, 'null'], format: date-time }
+        replica_verified_at: { type: [string, 'null'], format: date-time }
+    DownloadGrant:
+      type: object
+      additionalProperties: false
+      required: [url, provider]
+      properties:
+        url: { type: string, format: uri }
+        provider: { type: string, enum: [cloudflare_r2, backblaze_b2] }
+    DeleteResult:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [deleted, delete_pending] }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        request_id: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid identity evidence request.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing, invalid or wrong-direction identity-evidence service credential.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unavailable:
+      description: Identity-evidence database or storage provider unavailable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
