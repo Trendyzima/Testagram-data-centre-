@@ -20,6 +20,14 @@ type job struct {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--healthcheck" {
+		if err := healthcheck(context.Background(), os.Getenv("DATABASE_URL"), env("VIDEO_MEDIA_ROOT", "/media")); err != nil {
+			log.Printf("video worker readiness: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	db, err := pgxpool.New(context.Background(), mustEnv("DATABASE_URL"))
 	if err != nil {
 		log.Fatal(err)
@@ -97,6 +105,47 @@ func runOne(ctx context.Context, db *pgxpool.Pool, root string) error {
 	}
 	_, err = db.Exec(ctx, `update testagram_video.videos v set status='ready',processing_error=null,updated_at=now() where v.id=$1 and exists (select 1 from testagram_video.video_jobs t where t.video_id=v.id and t.kind='transcode' and t.status='done') and exists (select 1 from testagram_video.video_jobs p where p.video_id=v.id and p.kind='poster' and p.status='done')`, j.VideoID)
 	return err
+}
+
+func healthcheck(parent context.Context, databaseURL, root string) error {
+	if databaseURL == "" {
+		return fmt.Errorf("DATABASE_URL is required")
+	}
+	ctx, cancel := context.WithTimeout(parent, 4*time.Second)
+	defer cancel()
+
+	db, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		return fmt.Errorf("database configuration: %w", err)
+	}
+	defer db.Close()
+	if err := db.Ping(ctx); err != nil {
+		return fmt.Errorf("database readiness: %w", err)
+	}
+	return checkMediaRoot(root)
+}
+
+func checkMediaRoot(root string) error {
+	info, err := os.Stat(root)
+	if err != nil {
+		return fmt.Errorf("media root: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("media root %q is not a directory", root)
+	}
+	probe, err := os.CreateTemp(root, ".testagram-video-worker-healthcheck-*")
+	if err != nil {
+		return fmt.Errorf("media root is not writable: %w", err)
+	}
+	name := probe.Name()
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(name)
+		return fmt.Errorf("close media root healthcheck probe: %w", err)
+	}
+	if err := os.Remove(name); err != nil {
+		return fmt.Errorf("remove media root healthcheck probe: %w", err)
+	}
+	return nil
 }
 
 func transcode(root, id, source string) error {
