@@ -349,3 +349,167 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+ }
+    IdentityEvidenceDownloadRequest:
+      type: object
+      additionalProperties: false
+      required: [requester_id, owner_id, namespace, key]
+      properties:
+        requester_id: { type: string, minLength: 1, maxLength: 128 }
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, const: identity-evidence-private }
+        key: { $ref: '#/components/schemas/IdentityEvidenceObjectKey' }
+        method: { type: string, enum: [GET, HEAD], default: GET }
+    IdentityEvidenceDeleteRequest:
+      type: object
+      additionalProperties: false
+      required: [requester_id, owner_id, namespace, key]
+      properties:
+        requester_id: { type: string, minLength: 1, maxLength: 128 }
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, const: identity-evidence-private }
+        key: { $ref: '#/components/schemas/IdentityEvidenceObjectKey' }
+    UploadGrant:
+      type: object
+      additionalProperties: false
+      required: [intent_id, upload_url, expires_at, max_bytes, primary]
+      properties:
+        intent_id: { type: string }
+        upload_url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
+        max_bytes: { type: integer, format: int64, minimum: 1, maximum: 15728640 }
+        primary: { type: string, const: backblaze_b2 }
+    Verification:
+      type: object
+      additionalProperties: false
+      required: [status, sha256]
+      properties:
+        status: { type: string, enum: [replication_pending, protected] }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    MediaStatus:
+      type: object
+      additionalProperties: false
+      required: [status, content_type, size_bytes, sha256]
+      properties:
+        status: { type: string, enum: [upload_pending, uploaded, replication_pending, protected, replication_failed, restore_pending, delete_pending, deleted] }
+        content_type: { type: string }
+        size_bytes: { type: integer, format: int64, minimum: 0, maximum: 15728640 }
+        sha256: { type: string }
+        primary_verified_at: { type: [string, 'null'], format: date-time }
+        replica_verified_at: { type: [string, 'null'], format: date-time }
+    DownloadGrant:
+      type: object
+      additionalProperties: false
+      required: [url, provider]
+      properties:
+        url: { type: string, format: uri }
+        provider: { type: string, enum: [cloudflare_r2, backblaze_b2] }
+    DeleteResult:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [deleted, delete_pending] }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        request_id: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid identity evidence request.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing, invalid or wrong-direction identity-evidence service credential.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unavailable:
+      description: Identity-evidence database or storage provider unavailable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+ }
+    IdentityEvidenceDownloadRequest:
+      type: object
+      additionalProperties: false
+      required: [requester_id, owner_id, namespace, key]
+      properties:
+        requester_id: { type: string, minLength: 1, maxLength: 128 }
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, const: identity-evidence-private }
+        key: { $ref: '#/components/schemas/IdentityEvidenceObjectKey' }
+        method: { type: string, enum: [GET, HEAD], default: GET }
+    IdentityEvidenceDeleteRequest:
+      type: object
+      additionalProperties: false
+      required: [requester_id, owner_id, namespace, key]
+      properties:
+        requester_id: { type: string, minLength: 1, maxLength: 128 }
+        owner_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, const: identity-evidence-private }
+        key: { $ref: '#/components/schemas/IdentityEvidenceObjectKey' }
+    UploadGrant:
+      type: object
+      additionalProperties: false
+      required: [intent_id, upload_url, expires_at, max_bytes, primary]
+      properties:
+        intent_id: { type: string }
+        upload_url: { type: string, format: uri }
+        expires_at: { type: string, format: date-time }
+        max_bytes: { type: integer, format: int64, minimum: 1, maximum: 15728640 }
+        primary: { type: string, const: backblaze_b2 }
+    Verification:
+      type: object
+      additionalProperties: false
+      required: [status, sha256]
+      properties:
+        status: { type: string, enum: [replication_pending, protected] }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+    MediaStatus:
+      type: object
+      additionalProperties: false
+      required: [status, content_type, size_bytes, sha256]
+      properties:
+        status: { type: string, enum: [upload_pending, uploaded, replication_pending, protected, replication_failed, restore_pending, delete_pending, deleted] }
+        content_type: { type: string }
+        size_bytes: { type: integer, format: int64, minimum: 0, maximum: 15728640 }
+        sha256: { type: string }
+        primary_verified_at: { type: [string, 'null'], format: date-time }
+        replica_verified_at: { type: [string, 'null'], format: date-time }
+    DownloadGrant:
+      type: object
+      additionalProperties: false
+      required: [url, provider]
+      properties:
+        url: { type: string, format: uri }
+        provider: { type: string, enum: [cloudflare_r2, backblaze_b2] }
+    DeleteResult:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [deleted, delete_pending] }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        request_id: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid identity evidence request.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing, invalid or wrong-direction identity-evidence service credential.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unavailable:
+      description: Identity-evidence database or storage provider unavailable.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
