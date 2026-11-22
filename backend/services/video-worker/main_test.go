@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -38,7 +39,7 @@ func TestCheckMediaRootRejectsFile(t *testing.T) {
 }
 
 func TestHealthcheckRequiresDatabaseURL(t *testing.T) {
-	if err := healthcheck(t.Context(), "", t.TempDir()); err == nil {
+	if err := healthcheck(context.Background(), "", t.TempDir()); err == nil {
 		t.Fatal("expected empty DATABASE_URL to fail")
 	}
 }
