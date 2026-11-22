@@ -516,6 +516,26 @@ jobs:
             sleep 2
           done
           [[ "$video_worker_health" == healthy ]] || { docker inspect --format '{{json .State.Health}}' "$video_worker_id" || true; docker compose -f backend/docker-compose.yml logs --no-color video-worker; echo "::error::Video worker did not pass its PostgreSQL and writable-media readiness check"; exit 1; }
+          # Exercise the actual poster + HLS transcode queue, not only readiness.
+          smoke_video_id="$(cat /proc/sys/kernel/random/uuid)"
+          smoke_channel_id="$(cat /proc/sys/kernel/random/uuid)"
+          smoke_owner_id="00000000-0000-4000-8000-000000000001"
+          smoke_source="/media/videos/originals/$smoke_video_id/source.mp4"
+          docker exec video-worker mkdir -p "/media/videos/originals/$smoke_video_id"
+          docker exec video-worker ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=size=640x360:rate=24 -f lavfi -i sine=frequency=1000:sample_rate=44100 -t 6 -c:v mpeg4 -c:a aac -shortest -y "$smoke_source"
+          docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine psql -v ON_ERROR_STOP=1 -h testagram-postgres -U postgres -d testagram -c "INSERT INTO testagram_video.channels(id,owner_id,handle,name) VALUES ('$smoke_channel_id','$smoke_owner_id','ci-video-$smoke_video_id','CI video smoke'); INSERT INTO testagram_video.videos(id,channel_id,owner_id,title,visibility,status,original_object_key,original_size_bytes) VALUES ('$smoke_video_id','$smoke_channel_id','$smoke_owner_id','CI transcode smoke','public','queued','videos/originals/$smoke_video_id/source.mp4',1); INSERT INTO testagram_video.video_jobs(video_id,kind) VALUES ('$smoke_video_id','transcode'),('$smoke_video_id','poster');"
+          smoke_video_status=""
+          for i in $(seq 1 90); do
+            smoke_video_status="$(docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine psql -At -h testagram-postgres -U postgres -d testagram -c "SELECT status FROM testagram_video.videos WHERE id='$smoke_video_id'")"
+            [[ "$smoke_video_status" == ready ]] && break
+            sleep 2
+          done
+          [[ "$smoke_video_status" == ready ]] || { docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine psql -h testagram-postgres -U postgres -d testagram -c "SELECT kind,status,attempts,last_error FROM testagram_video.video_jobs WHERE video_id='$smoke_video_id'"; docker compose -f backend/docker-compose.yml logs --no-color video-worker; echo "::error::Video worker did not finish the poster and HLS transcode jobs"; exit 1; }
+          docker exec video-worker test -s "/media/videos/posters/$smoke_video_id/poster.jpg"
+          docker exec video-worker test -s "/media/videos/hls/$smoke_video_id/master.m3u8"
+          docker exec video-worker sh -c "find '/media/videos/hls/$smoke_video_id' -type f -name '*.ts' -size +0c | grep -q ."
+          docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine psql -v ON_ERROR_STOP=1 -h testagram-postgres -U postgres -d testagram -c "DELETE FROM testagram_video.videos WHERE id='$smoke_video_id'; DELETE FROM testagram_video.channels WHERE id='$smoke_channel_id';"
+          docker exec video-worker rm -rf "/media/videos/originals/$smoke_video_id" "/media/videos/posters/$smoke_video_id" "/media/videos/hls/$smoke_video_id"
           docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine sh -c 'count="$(psql -h testagram-postgres -U postgres -d testagram -Atqc "SELECT count(*) FROM public.testagram_data_centre_schema_migrations")"; test "$count" = "8"'
           docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine sh -c "psql -h testagram-postgres -U postgres -d postgres -Atqc \"SELECT 1 FROM pg_database WHERE datname = 'testagram_federation'\" | grep -qx 1"
           for i in $(seq 1 30); do
