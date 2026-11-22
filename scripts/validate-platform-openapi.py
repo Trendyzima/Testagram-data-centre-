@@ -30,6 +30,18 @@ contracts = [
             "/v1/hosting/recovery/drills",
         },
     ),
+    (
+        Path("docs/platform/openapi/identity-evidence-v1.yaml"),
+        "Testagram Data Centre Identity Evidence API",
+        {
+            "/internal/v1/identity-evidence/readyz",
+            "/internal/v1/identity-evidence/upload-url",
+            "/internal/v1/identity-evidence/verify",
+            "/internal/v1/identity-evidence/status",
+            "/internal/v1/identity-evidence/download-url",
+            "/internal/v1/identity-evidence/delete",
+        },
+    ),
 ]
 
 for path, expected_title, required in contracts:
@@ -47,3 +59,30 @@ for path, expected_title, required in contracts:
             if route.startswith("/v1/") and route not in {"/v1/config/{key}", "/v1/hosting/tls/authorize"}:
                 assert operation.get("security", doc.get("security")), f"{path}: internal route lacks declared auth: {method.upper()} {route}"
     print(f"OpenAPI structure validation passed: {path} ({len(paths)} paths)")
+
+    if path.name == "identity-evidence-v1.yaml":
+        for route, operations in paths.items():
+            assert operations.get("security", doc.get("security")), f"{path}: identity route lacks dedicated service authentication: {route}"
+        assert "IdentityEvidenceBearer" in doc.get("components", {}).get("securitySchemes", {}), f"{path}: dedicated identity evidence bearer scheme missing"
+        assert "identity-evidence-private" in str(doc), f"{path}: isolated evidence namespace missing"
+
+media_source = Path("backend/services/media/main.go").read_text(encoding="utf-8")
+identity_handlers = {
+    "/internal/v1/identity-evidence/readyz": "s.identityReady",
+    "/internal/v1/identity-evidence/upload-url": "s.uploadURL",
+    "/internal/v1/identity-evidence/verify": "s.verify",
+    "/internal/v1/identity-evidence/status": "s.status",
+    "/internal/v1/identity-evidence/download-url": "s.downloadURL",
+    "/internal/v1/identity-evidence/delete": "s.delete",
+}
+for route, handler in identity_handlers.items():
+    if f'mux.HandleFunc("{route}",{handler})' not in media_source:
+        raise AssertionError(f"identity-evidence OpenAPI route is not registered by its provider: {route}")
+identity_tests = Path("backend/services/media/main_test.go").read_text(encoding="utf-8")
+for test in (
+    "TestIdentityEvidenceNamespaceRequiresDedicatedRoute",
+    "TestIdentityEvidenceReadinessRequiresDedicatedCredential",
+    "TestIdentityEvidenceNamespaceIsPrivateAndBoundToApplication",
+):
+    if test not in identity_tests:
+        raise AssertionError(f"identity-evidence security/integrity test missing: {test}")
