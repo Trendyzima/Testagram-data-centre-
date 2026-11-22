@@ -224,6 +224,17 @@ jobs:
           python -m pip install --disable-pip-version-check PyYAML
           python scripts/validate-testagram-runtime-integration.py
           python scripts/validate-platform-openapi.py
+          python3 - <<'PY'
+          from pathlib import Path
+          compose = Path("backend/docker-compose.yml").read_text()
+          worker = compose.split("  video-worker:", 1)[1].split("\n  notification:", 1)[0]
+          assert "healthcheck:" in worker
+          assert '"/usr/local/bin/testagram-video-worker", "--healthcheck"' in worker
+          source = Path("backend/services/video-worker/main.go").read_text()
+          assert 'os.Args[1] == "--healthcheck"' in source
+          assert "db.Ping(ctx)" in source
+          assert "os.CreateTemp(root" in source
+          PY
           bash -n vps/install.sh
           bash -n scripts/install-local-docker.sh
           sh -n scripts/migrate-data-centre.sh
