@@ -276,7 +276,11 @@ func (s *service) ledgerStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cursor.CreatedAt.IsZero() {
-		cursor.CreatedAt = time.Now().UTC()
+		if err := s.db.QueryRow(r.Context(), "SELECT now()").Scan(&cursor.CreatedAt); err != nil {
+			http.Error(w, "notification inbox unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		cursor.CreatedAt = cursor.CreatedAt.UTC()
 		cursor.ID = "00000000-0000-0000-0000-000000000000"
 	}
 	flusher, ok := w.(http.Flusher)
