@@ -114,12 +114,12 @@ func (s *service) devices(w http.ResponseWriter, r *http.Request) {
 	// replaying its ID. Same-owner registration remains idempotent and refreshes
 	// the channel/address; cross-owner conflicts deliberately return no row.
 	var registeredID string
-	err := s.db.QueryRow(r.Context(), `insert into public.testagram_notification_devices
+	err := s.db.QueryRow(r.Context(), `insert into public.testagram_notification_devices as existing
 		(id,user_id,channel,address,enabled,last_seen_at,updated_at)
 		values($1,$2,$3,$4,true,now(),now())
 		on conflict(id) do update set channel=excluded.channel,
 			address=excluded.address,enabled=true,last_seen_at=now(),updated_at=now()
-		where public.testagram_notification_devices.user_id=excluded.user_id
+		where existing.user_id=excluded.user_id
 		returning id`,
 		in.ID, user, channel, in.Address).Scan(&registeredID)
 	if errors.Is(err, pgx.ErrNoRows) {
