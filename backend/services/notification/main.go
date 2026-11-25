@@ -276,7 +276,7 @@ func (s *service) ledgerStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cursor.CreatedAt.IsZero() {
-		if err := s.db.QueryRow(r.Context(), "SELECT now()").Scan(&cursor.CreatedAt); err != nil {
+		if err := s.db.QueryRow(r.Context(), "SELECT now() - interval '30 seconds'").Scan(&cursor.CreatedAt); err != nil {
 			http.Error(w, "notification inbox unavailable", http.StatusServiceUnavailable)
 			return
 		}
