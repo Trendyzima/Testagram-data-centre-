@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
@@ -63,6 +64,7 @@ func main() {
 	mux.HandleFunc("/v1/devices", s.devices)
 	mux.HandleFunc("/v1/notifications", s.notifications)
 	mux.HandleFunc("/v1/stream", s.stream)
+	mux.HandleFunc("/v2/stream", s.ledgerStream)
 
 	addr := env("NOTIFICATION_ADDR", ":8090")
 	srv := &http.Server{
@@ -215,6 +217,140 @@ func (s *service) deliverOne(ctx context.Context, user string, w http.ResponseWr
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+type ledgerNotificationCursor struct {
+	CreatedAt time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+}
+
+type ledgerNotification struct {
+	ID        string         `json:"id"`
+	ActorID   string         `json:"actor_id,omitempty"`
+	PostID    string         `json:"post_id,omitempty"`
+	ReplyID   string         `json:"reply_id,omitempty"`
+	Kind      string         `json:"kind"`
+	Payload   map[string]any `json:"payload"`
+	ReadAt    *time.Time     `json:"read_at,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
+func encodeLedgerCursor(cursor ledgerNotificationCursor) string {
+	raw, _ := json.Marshal(cursor)
+	return base64.RawURLEncoding.EncodeToString(raw)
+}
+
+func decodeLedgerCursor(value string) (ledgerNotificationCursor, error) {
+	var cursor ledgerNotificationCursor
+	if value == "" {
+		return cursor, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(raw) > 512 {
+		return cursor, errors.New("invalid notification cursor")
+	}
+	if err := json.Unmarshal(raw, &cursor); err != nil || cursor.CreatedAt.IsZero() ||
+		len(cursor.ID) != 36 || strings.Count(cursor.ID, "-") != 4 {
+		return ledgerNotificationCursor{}, errors.New("invalid notification cursor")
+	}
+	return cursor, nil
+}
+
+// ledgerStream is the real-time projection of Backend's canonical notification
+// inbox. It never writes a second notification queue or marks inbox rows read.
+// The Backend remains the only event producer and read-state authority.
+func (s *service) ledgerStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.user(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	cursor, err := decodeLedgerCursor(strings.TrimSpace(r.Header.Get("Last-Event-ID")))
+	if err != nil {
+		http.Error(w, "invalid notification cursor", http.StatusBadRequest)
+		return
+	}
+	if cursor.CreatedAt.IsZero() {
+		cursor.CreatedAt = time.Now().UTC()
+		cursor.ID = "00000000-0000-0000-0000-000000000000"
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	poll := time.NewTicker(time.Second)
+	heartbeat := time.NewTicker(15 * time.Second)
+	defer poll.Stop()
+	defer heartbeat.Stop()
+	for {
+		delivered, next, streamErr := s.deliverLedgerOne(r.Context(), user, cursor, w, flusher)
+		if streamErr != nil {
+			if !errors.Is(streamErr, context.Canceled) {
+				log.Printf("ledger notification stream: %v", streamErr)
+			}
+			return
+		}
+		if delivered {
+			cursor = next
+			continue
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-poll.C:
+		case <-heartbeat.C:
+			if _, err := w.Write([]byte(": keep-alive\n\n")); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+func (s *service) deliverLedgerOne(ctx context.Context, user string, cursor ledgerNotificationCursor, w http.ResponseWriter, flusher http.Flusher) (bool, ledgerNotificationCursor, error) {
+	var item ledgerNotification
+	err := s.db.QueryRow(ctx, `
+		SELECT id::text, COALESCE(actor_id::text,''), COALESCE(post_id::text,''),
+		       COALESCE(reply_id::text,''), kind, payload, read_at, created_at
+		FROM testagram_local.notifications
+		WHERE recipient_id=$1
+		  AND (created_at > $2 OR (created_at = $2 AND id > $3::uuid))
+		ORDER BY created_at ASC, id ASC
+		LIMIT 1
+	`, user, cursor.CreatedAt, cursor.ID).Scan(
+		&item.ID, &item.ActorID, &item.PostID, &item.ReplyID,
+		&item.Kind, &item.Payload, &item.ReadAt, &item.CreatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, cursor, nil
+	}
+	if err != nil {
+		return false, cursor, err
+	}
+	next := ledgerNotificationCursor{CreatedAt: item.CreatedAt.UTC(), ID: item.ID}
+	data, err := json.Marshal(item)
+	if err != nil {
+		return false, cursor, err
+	}
+	frame := "event: notification\nid: " + encodeLedgerCursor(next) + "\ndata: " + string(data) + "\n\n"
+	if _, err := w.Write([]byte(frame)); err != nil {
+		return false, cursor, err
+	}
+	flusher.Flush()
+	return true, next, nil
 }
 
 func (s *service) user(r *http.Request) (string, bool) {
