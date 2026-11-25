@@ -109,12 +109,23 @@ func (s *service) devices(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "device fields too long", http.StatusBadRequest)
 		return
 	}
-	_, err := s.db.Exec(r.Context(), `insert into public.testagram_notification_devices
+	// A device identifier is owned by the account that first registered it.
+	// Never let a caller reassign another account's device/token by guessing or
+	// replaying its ID. Same-owner registration remains idempotent and refreshes
+	// the channel/address; cross-owner conflicts deliberately return no row.
+	var registeredID string
+	err := s.db.QueryRow(r.Context(), `insert into public.testagram_notification_devices
 		(id,user_id,channel,address,enabled,last_seen_at,updated_at)
 		values($1,$2,$3,$4,true,now(),now())
-		on conflict(id) do update set user_id=excluded.user_id,channel=excluded.channel,
-		address=excluded.address,enabled=true,last_seen_at=now(),updated_at=now()`,
-		in.ID, user, channel, in.Address)
+		on conflict(id) do update set channel=excluded.channel,
+			address=excluded.address,enabled=true,last_seen_at=now(),updated_at=now()
+		where public.testagram_notification_devices.user_id=excluded.user_id
+		returning id`,
+		in.ID, user, channel, in.Address).Scan(&registeredID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, "device identifier belongs to another account", http.StatusConflict)
+		return
+	}
 	if err != nil {
 		http.Error(w, "device registration failed", http.StatusInternalServerError)
 		return
