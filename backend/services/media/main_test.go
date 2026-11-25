@@ -292,3 +292,20 @@ func TestMediaRetryDelaySecondsUsesBoundedExponentialJitter(t *testing.T) {
 		t.Fatalf("invalid attempt should normalize to first retry window, got %d", got)
 	}
 }
+
+func TestMediaAuthRejectsAmbiguousAuthorizationHeaders(t *testing.T) {
+ s := &server{cfg: config{token: strings.Repeat("x", 40), identityToken: strings.Repeat("i", 40)}}
+ for _, values := range [][]string{
+  {"Bearer " + s.cfg.token, "Bearer " + s.cfg.token},
+  {"Bearer " + strings.Repeat("y", 40), "Bearer " + s.cfg.token},
+  {"Bearer " + s.cfg.token + " "},
+  {" Bearer " + s.cfg.token},
+ } {
+  r := httptest.NewRequest(http.MethodPost, "/internal/v1/media/upload-url", nil)
+  for _, value := range values { r.Header.Add("Authorization", value) }
+  r.Header.Set("X-Testagram-API-Version", apiVersion)
+  w := httptest.NewRecorder()
+  if s.auth(w, r) { t.Fatalf("ambiguous Authorization values accepted: %#v", values) }
+  if w.Code != http.StatusUnauthorized { t.Fatalf("status=%d, want 401", w.Code) }
+ }
+}
