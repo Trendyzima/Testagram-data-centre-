@@ -155,9 +155,12 @@ func (s *server) metadataStoresForNamespace(namespace string) (s3Store, s3Store)
 func (s *server) health(w http.ResponseWriter,r *http.Request){w.WriteHeader(200);_,_=w.Write([]byte("ok\n"))}
 func (s *server) ready(w http.ResponseWriter,r *http.Request){ctx,c:=context.WithTimeout(r.Context(),2*time.Second);defer c();if err:=s.db.Ping(ctx);err!=nil{http.Error(w,"database unavailable",503);return};w.WriteHeader(200);_,_=w.Write([]byte("ready\n"))}
 func (s *server) auth(w http.ResponseWriter,r *http.Request)bool{
-	authorization:=r.Header.Get("Authorization")
+	authorizationValues:=r.Header.Values("Authorization")
+	if len(authorizationValues)!=1 { writeErr(w,401,"unauthorized");return false }
+	authorization:=authorizationValues[0]
 	if !strings.HasPrefix(authorization,"Bearer ") { writeErr(w,401,"unauthorized");return false }
-	got:=strings.TrimSpace(strings.TrimPrefix(authorization,"Bearer "))
+	got:=strings.TrimPrefix(authorization,"Bearer ")
+	if got=="" || got!=strings.TrimSpace(got) { writeErr(w,401,"unauthorized");return false }
 	expected:=s.cfg.token
 	if strings.HasPrefix(r.URL.Path,"/internal/v1/identity-evidence/") {
 		expected=s.cfg.identityToken
