@@ -636,14 +636,14 @@ func (s *server) view(w http.ResponseWriter, r *http.Request, id string) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
-	var status, visibility string
-	if err := s.db.QueryRow(r.Context(), "select status,visibility from testagram_video.videos where id=$1", id).Scan(&status, &visibility); err != nil || status != "ready" || visibility == "private" {
-		http.Error(w, "not available", 404)
-		return
-	}
 	session := strings.TrimSpace(r.Header.Get("X-Playback-Session"))
 	if !validVideoPlaybackSession(session) {
 		http.Error(w, "invalid playback session", http.StatusBadRequest)
+		return
+	}
+	var status, visibility string
+	if err := s.db.QueryRow(r.Context(), "select status,visibility from testagram_video.videos where id=$1", id).Scan(&status, &visibility); err != nil || status != "ready" || visibility == "private" {
+		http.Error(w, "not available", 404)
 		return
 	}
 	sum := sha256.Sum256([]byte(session))
