@@ -87,7 +87,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: Trendyzima/Testagram-backend-
-          ref: 3fc0136cd13255fc9f6682fbc0492f7291d7ba7b
+          ref: f810c5aab55c4642a3386c6fdc0d5630bb7037c5
           path: backend-source
           persist-credentials: false
       - name: Verify canonical Backend Federation schema contract
