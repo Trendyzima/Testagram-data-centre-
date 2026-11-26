@@ -661,14 +661,8 @@ func (s *server) deleteVideo(w http.ResponseWriter, r *http.Request, id string) 
 	// Remove the original, HLS and poster trees only after the DB commit has
 	// made the video unreachable. A failed filesystem cleanup is logged; it
 	// must not resurrect or re-expose deleted product metadata.
-	for _, path := range []string{
-		filepath.Join(s.mediaDir, "videos", "originals", id),
-		filepath.Join(s.mediaDir, "videos", "hls", id),
-		filepath.Join(s.mediaDir, "videos", "posters", id),
-	} {
-		if err := os.RemoveAll(path); err != nil {
-			log.Printf("remove deleted video media id=%s path=%s: %v", id, path, err)
-		}
+	if err := removeVideoMedia(s.mediaDir, id); err != nil {
+		log.Printf("remove deleted video media id=%s: %v", id, err)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
