@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -222,5 +224,28 @@ func TestVideoRouteDispatchesOwnerStatusEndpoint(t *testing.T) {
 	s.videoRoute(recorder, request)
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status route response = %d, want authentication denial before data access", recorder.Code)
+	}
+}
+
+func TestVideoServiceUsesPrivateNetworksAndNotPublicEdge(t *testing.T) {
+	compose, err := os.ReadFile("../../docker-compose.yml")
+	if err != nil {
+		t.Fatalf("read Data Centre compose file: %v", err)
+	}
+	source := string(compose)
+	start := strings.Index(source, "\n  video:\n")
+	if start < 0 {
+		t.Fatal("video service definition not found")
+	}
+	end := strings.Index(source[start+1:], "\n  video-worker:")
+	if end < 0 {
+		t.Fatal("video-worker service boundary not found")
+	}
+	videoService := source[start : start+1+end]
+	if !strings.Contains(videoService, "networks: [internal, platform, egress]") {
+		t.Fatalf("video service must use internal/platform/egress networks only; got:\n%s", videoService)
+	}
+	if strings.Contains(videoService, "edge") {
+		t.Fatalf("private video service must not join the public edge network:\n%s", videoService)
 	}
 }
