@@ -218,16 +218,16 @@ func (s *server) feed(w http.ResponseWriter, r *http.Request) {
 func (s *server) comments(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method == http.MethodGet {
 		user, authenticated := s.user(r)
+		if !authenticated {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		var owner, status, visibility string
 		if err := s.db.QueryRow(r.Context(), "select owner_id,status,visibility from testagram_video.videos where id=$1", id).Scan(&owner, &status, &visibility); err != nil ||
 			status != "ready" ||
-			(visibility == "private" && (!authenticated || owner != user)) ||
+			(visibility == "private" && owner != user) ||
 			(visibility != "private" && visibility != "public" && visibility != "unlisted") {
 			http.NotFound(w, r)
-			return
-		}
-		if !authenticated {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		rows, err := s.db.Query(r.Context(), `select id,user_id,body,created_at from testagram_video.comments where video_id=$1 order by created_at desc limit 100`, id)
