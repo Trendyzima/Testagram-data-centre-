@@ -240,7 +240,7 @@ func TestVideoInteractionsRequireNativeAuthenticationBeforeDatabaseAccess(t *tes
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(tc.method, "/v1/videos/00000000-0000-4000-8000-000000000001/"+tc.name, nil)
+			request := httptest.NewRequest(tc.method, "/v1/videos/00000000-0000-4000-8000-000000000001/interactions", nil)
 			tc.handler(recorder, request)
 			if recorder.Code != http.StatusUnauthorized {
 				t.Fatalf("unauthenticated interaction returned %d, want %d", recorder.Code, http.StatusUnauthorized)
