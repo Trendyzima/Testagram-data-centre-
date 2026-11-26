@@ -215,7 +215,20 @@ func (s *server) feed(w http.ResponseWriter, r *http.Request) {
 	}
 	jsonOut(w, 200, out)
 }
+func (s *server) publicVideoReady(ctx context.Context, id string) bool {
+	var ready bool
+	err := s.db.QueryRow(ctx, `select exists(select 1 from testagram_video.videos where id=$1 and status='ready' and visibility <> 'private')`, id).Scan(&ready)
+	return err == nil && ready
+}
 func (s *server) comments(w http.ResponseWriter, r *http.Request, id string) {
+	if _, ok := s.user(r); !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !s.publicVideoReady(r.Context(), id) {
+		http.NotFound(w, r)
+		return
+	}
 	if r.Method == http.MethodGet {
 		rows, err := s.db.Query(r.Context(), `select id,user_id,body,created_at from testagram_video.comments where video_id=$1 order by created_at desc limit 100`, id)
 		if err != nil {
@@ -642,6 +655,10 @@ func (s *server) like(w http.ResponseWriter, r *http.Request, id string) {
 		http.Error(w, "unauthorized", 401)
 		return
 	}
+	if !s.publicVideoReady(r.Context(), id) {
+		http.NotFound(w, r)
+		return
+	}
 	if _, err := s.db.Exec(r.Context(), "insert into testagram_video.video_likes(video_id,user_id) values($1,$2) on conflict do nothing", id, user); err != nil {
 		http.Error(w, "like failed", 500)
 		return
@@ -664,6 +681,10 @@ func (s *server) hls(w http.ResponseWriter, r *http.Request, id, file string) {
 	token := r.URL.Query().Get("token")
 	if !s.validToken(id, token) {
 		http.Error(w, "forbidden", 403)
+		return
+	}
+	if !s.publicVideoReady(r.Context(), id) {
+		http.NotFound(w, r)
 		return
 	}
 	if strings.Contains(file, "..") || strings.ContainsAny(file, "/\\") {
