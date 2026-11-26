@@ -286,3 +286,16 @@ func TestVideoManifestRejectsNonGetBeforeDatabaseAccess(t *testing.T) {
 		t.Fatalf("manifest method status = %d, want %d", recorder.Code, http.StatusMethodNotAllowed)
 	}
 }
+
+func TestVideoViewRejectsInvalidPlaybackSessionBeforeDatabaseAccess(t *testing.T) {
+	s := &server{}
+	for _, session := range []string{"", "short", "contains space", "bad/slash"} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/v1/videos/video-1/view", nil)
+		request.Header.Set("X-Playback-Session", session)
+		s.videoRoute(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("session %q returned %d, want %d", session, recorder.Code, http.StatusBadRequest)
+		}
+	}
+}
