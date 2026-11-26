@@ -242,13 +242,16 @@ func TestVideoServiceUsesPrivateNetworksAndNotPublicEdge(t *testing.T) {
 		t.Fatal("video-worker service boundary not found")
 	}
 	videoService := source[start : start+1+end]
-	if !strings.Contains(videoService, "networks: [internal, platform, egress]") {
-		t.Fatalf("video service must use internal/platform/egress networks only; got:\n%s", videoService)
+	if !strings.Contains(videoService, "networks: [internal, egress, video-private]") {
+		t.Fatalf("video service must use internal/egress/video-private networks only; got:\n%s", videoService)
 	}
 	if strings.Contains(videoService, "\n    ports:") || strings.Contains(videoService, "\n    expose:") {
 		t.Fatalf("private video service must not publish or expose a container port:\n%s", videoService)
 	}
-	if strings.Contains(videoService, "edge") {
-		t.Fatalf("private video service must not join the public edge network:\n%s", videoService)
+	if strings.Contains(videoService, "edge") || strings.Contains(videoService, "platform") {
+		t.Fatalf("private video service must not join public edge or shared platform networks:\n%s", videoService)
+	}
+	if !strings.Contains(source, "video-private:\n    external: true\n    name: ${TESTAGRAM_VIDEO_NETWORK:-testagram-video-private}") {
+		t.Fatal("Data Centre Compose must join the Backend-created dedicated video-private network")
 	}
 }
