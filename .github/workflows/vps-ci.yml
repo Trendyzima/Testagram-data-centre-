@@ -104,6 +104,8 @@ jobs:
           test -f backend-source/migrations/20261121_native_staff_webauthn.sql
           test -f backend-source/migrations/20261120_native_verification_decider.sql
           test -f backend-source/migrations/20261120_native_identity_historical_attribution_archive.sql
+          grep -Fq 'video-private: {}' backend-source/deploy/self-hosted/docker-compose.yml
+          grep -Fq 'networks: [edge, control-plane, platform]' backend-source/deploy/self-hosted/docker-compose.yml
           grep -Fq 'if [ "$migration" = "backend-source/migrations/061_native_sensitive_action_integrity.sql" ]; then' .github/workflows/vps-ci.yml
           grep -Fq 'if [ "$migration" = "backend-source/migrations/062_testagram_knowledge_engine.sql" ]; then' .github/workflows/vps-ci.yml
           grep -Fq 'if [ "$migration" = "backend-source/migrations/064_knowledge_topic_seed_catalog.sql" ]; then' .github/workflows/vps-ci.yml
