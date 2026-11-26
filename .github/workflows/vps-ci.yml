@@ -455,11 +455,11 @@ jobs:
           docker network create --internal testagram-video-private 2>/dev/null || true
           docker network create testagram-egress 2>/dev/null || true
           docker network create testagram-self-hosted_edge 2>/dev/null || true
+          trap 'docker rm -f testagram-api testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true; docker network rm testagram-self-hosted_edge testagram-egress testagram-platform testagram-video-private >/dev/null 2>&1 || true' EXIT
           docker run -d --name testagram-postgres --network testagram-platform --network-alias federation-db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
           # The video service is deliberately absent from the shared platform
           # network. Give it database reachability only through video-private.
           docker network connect testagram-video-private testagram-postgres
-          trap 'docker rm -f testagram-api testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true; docker network rm testagram-self-hosted_edge testagram-egress testagram-platform testagram-video-private >/dev/null 2>&1 || true' EXIT
           trap 'status=$?; echo "Backend runtime smoke failed at: $BASH_COMMAND"; docker compose -f backend/docker-compose.yml logs --no-color platform algorithm federation-api video notification worker 2>&1 || true; docker logs testagram-api 2>&1 || true; exit "$status"' ERR
           for i in $(seq 1 30); do
             docker exec testagram-postgres pg_isready -U postgres -d postgres >/dev/null 2>&1 && break
