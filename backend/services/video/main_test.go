@@ -198,7 +198,10 @@ func TestCreatorVideoReadsRequireNativeAuthentication(t *testing.T) {
 		{
 			name: "video deletion requires native authentication",
 			path: "/v1/videos/video-1",
-			handler: func(w http.ResponseWriter, r *http.Request) { s.deleteVideo(w, r, "video-1") },
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				r.Method = http.MethodDelete
+				s.deleteVideo(w, r, "video-1")
+			},
 		},
 		{
 			name: "video comments require native authentication",
