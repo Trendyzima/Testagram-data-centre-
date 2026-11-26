@@ -100,7 +100,7 @@ jobs:
           test -f backend-source/migrations/20261115_testagram_native_auth_cutover_foundation.sql
           test -f backend-source/migrations/20261118_native_admin_console.sql
           test -f backend-source/migrations/20261121_native_staff_webauthn.sql
-          grep -q 'if [ "$migration" = "backend-source/migrations/061_native_sensitive_action_integrity.sql" ]; then' .github/workflows/vps-ci.yml
+          grep -Fq 'if [ "$migration" = "backend-source/migrations/061_native_sensitive_action_integrity.sql" ]; then' .github/workflows/vps-ci.yml
           grep -q 'backend-source/migrations/061_native_sensitive_action_integrity.sql' .github/workflows/vps-ci.yml
       - name: Set up canonical Backend Go toolchain
         uses: actions/setup-go@v7
