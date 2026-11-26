@@ -640,9 +640,22 @@ func (s *server) deleteVideo(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 
-	// Commit the visibility/metadata deletion before touching the filesystem.
-	// A crash can leave an unreferenced media directory for later cleanup, but
-	// cannot leave a public video row pointing at files that were already moved.
+	// Persist cleanup intent in the same transaction as metadata deletion.
+	// The outbox deliberately has no FK to videos: it must survive the row delete.
+	if _, err := tx.Exec(r.Context(), `
+		insert into testagram_video.video_media_cleanup_jobs(video_id)
+		values($1)
+		on conflict(video_id) do update set
+			status=case when testagram_video.video_media_cleanup_jobs.status='done'
+				then 'done' else 'pending' end,
+			attempts=case when testagram_video.video_media_cleanup_jobs.status='done'
+				then testagram_video.video_media_cleanup_jobs.attempts else 0 end,
+			available_at=now(),lease_until=null,last_error=null,updated_at=now()
+	`, id); err != nil {
+		http.Error(w, "video delete unavailable", http.StatusInternalServerError)
+		return
+	}
+	// The outbox row and product metadata deletion commit atomically.
 	if _, err := tx.Exec(r.Context(), "delete from testagram_video.videos where id=$1", id); err != nil {
 		http.Error(w, "video delete failed", http.StatusInternalServerError)
 		return
@@ -658,12 +671,8 @@ func (s *server) deleteVideo(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 
-	// Remove the original, HLS and poster trees only after the DB commit has
-	// made the video unreachable. A failed filesystem cleanup is logged; it
-	// must not resurrect or re-expose deleted product metadata.
-	if err := removeVideoMedia(s.mediaDir, id); err != nil {
-		log.Printf("remove deleted video media id=%s: %v", id, err)
-	}
+	// Media deletion is asynchronous and durable. The private worker claims
+	// the committed outbox row, removes all media trees, and retries failures.
 	w.WriteHeader(http.StatusNoContent)
 }
 

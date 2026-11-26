@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/Trendyzima/Testagram-data-centre-/internal/videomedia"
 	"log"
 	"os"
 	"os/exec"
@@ -35,6 +36,15 @@ func main() {
 	defer db.Close()
 	root := env("VIDEO_MEDIA_ROOT", "/media")
 	for {
+		worked, cleanupErr := runOneMediaCleanup(context.Background(), db, root)
+		if cleanupErr != nil {
+			log.Printf("video media cleanup: %v", cleanupErr)
+			time.Sleep(3 * time.Second)
+			continue
+		}
+		if worked {
+			continue
+		}
 		if err := runOne(context.Background(), db, root); err != nil {
 			log.Printf("video job: %v", err)
 			time.Sleep(3 * time.Second)
@@ -105,6 +115,62 @@ func runOne(ctx context.Context, db *pgxpool.Pool, root string) error {
 	}
 	_, err = db.Exec(ctx, `update testagram_video.videos v set status='ready',processing_error=null,updated_at=now() where v.id=$1 and exists (select 1 from testagram_video.video_jobs t where t.video_id=v.id and t.kind='transcode' and t.status='done') and exists (select 1 from testagram_video.video_jobs p where p.video_id=v.id and p.kind='poster' and p.status='done')`, j.VideoID)
 	return err
+}
+
+
+// runOneMediaCleanup claims one durable deletion intent. The outbox row is
+// independent of the videos table, so a process crash after metadata deletion
+// cannot lose the media cleanup request.
+func runOneMediaCleanup(ctx context.Context, db *pgxpool.Pool, root string) (bool, error) {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `update testagram_video.video_media_cleanup_jobs
+		set status='failed',lease_until=null,last_error=coalesce(last_error,'cleanup retry limit exhausted'),updated_at=now()
+		where status='running' and lease_until<now() and attempts>=5`); err != nil {
+		return false, err
+	}
+
+	var videoID string
+	var attempts int
+	err = tx.QueryRow(ctx, `with picked as (
+		select video_id from testagram_video.video_media_cleanup_jobs
+		where (status='pending' and available_at<=now())
+		   or (status='running' and lease_until<now() and attempts<5)
+		order by created_at for update skip locked limit 1
+	)
+	update testagram_video.video_media_cleanup_jobs q
+	set status='running',attempts=q.attempts+1,lease_until=now()+interval '5 minutes',updated_at=now()
+	from picked where q.video_id=picked.video_id
+	returning q.video_id::text,q.attempts`).Scan(&videoID, &attempts)
+	if err == pgx.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+
+	if err := videomedia.Remove(root, videoID); err != nil {
+		_, updateErr := db.Exec(ctx, `update testagram_video.video_media_cleanup_jobs
+			set status=case when attempts>=5 then 'failed' else 'pending' end,
+			available_at=now()+interval '30 seconds',lease_until=null,last_error=left($2,2000),updated_at=now()
+			where video_id=$1`, videoID, err.Error())
+		if updateErr != nil {
+			return true, fmt.Errorf("remove video %s media: %v; persist retry state: %w", videoID, err, updateErr)
+		}
+		return true, fmt.Errorf("remove video %s media (attempt %d): %w", videoID, attempts, err)
+	}
+	if _, err := db.Exec(ctx, `update testagram_video.video_media_cleanup_jobs
+		set status='done',lease_until=null,last_error=null,updated_at=now() where video_id=$1`, videoID); err != nil {
+		return true, fmt.Errorf("mark video %s media cleanup complete: %w", videoID, err)
+	}
+	return true, nil
 }
 
 func healthcheck(parent context.Context, databaseURL, root string) error {

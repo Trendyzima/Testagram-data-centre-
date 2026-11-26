@@ -3,6 +3,7 @@ WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY backend/services/video ./backend/services/video
+COPY internal/videomedia ./internal/videomedia
 COPY backend/internal/nativeauth ./backend/internal/nativeauth
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/video ./backend/services/video
 FROM alpine:3.22
