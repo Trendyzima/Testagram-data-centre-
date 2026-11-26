@@ -640,64 +640,34 @@ func (s *server) deleteVideo(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 
-	// Move media trees out of the serving paths before deleting metadata. If
-	// the database transaction fails, restore every moved directory.
-	suffix := fmt.Sprintf(".deleting-%d", time.Now().UnixNano())
-	paths := []string{
-		filepath.Join(s.mediaDir, "videos", "originals", id),
-		filepath.Join(s.mediaDir, "videos", "hls", id),
-		filepath.Join(s.mediaDir, "videos", "posters", id),
-	}
-	type movedPath struct{ original, tombstone string }
-	moved := make([]movedPath, 0, len(paths))
-	restore := func() {
-		for i := len(moved) - 1; i >= 0; i-- {
-			if err := os.Rename(moved[i].tombstone, moved[i].original); err != nil {
-				log.Printf("restore video media after failed delete id=%s: %v", id, err)
-			}
-		}
-	}
-	for _, path := range paths {
-		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-			continue
-		} else if err != nil {
-			restore()
-			http.Error(w, "video media cleanup unavailable", http.StatusInternalServerError)
-			return
-		}
-		tombstone := path + suffix
-		if err := os.Rename(path, tombstone); err != nil {
-			restore()
-			http.Error(w, "video media cleanup unavailable", http.StatusInternalServerError)
-			return
-		}
-		moved = append(moved, movedPath{original: path, tombstone: tombstone})
-	}
-
+	// Commit the visibility/metadata deletion before touching the filesystem.
+	// A crash can leave an unreferenced media directory for later cleanup, but
+	// cannot leave a public video row pointing at files that were already moved.
 	if _, err := tx.Exec(r.Context(), "delete from testagram_video.videos where id=$1", id); err != nil {
-		restore()
 		http.Error(w, "video delete failed", http.StatusInternalServerError)
 		return
 	}
 	if _, err := tx.Exec(r.Context(),
 		"update testagram_video.channels set video_count=(select count(*) from testagram_video.videos where channel_id=$1),updated_at=now() where id=$1", channelID,
 	); err != nil {
-		restore()
 		http.Error(w, "video delete failed", http.StatusInternalServerError)
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
-		restore()
 		http.Error(w, "video delete failed", http.StatusInternalServerError)
 		return
 	}
 
-	for _, item := range moved {
-		if err := os.RemoveAll(item.tombstone); err != nil {
-			// The video is no longer addressable. Leave an explicit operator
-			// breadcrumb rather than turning a committed deletion into a false
-			// retryable HTTP failure.
-			log.Printf("remove deleted video media tombstone id=%s path=%s: %v", id, item.tombstone, err)
+	// Remove the original, HLS and poster trees only after the DB commit has
+	// made the video unreachable. A failed filesystem cleanup is logged; it
+	// must not resurrect or re-expose deleted product metadata.
+	for _, path := range []string{
+		filepath.Join(s.mediaDir, "videos", "originals", id),
+		filepath.Join(s.mediaDir, "videos", "hls", id),
+		filepath.Join(s.mediaDir, "videos", "posters", id),
+	} {
+		if err := os.RemoveAll(path); err != nil {
+			log.Printf("remove deleted video media id=%s path=%s: %v", id, path, err)
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
