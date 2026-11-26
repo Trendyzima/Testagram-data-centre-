@@ -193,6 +193,16 @@ func TestCreatorVideoReadsRequireNativeAuthentication(t *testing.T) {
 			path: "/v1/videos/video-1/status",
 			handler: func(w http.ResponseWriter, r *http.Request) { s.videoStatus(w, r, "video-1") },
 		},
+		{
+			name: "video comments require native authentication",
+			path: "/v1/videos/video-1/comments",
+			handler: func(w http.ResponseWriter, r *http.Request) { s.comments(w, r, "video-1") },
+		},
+		{
+			name: "video likes require native authentication",
+			path: "/v1/videos/video-1/like",
+			handler: func(w http.ResponseWriter, r *http.Request) { s.like(w, r, "video-1") },
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
