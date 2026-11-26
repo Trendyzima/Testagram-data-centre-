@@ -174,3 +174,43 @@ func TestUploadLimitEnvironment(t *testing.T) {
 		t.Fatal("negative disk reserve should be rejected")
 	}
 }
+
+
+func TestCreatorVideoReadsRequireNativeAuthentication(t *testing.T) {
+	s := &server{}
+	for _, tc := range []struct {
+		name string
+		path string
+		handler http.HandlerFunc
+	}{
+		{
+			name: "owned channels",
+			path: "/v1/channels",
+			handler: s.channels,
+		},
+		{
+			name: "owned video processing status",
+			path: "/v1/videos/video-1/status",
+			handler: func(w http.ResponseWriter, r *http.Request) { s.videoStatus(w, r, "video-1") },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			tc.handler(recorder, request)
+			if recorder.Code != http.StatusUnauthorized {
+				t.Fatalf("unauthenticated request status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+			}
+		})
+	}
+}
+
+func TestVideoRouteDispatchesOwnerStatusEndpoint(t *testing.T) {
+	s := &server{}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/videos/video-1/status", nil)
+	s.videoRoute(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status route response = %d, want authentication denial before data access", recorder.Code)
+	}
+}

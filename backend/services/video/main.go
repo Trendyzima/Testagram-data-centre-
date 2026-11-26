@@ -92,22 +92,56 @@ func (s *server) ready(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) channels(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
-		return
-	}
 	user, ok := s.user(r)
 	if !ok {
 		http.Error(w, "unauthorized", 401)
 		return
 	}
+	if r.Method == http.MethodGet {
+		rows, err := s.db.Query(r.Context(), `select id::text,handle,name,description,subscriber_count,video_count,created_at,updated_at
+			from testagram_video.channels where owner_id=$1 order by created_at desc,id desc limit 50`, user)
+		if err != nil {
+			http.Error(w, "channel list failed", 500)
+			return
+		}
+		defer rows.Close()
+		type channel struct {
+			ID string `json:"id"`
+			Handle string `json:"handle"`
+			Name string `json:"name"`
+			Description string `json:"description"`
+			Subscribers int64 `json:"subscriber_count"`
+			Videos int64 `json:"video_count"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+		}
+		items := make([]channel, 0)
+		for rows.Next() {
+			var item channel
+			if err := rows.Scan(&item.ID, &item.Handle, &item.Name, &item.Description, &item.Subscribers, &item.Videos, &item.CreatedAt, &item.UpdatedAt); err != nil {
+				http.Error(w, "channel list failed", 500)
+				return
+			}
+			items = append(items, item)
+		}
+		if err := rows.Err(); err != nil {
+			http.Error(w, "channel list failed", 500)
+			return
+		}
+		jsonOut(w, 200, map[string]any{"items": items})
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
 	var in channelInput
-	if json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&in) != nil || !validHandle(in.Handle) || strings.TrimSpace(in.Name) == "" {
+	if json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&in) != nil || !validHandle(in.Handle) || strings.TrimSpace(in.Name) == "" || len(in.Name) > 120 || len(in.Description) > 2000 {
 		http.Error(w, "invalid channel", 400)
 		return
 	}
 	var id string
-	err := s.db.QueryRow(r.Context(), "insert into testagram_video.channels(owner_id,handle,name,description) values($1,$2,$3,$4) returning id", user, strings.ToLower(in.Handle), strings.TrimSpace(in.Name), in.Description).Scan(&id)
+	err := s.db.QueryRow(r.Context(), "insert into testagram_video.channels(owner_id,handle,name,description) values($1,$2,$3,$4) returning id", user, strings.ToLower(in.Handle), strings.TrimSpace(in.Name), strings.TrimSpace(in.Description)).Scan(&id)
 	if err != nil {
 		http.Error(w, "channel creation failed", 409)
 		return
@@ -501,6 +535,8 @@ func (s *server) videoRoute(w http.ResponseWriter, r *http.Request) {
 	switch parts[1] {
 	case "publish":
 		s.publish(w, r, id)
+	case "status":
+		s.videoStatus(w, r, id)
 	case "view":
 		s.view(w, r, id)
 	case "like":
@@ -519,6 +555,32 @@ func (s *server) videoRoute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", 404)
 	}
 }
+func (s *server) videoStatus(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	user, ok := s.user(r)
+	if !ok {
+		http.Error(w, "unauthorized", 401)
+		return
+	}
+	var title, description, visibility, status string
+	var duration int64
+	var createdAt, updatedAt time.Time
+	err := s.db.QueryRow(r.Context(), `select title,description,visibility,status,duration_ms,created_at,updated_at
+		from testagram_video.videos where id=$1 and owner_id=$2`, id, user).
+		Scan(&title, &description, &visibility, &status, &duration, &createdAt, &updatedAt)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	jsonOut(w, 200, map[string]any{
+		"id": id, "title": title, "description": description, "visibility": visibility,
+		"status": status, "duration_ms": duration, "created_at": createdAt, "updated_at": updatedAt,
+	})
+}
+
 func (s *server) publish(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", 405)
