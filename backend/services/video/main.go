@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -552,6 +553,10 @@ func (s *server) failVideoUpload(ctx context.Context, reservationID, id, reason 
 func (s *server) videoRoute(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(r.URL.Path, "/v1/videos/")
 	parts := strings.Split(strings.Trim(p, "/"), "/")
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		s.deleteVideo(w, r, parts[0])
+		return
+	}
 	if len(parts) < 2 {
 		http.Error(w, "not found", 404)
 		return
@@ -580,6 +585,94 @@ func (s *server) videoRoute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", 404)
 	}
 }
+func (s *server) deleteVideo(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "DELETE")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.user(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		http.Error(w, "delete unavailable", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	var owner, channelID, status string
+	err = tx.QueryRow(r.Context(),
+		"select owner_id,channel_id,status from testagram_video.videos where id=$1 for update", id,
+	).Scan(&owner, &channelID, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// DELETE is idempotent for an authenticated caller. This also lets
+		// staging verify cleanup support before it creates public test media.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		http.Error(w, "delete unavailable", http.StatusInternalServerError)
+		return
+	}
+	if owner != user {
+		http.NotFound(w, r)
+		return
+	}
+	// A queued or leased worker must never race deletion of its source file.
+	// Only terminally processed videos can be removed by their owner.
+	if status != "ready" && status != "failed" && status != "blocked" {
+		http.Error(w, "video processing is still active", http.StatusConflict)
+		return
+	}
+	var activeJob bool
+	if err := tx.QueryRow(r.Context(),
+		"select exists(select 1 from testagram_video.video_jobs where video_id=$1 and status in ('queued','running'))", id,
+	).Scan(&activeJob); err != nil {
+		http.Error(w, "delete unavailable", http.StatusInternalServerError)
+		return
+	}
+	if activeJob {
+		http.Error(w, "video processing is still active", http.StatusConflict)
+		return
+	}
+
+	// Commit the visibility/metadata deletion before touching the filesystem.
+	// A crash can leave an unreferenced media directory for later cleanup, but
+	// cannot leave a public video row pointing at files that were already moved.
+	if _, err := tx.Exec(r.Context(), "delete from testagram_video.videos where id=$1", id); err != nil {
+		http.Error(w, "video delete failed", http.StatusInternalServerError)
+		return
+	}
+	if _, err := tx.Exec(r.Context(),
+		"update testagram_video.channels set video_count=(select count(*) from testagram_video.videos where channel_id=$1),updated_at=now() where id=$1", channelID,
+	); err != nil {
+		http.Error(w, "video delete failed", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		http.Error(w, "video delete failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Remove the original, HLS and poster trees only after the DB commit has
+	// made the video unreachable. A failed filesystem cleanup is logged; it
+	// must not resurrect or re-expose deleted product metadata.
+	for _, path := range []string{
+		filepath.Join(s.mediaDir, "videos", "originals", id),
+		filepath.Join(s.mediaDir, "videos", "hls", id),
+		filepath.Join(s.mediaDir, "videos", "posters", id),
+	} {
+		if err := os.RemoveAll(path); err != nil {
+			log.Printf("remove deleted video media id=%s path=%s: %v", id, path, err)
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *server) videoStatus(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", 405)
