@@ -87,7 +87,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: Trendyzima/Testagram-backend-
-          ref: 4ca5da34222f70b120ec2bb144bc4ec40e6f6218
+          ref: 3fc0136cd13255fc9f6682fbc0492f7291d7ba7b
           path: backend-source
           persist-credentials: false
       - name: Verify canonical Backend Federation schema contract
@@ -454,6 +454,9 @@ jobs:
           docker network create testagram-egress 2>/dev/null || true
           docker network create testagram-self-hosted_edge 2>/dev/null || true
           docker run -d --name testagram-postgres --network testagram-platform --network-alias federation-db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
+          # The video service is deliberately absent from the shared platform
+          # network. Give it database reachability only through video-private.
+          docker network connect testagram-video-private testagram-postgres
           trap 'docker rm -f testagram-api testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true; docker network rm testagram-self-hosted_edge testagram-egress testagram-platform testagram-video-private >/dev/null 2>&1 || true' EXIT
           trap 'status=$?; echo "Backend runtime smoke failed at: $BASH_COMMAND"; docker compose -f backend/docker-compose.yml logs --no-color platform algorithm federation-api video notification worker 2>&1 || true; docker logs testagram-api 2>&1 || true; exit "$status"' ERR
           for i in $(seq 1 30); do
