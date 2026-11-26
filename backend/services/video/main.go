@@ -552,6 +552,10 @@ func (s *server) failVideoUpload(ctx context.Context, reservationID, id, reason 
 func (s *server) videoRoute(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimPrefix(r.URL.Path, "/v1/videos/")
 	parts := strings.Split(strings.Trim(p, "/"), "/")
+	if len(parts) == 1 && r.Method == http.MethodDelete {
+		s.deleteVideo(w, r, parts[0])
+		return
+	}
 	if len(parts) < 2 {
 		http.Error(w, "not found", 404)
 		return
@@ -580,6 +584,113 @@ func (s *server) videoRoute(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", 404)
 	}
 }
+func (s *server) deleteVideo(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodDelete {
+		w.Header().Set("Allow", "DELETE")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	user, ok := s.user(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	tx, err := s.db.Begin(r.Context())
+	if err != nil {
+		http.Error(w, "delete unavailable", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	var owner, channelID, status string
+	if err := tx.QueryRow(r.Context(),
+		"select owner_id,channel_id,status from testagram_video.videos where id=$1 for update", id,
+	).Scan(&owner, &channelID, &status); err != nil || owner != user {
+		http.NotFound(w, r)
+		return
+	}
+	// A queued or leased worker must never race deletion of its source file.
+	// Only terminally processed videos can be removed by their owner.
+	if status != "ready" && status != "failed" && status != "blocked" {
+		http.Error(w, "video processing is still active", http.StatusConflict)
+		return
+	}
+	var activeJob bool
+	if err := tx.QueryRow(r.Context(),
+		"select exists(select 1 from testagram_video.video_jobs where video_id=$1 and status in ('queued','running'))", id,
+	).Scan(&activeJob); err != nil {
+		http.Error(w, "delete unavailable", http.StatusInternalServerError)
+		return
+	}
+	if activeJob {
+		http.Error(w, "video processing is still active", http.StatusConflict)
+		return
+	}
+
+	// Move media trees out of the serving paths before deleting metadata. If
+	// the database transaction fails, restore every moved directory.
+	suffix := fmt.Sprintf(".deleting-%d", time.Now().UnixNano())
+	paths := []string{
+		filepath.Join(s.mediaDir, "videos", "originals", id),
+		filepath.Join(s.mediaDir, "videos", "hls", id),
+		filepath.Join(s.mediaDir, "videos", "posters", id),
+	}
+	type movedPath struct{ original, tombstone string }
+	moved := make([]movedPath, 0, len(paths))
+	restore := func() {
+		for i := len(moved) - 1; i >= 0; i-- {
+			if err := os.Rename(moved[i].tombstone, moved[i].original); err != nil {
+				log.Printf("restore video media after failed delete id=%s: %v", id, err)
+			}
+		}
+	}
+	for _, path := range paths {
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			restore()
+			http.Error(w, "video media cleanup unavailable", http.StatusInternalServerError)
+			return
+		}
+		tombstone := path + suffix
+		if err := os.Rename(path, tombstone); err != nil {
+			restore()
+			http.Error(w, "video media cleanup unavailable", http.StatusInternalServerError)
+			return
+		}
+		moved = append(moved, movedPath{original: path, tombstone: tombstone})
+	}
+
+	if _, err := tx.Exec(r.Context(), "delete from testagram_video.videos where id=$1", id); err != nil {
+		restore()
+		http.Error(w, "video delete failed", http.StatusInternalServerError)
+		return
+	}
+	if _, err := tx.Exec(r.Context(),
+		"update testagram_video.channels set video_count=(select count(*) from testagram_video.videos where channel_id=$1),updated_at=now() where id=$1", channelID,
+	); err != nil {
+		restore()
+		http.Error(w, "video delete failed", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		restore()
+		http.Error(w, "video delete failed", http.StatusInternalServerError)
+		return
+	}
+
+	for _, item := range moved {
+		if err := os.RemoveAll(item.tombstone); err != nil {
+			// The video is no longer addressable. Leave an explicit operator
+			// breadcrumb rather than turning a committed deletion into a false
+			// retryable HTTP failure.
+			log.Printf("remove deleted video media tombstone id=%s path=%s: %v", id, item.tombstone, err)
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *server) videoStatus(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", 405)
