@@ -125,6 +125,17 @@ func TestPlaybackTokenRoundTrip(t *testing.T) {
 	if s.validToken("video-1", token+".x") {
 		t.Fatal("malformed token accepted")
 	}
+	badSignature := "0" + token[1:]
+	if badSignature[0] == token[0] {
+		badSignature = "1" + token[1:]
+	}
+	if s.validToken("video-1", badSignature) {
+		t.Fatal("tampered signature accepted")
+	}
+	expired := s.sign("video-1", time.Now().Add(-time.Minute))
+	if s.validToken("video-1", expired) {
+		t.Fatal("correctly signed but expired token accepted")
+	}
 }
 
 func TestSecurityHeaders(t *testing.T) {
@@ -260,11 +271,17 @@ func TestVideoServiceUsesPrivateNetworksAndNotPublicEdge(t *testing.T) {
 		t.Fatal("video-worker service boundary not found")
 	}
 	videoService := source[start : start+1+end]
-	if !strings.Contains(videoService, "networks: [internal, platform, egress]") {
-		t.Fatalf("video service must use internal/platform/egress networks only; got:\n%s", videoService)
+	if !strings.Contains(videoService, "networks: [internal, egress, video-private]") {
+		t.Fatalf("video service must use internal/egress/video-private networks only; got:\n%s", videoService)
 	}
-	if strings.Contains(videoService, "edge") {
-		t.Fatalf("private video service must not join the public edge network:\n%s", videoService)
+	if strings.Contains(videoService, "\n    ports:") || strings.Contains(videoService, "\n    expose:") {
+		t.Fatalf("private video service must not publish or expose a container port:\n%s", videoService)
+	}
+	if strings.Contains(videoService, "edge") || strings.Contains(videoService, "platform") {
+		t.Fatalf("private video service must not join public edge or shared platform networks:\n%s", videoService)
+	}
+	if !strings.Contains(source, "video-private:\n    external: true\n    name: ${TESTAGRAM_VIDEO_NETWORK:-testagram-video-private}") {
+		t.Fatal("Data Centre Compose must join the Backend-created dedicated video-private network")
 	}
 }
 

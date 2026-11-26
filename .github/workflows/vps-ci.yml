@@ -87,13 +87,30 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: Trendyzima/Testagram-backend-
-          ref: bbbd3ea0ca4b2d91837476946e15e9d692e918e7
+          ref: f810c5aab55c4642a3386c6fdc0d5630bb7037c5
           path: backend-source
           persist-credentials: false
       - name: Verify canonical Backend Federation schema contract
         run: |
           test -f backend-source/migrations/20261110_federation_outbox.sql
           grep -q 'testagram_local.federation_outbox' backend-source/internal/federationoutbox/store.go
+      - name: Verify deferred canonical Backend migration prerequisites
+        run: |
+          test -f backend-source/migrations/061_native_sensitive_action_integrity.sql
+          test -f backend-source/migrations/062_testagram_knowledge_engine.sql
+          test -f backend-source/migrations/064_knowledge_topic_seed_catalog.sql
+          test -f backend-source/migrations/20261115_testagram_native_auth_cutover_foundation.sql
+          test -f backend-source/migrations/20261118_native_admin_console.sql
+          test -f backend-source/migrations/20261121_native_staff_webauthn.sql
+          test -f backend-source/migrations/20261120_native_verification_decider.sql
+          test -f backend-source/migrations/20261120_native_identity_historical_attribution_archive.sql
+          grep -Fq 'video-private: {}' backend-source/deploy/self-hosted/docker-compose.yml
+          grep -Fq 'networks: [edge, control-plane, platform]' backend-source/deploy/self-hosted/docker-compose.yml
+          grep -Fq 'if [ "$migration" = "backend-source/migrations/061_native_sensitive_action_integrity.sql" ]; then' .github/workflows/vps-ci.yml
+          grep -Fq 'if [ "$migration" = "backend-source/migrations/062_testagram_knowledge_engine.sql" ]; then' .github/workflows/vps-ci.yml
+          grep -Fq 'if [ "$migration" = "backend-source/migrations/064_knowledge_topic_seed_catalog.sql" ]; then' .github/workflows/vps-ci.yml
+          grep -Fq 'if [ "$migration" = "backend-source/migrations/20261120_native_identity_historical_attribution_archive.sql" ]; then' .github/workflows/vps-ci.yml
+          grep -Fq 'if [ "$migration" = "backend-source/migrations/20261120_native_verification_decider.sql" ]; then' .github/workflows/vps-ci.yml
       - name: Set up canonical Backend Go toolchain
         uses: actions/setup-go@v7
         with:
@@ -435,10 +452,14 @@ jobs:
         run: |
           set -euo pipefail
           docker network create testagram-platform 2>/dev/null || true
+          docker network create --internal testagram-video-private 2>/dev/null || true
           docker network create testagram-egress 2>/dev/null || true
           docker network create testagram-self-hosted_edge 2>/dev/null || true
+          trap 'docker rm -f testagram-api testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true; docker network rm testagram-self-hosted_edge testagram-egress testagram-platform testagram-video-private >/dev/null 2>&1 || true' EXIT
           docker run -d --name testagram-postgres --network testagram-platform --network-alias federation-db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
-          trap 'docker rm -f testagram-api testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true; docker network rm testagram-self-hosted_edge testagram-egress testagram-platform >/dev/null 2>&1 || true' EXIT
+          # The video service is deliberately absent from the shared platform
+          # network. Give it database reachability only through video-private.
+          docker network connect testagram-video-private testagram-postgres
           trap 'status=$?; echo "Backend runtime smoke failed at: $BASH_COMMAND"; docker compose -f backend/docker-compose.yml logs --no-color platform algorithm federation-api video notification worker 2>&1 || true; docker logs testagram-api 2>&1 || true; exit "$status"' ERR
           for i in $(seq 1 30); do
             docker exec testagram-postgres pg_isready -U postgres -d postgres >/dev/null 2>&1 && break
@@ -468,9 +489,43 @@ jobs:
             if [ "$migration" = "backend-source/migrations/20261113_native_identity_verification.sql" ]; then
               continue
             fi
+            # The historical attribution archive comments on and preserves the
+            # new native decider UUID. Its same-day decider migration sorts
+            # after the archive by filename, so apply the prerequisite first.
+            if [ "$migration" = "backend-source/migrations/20261120_native_identity_historical_attribution_archive.sql" ]; then
+              echo "Applying canonical Backend migration prerequisite: backend-source/migrations/20261120_native_verification_decider.sql"
+              docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/20261120_native_verification_decider.sql
+            fi
+            if [ "$migration" = "backend-source/migrations/20261120_native_verification_decider.sql" ]; then
+              continue
+            fi
+            # The immutable sensitive-action migration depends on the native
+            # auth schema, admin approval ledger and WebAuthn credentials,
+            # which sort after its historical numeric filename. Defer it until
+            # every canonical Backend migration has been applied.
+            if [ "$migration" = "backend-source/migrations/061_native_sensitive_action_integrity.sql" ]; then
+              continue
+            fi
+            # Knowledge migrations use testagram_local.accounts and topics,
+            # which are provisioned by later timestamped native-product
+            # migrations. Defer both until the canonical account schema exists.
+            if [ "$migration" = "backend-source/migrations/062_testagram_knowledge_engine.sql" ]; then
+              continue
+            fi
+            if [ "$migration" = "backend-source/migrations/064_knowledge_topic_seed_catalog.sql" ]; then
+              continue
+            fi
             echo "Applying canonical Backend migration: $migration"
             docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < "$migration"
           done
+          # Apply the append-only sensitive-action hardening only after all
+          # native identity, staff-console and WebAuthn prerequisites exist.
+          echo "Applying deferred canonical Backend migration: backend-source/migrations/061_native_sensitive_action_integrity.sql"
+          docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/061_native_sensitive_action_integrity.sql
+          echo "Applying deferred canonical Backend migration: backend-source/migrations/062_testagram_knowledge_engine.sql"
+          docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/062_testagram_knowledge_engine.sql
+          echo "Applying deferred canonical Backend migration: backend-source/migrations/064_knowledge_topic_seed_catalog.sql"
+          docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/064_knowledge_topic_seed_catalog.sql
           docker exec testagram-postgres psql -U postgres -d testagram -Atqc "SELECT to_regclass('testagram_local.federation_outbox') IS NOT NULL AND to_regclass('testagram_local.communication_outbox') IS NOT NULL" | grep -qx t
           docker build -f backend-source/Dockerfile -t testagram-backend-ci backend-source
           export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram
@@ -479,14 +534,17 @@ jobs:
           export NOTIFICATION_INTERNAL_TOKEN=ci-test-internal-token
           export PLATFORM_INTERNAL_TOKEN=ci-platform-internal-token-2026-strong
           export TESTAGRAM_NETWORK=testagram-platform
+          export TESTAGRAM_VIDEO_NETWORK=testagram-video-private
           docker run -d --name testagram-api --network testagram-platform --network-alias api \
             -e LISTEN_ADDR=:8080 -e INTERNAL_LISTEN_ADDR=:8082 \
             -e DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram?sslmode=disable \
             -e TESTAGRAM_AUTH_JWT_SECRET=ci-testagram-native-auth-secret-at-least-32-bytes \
+            -e DATA_CENTRE_VIDEO_API_URL=http://video:8790 \
             -e ALGORITHM_URL=http://algorithm:8092 -e ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough \
             -e FEDERATION_INTERNAL_URL=http://federation:8081 -e FEDERATION_INTERNAL_TOKEN=ci-federation-ingress-token-long-enough \
             -e FEDERATION_BACKEND_INTERNAL_TOKEN=ci-federation-backend-read-token-long-enough \
             testagram-backend-ci
+          docker network connect testagram-video-private testagram-api
           for i in $(seq 1 30); do
             docker exec testagram-api wget -q -O - http://127.0.0.1:8082/readyz >/dev/null 2>&1 && break
             sleep 2
@@ -560,6 +618,11 @@ jobs:
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token-2026-strong" --header="Content-Type: application/json" --post-data='{"event_name":"ci.smoke","properties":{"status":"green"}}' http://127.0.0.1:8095/v1/events
           docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token-2026-strong" --header="Content-Type: application/json" --post-data='{"action":"ci.smoke","resource_type":"workflow","resource_id":"platform","metadata":{"status":"green"}}' http://127.0.0.1:8095/v1/audit
           docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz
+          for i in $(seq 1 30); do
+            docker exec testagram-api wget -q -O - http://video:8790/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker exec testagram-api wget -q -O - http://video:8790/readyz
           for i in $(seq 1 30); do
             docker compose -f backend/docker-compose.yml exec -T notification wget -q -O - http://127.0.0.1:8090/readyz >/dev/null 2>&1 && break
             sleep 2
