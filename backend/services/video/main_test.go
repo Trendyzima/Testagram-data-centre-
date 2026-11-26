@@ -249,3 +249,78 @@ func TestVideoServiceUsesPrivateNetworksAndNotPublicEdge(t *testing.T) {
 		t.Fatalf("private video service must not join the public edge network:\n%s", videoService)
 	}
 }
+
+func TestVideoPlaybackSessionValidation(t *testing.T) {
+	for _, session := range []string{"abcdefgh", "session-123", "A1_b2-C3"} {
+		if !validVideoPlaybackSession(session) {
+			t.Fatalf("valid playback session rejected: %q", session)
+		}
+	}
+	for _, session := range []string{"", "short", "has space", "bad/slash", "bad\\\\slash", "x?token=y", string(make([]byte, 129))} {
+		if validVideoPlaybackSession(session) {
+			t.Fatalf("invalid playback session accepted: %q", session)
+		}
+	}
+}
+
+func TestVideoHLSFilenameAllowlist(t *testing.T) {
+	for _, file := range []string{"master.m3u8", "segment-001.ts", "variant_2.m3u8"} {
+		if !validVideoHLSFilename(file) {
+			t.Fatalf("valid HLS filename rejected: %q", file)
+		}
+	}
+	for _, file := range []string{"", "..", "master..m3u8", "bad name.ts", "a/b.ts", "x\\\\secret.ts", "segment?token=x.ts"} {
+		if validVideoHLSFilename(file) {
+			t.Fatalf("unsafe HLS filename accepted: %q", file)
+		}
+	}
+}
+
+func TestVideoHLSRejectsInvalidMethodAndTokenQueryBeforeStorageAccess(t *testing.T) {
+	s := &server{}
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		want   int
+	}{
+		{"method", http.MethodPost, "/v1/videos/video-1/hls/master.m3u8?token=abc", http.StatusMethodNotAllowed},
+		{"missing token", http.MethodGet, "/v1/videos/video-1/hls/master.m3u8", http.StatusBadRequest},
+		{"duplicate token", http.MethodGet, "/v1/videos/video-1/hls/master.m3u8?token=a&token=b", http.StatusBadRequest},
+		{"extra query", http.MethodGet, "/v1/videos/video-1/hls/master.m3u8?token=a&debug=1", http.StatusBadRequest},
+		{"unsafe filename", http.MethodGet, "/v1/videos/video-1/hls/master..m3u8?token=a", http.StatusBadRequest},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(tc.method, tc.path, nil)
+			s.videoRoute(recorder, request)
+			if recorder.Code != tc.want {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, tc.want, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestVideoManifestRejectsNonGetBeforeDatabaseAccess(t *testing.T) {
+	s := &server{}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/videos/video-1/manifest", nil)
+	s.videoRoute(recorder, request)
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("manifest method status = %d, want %d", recorder.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestVideoViewRejectsInvalidPlaybackSessionBeforeDatabaseAccess(t *testing.T) {
+	s := &server{}
+	for _, session := range []string{"", "short", "contains space", "bad/slash"} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/v1/videos/video-1/view", nil)
+		request.Header.Set("X-Playback-Session", session)
+		s.videoRoute(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("session %q returned %d, want %d", session, recorder.Code, http.StatusBadRequest)
+		}
+	}
+}

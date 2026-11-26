@@ -274,12 +274,24 @@ func (s *server) comments(w http.ResponseWriter, r *http.Request, id string) {
 		http.Error(w, "invalid comment", 400)
 		return
 	}
-	if _, err := s.db.Exec(r.Context(), `insert into testagram_video.comments(video_id,user_id,body) values($1,$2,$3)`, id, user, strings.TrimSpace(in.Body)); err != nil {
-		http.Error(w, "comment failed", 500)
-		return
-	}
-	if _, err := s.db.Exec(r.Context(), `update testagram_video.videos set comment_count=(select count(*) from testagram_video.comments where video_id=$1) where id=$1`, id); err != nil {
-		http.Error(w, "comment failed", 500)
+	// Persist the comment and its aggregate counter in one statement so a
+	// transient counter failure cannot leave the feed permanently inconsistent.
+	_, err := s.db.Exec(r.Context(), `
+		with inserted as (
+			insert into testagram_video.comments(video_id,user_id,body)
+			values($1,$2,$3)
+			returning 1
+		),
+		updated as (
+			update testagram_video.videos
+			set comment_count=comment_count+1
+			where id=$1 and exists(select 1 from inserted)
+			returning 1
+		)
+		select exists(select 1 from inserted)
+	`, id, user, strings.TrimSpace(in.Body))
+	if err != nil {
+		http.Error(w, "comment failed", http.StatusInternalServerError)
 		return
 	}
 	jsonOut(w, 201, map[string]bool{"created": true})
@@ -624,26 +636,42 @@ func (s *server) view(w http.ResponseWriter, r *http.Request, id string) {
 		http.Error(w, "method not allowed", 405)
 		return
 	}
+	session := strings.TrimSpace(r.Header.Get("X-Playback-Session"))
+	if !validVideoPlaybackSession(session) {
+		http.Error(w, "invalid playback session", http.StatusBadRequest)
+		return
+	}
 	var status, visibility string
 	if err := s.db.QueryRow(r.Context(), "select status,visibility from testagram_video.videos where id=$1", id).Scan(&status, &visibility); err != nil || status != "ready" || visibility == "private" {
 		http.Error(w, "not available", 404)
 		return
 	}
-	session := r.Header.Get("X-Playback-Session")
-	if session == "" {
-		session = r.RemoteAddr + "|" + time.Now().UTC().Format("2006-01-02")
-	}
 	sum := sha256.Sum256([]byte(session))
 	h := hex.EncodeToString(sum[:])
-	tag, err := s.db.Exec(r.Context(), "insert into testagram_video.video_views(video_id,session_hash) values($1,$2) on conflict do nothing", id, h)
+	// Keep the deduplication record and aggregate counter in one statement.
+	// A failed counter update must not leave a durable session row that makes
+	// a retry look successful while the public view_count remains stale.
+	var counted bool
+	err := s.db.QueryRow(r.Context(), `
+		with inserted as (
+			insert into testagram_video.video_views(video_id,session_hash)
+			values($1,$2)
+			on conflict do nothing
+			returning 1
+		),
+		updated as (
+			update testagram_video.videos
+			set view_count=view_count+1
+			where id=$1 and exists(select 1 from inserted)
+			returning 1
+		)
+		select exists(select 1 from inserted)
+	`, id, h).Scan(&counted)
 	if err != nil {
-		http.Error(w, "view failed", 500)
+		http.Error(w, "view failed", http.StatusInternalServerError)
 		return
 	}
-	if tag.RowsAffected() > 0 {
-		_, _ = s.db.Exec(r.Context(), "update testagram_video.videos set view_count=view_count+1 where id=$1", id)
-	}
-	jsonOut(w, 202, map[string]bool{"counted": tag.RowsAffected() > 0})
+	jsonOut(w, http.StatusAccepted, map[string]bool{"counted": counted})
 }
 func (s *server) like(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
@@ -659,17 +687,35 @@ func (s *server) like(w http.ResponseWriter, r *http.Request, id string) {
 		http.NotFound(w, r)
 		return
 	}
-	if _, err := s.db.Exec(r.Context(), "insert into testagram_video.video_likes(video_id,user_id) values($1,$2) on conflict do nothing", id, user); err != nil {
-		http.Error(w, "like failed", 500)
-		return
-	}
-	if _, err := s.db.Exec(r.Context(), "update testagram_video.videos set like_count=(select count(*) from testagram_video.video_likes where video_id=$1) where id=$1", id); err != nil {
-		http.Error(w, "like failed", 500)
+	// Insert the unique user/video edge and increment the denormalized counter
+	// atomically. Retries after a successful like must not increment twice.
+	_, err := s.db.Exec(r.Context(), `
+		with inserted as (
+			insert into testagram_video.video_likes(video_id,user_id)
+			values($1,$2)
+			on conflict do nothing
+			returning 1
+		),
+		updated as (
+			update testagram_video.videos
+			set like_count=like_count+1
+			where id=$1 and exists(select 1 from inserted)
+			returning 1
+		)
+		select exists(select 1 from inserted)
+	`, id, user)
+	if err != nil {
+		http.Error(w, "like failed", http.StatusInternalServerError)
 		return
 	}
 	jsonOut(w, 200, map[string]bool{"liked": true})
 }
 func (s *server) manifest(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	var status, visibility string
 	if err := s.db.QueryRow(r.Context(), "select status,visibility from testagram_video.videos where id=$1", id).Scan(&status, &visibility); err != nil || status != "ready" || visibility == "private" {
 		http.Error(w, "not available", 404)
@@ -678,17 +724,23 @@ func (s *server) manifest(w http.ResponseWriter, r *http.Request, id string) {
 	http.Redirect(w, r, fmt.Sprintf("/v1/videos/%s/hls/master.m3u8?token=%s", id, s.sign(id, time.Now().Add(6*time.Hour))), http.StatusTemporaryRedirect)
 }
 func (s *server) hls(w http.ResponseWriter, r *http.Request, id, file string) {
-	token := r.URL.Query().Get("token")
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	tokens := r.URL.Query()["token"]
+	if len(r.URL.Query()) != 1 || len(tokens) != 1 || !validVideoHLSFilename(file) {
+		http.Error(w, "invalid HLS request", http.StatusBadRequest)
+		return
+	}
+	token := tokens[0]
 	if !s.validToken(id, token) {
 		http.Error(w, "forbidden", 403)
 		return
 	}
 	if !s.publicVideoReady(r.Context(), id) {
 		http.NotFound(w, r)
-		return
-	}
-	if strings.Contains(file, "..") || strings.ContainsAny(file, "/\\") {
-		http.Error(w, "bad path", 400)
 		return
 	}
 	path := filepath.Join(s.mediaDir, "videos", "hls", id, file)
@@ -712,6 +764,33 @@ func (s *server) hls(w http.ResponseWriter, r *http.Request, id, file string) {
 	w.Header().Set("Cache-Control", "private, max-age=300")
 	http.ServeFile(w, r, path)
 }
+
+func validVideoPlaybackSession(session string) bool {
+	if len(session) < 8 || len(session) > 128 {
+		return false
+	}
+	for _, c := range session {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
+			c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+func validVideoHLSFilename(file string) bool {
+	if file == "" || len(file) > 128 || strings.Contains(file, "..") {
+		return false
+	}
+	for _, c := range file {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
+			c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return strings.Contains(file, ".")
+}
+
 func (s *server) user(r *http.Request) (string, bool) {
 	parts := strings.Fields(strings.TrimSpace(r.Header.Get("Authorization")))
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || len(parts[1]) < 8 || len(parts[1]) > 8192 {
