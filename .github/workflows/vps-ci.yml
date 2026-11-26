@@ -87,13 +87,33 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: Trendyzima/Testagram-backend-
-          ref: 46415d2860b119bf878731ae67f7c9b2d1098836
+          ref: 26e0c947ba689be95764fc9b73c024fb269b9904
           path: backend-source
           persist-credentials: false
       - name: Verify canonical Backend Federation schema contract
         run: |
           test -f backend-source/migrations/20261110_federation_outbox.sql
           grep -q 'testagram_local.federation_outbox' backend-source/internal/federationoutbox/store.go
+      - name: Verify canonical Backend native migration dependency order
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          migrations = Path("backend-source/migrations")
+          names = sorted(path.name for path in migrations.glob("*.sql"))
+          target = "20261126_native_sensitive_action_integrity.sql"
+          prerequisites = (
+              "20261019_testagram_independent_auth.sql",
+              "20261115_testagram_native_auth_cutover_foundation.sql",
+              "20261118_native_admin_console.sql",
+              "20261121_native_staff_webauthn.sql",
+          )
+          assert target in names, f"missing canonical migration: {target}"
+          assert "061_native_sensitive_action_integrity.sql" not in names, "obsolete early-sorting migration remains"
+          for prerequisite in prerequisites:
+              assert prerequisite in names and names.index(prerequisite) < names.index(target), (
+                  f"{prerequisite} must precede {target}"
+              )
+          PY
       - name: Set up canonical Backend Go toolchain
         uses: actions/setup-go@v7
         with:
