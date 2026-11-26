@@ -94,14 +94,17 @@ jobs:
         run: |
           test -f backend-source/migrations/20261110_federation_outbox.sql
           grep -q 'testagram_local.federation_outbox' backend-source/internal/federationoutbox/store.go
-      - name: Verify canonical Backend sensitive-action migration prerequisites
+      - name: Verify deferred canonical Backend migration prerequisites
         run: |
           test -f backend-source/migrations/061_native_sensitive_action_integrity.sql
+          test -f backend-source/migrations/062_testagram_knowledge_engine.sql
+          test -f backend-source/migrations/064_knowledge_topic_seed_catalog.sql
           test -f backend-source/migrations/20261115_testagram_native_auth_cutover_foundation.sql
           test -f backend-source/migrations/20261118_native_admin_console.sql
           test -f backend-source/migrations/20261121_native_staff_webauthn.sql
           grep -Fq 'if [ "$migration" = "backend-source/migrations/061_native_sensitive_action_integrity.sql" ]; then' .github/workflows/vps-ci.yml
-          grep -q 'backend-source/migrations/061_native_sensitive_action_integrity.sql' .github/workflows/vps-ci.yml
+          grep -Fq 'if [ "$migration" = "backend-source/migrations/062_testagram_knowledge_engine.sql" ]; then' .github/workflows/vps-ci.yml
+          grep -Fq 'if [ "$migration" = "backend-source/migrations/064_knowledge_topic_seed_catalog.sql" ]; then' .github/workflows/vps-ci.yml
       - name: Set up canonical Backend Go toolchain
         uses: actions/setup-go@v7
         with:
@@ -484,6 +487,15 @@ jobs:
             if [ "$migration" = "backend-source/migrations/061_native_sensitive_action_integrity.sql" ]; then
               continue
             fi
+            # Knowledge migrations use testagram_local.accounts and topics,
+            # which are provisioned by later timestamped native-product
+            # migrations. Defer both until the canonical account schema exists.
+            if [ "$migration" = "backend-source/migrations/062_testagram_knowledge_engine.sql" ]; then
+              continue
+            fi
+            if [ "$migration" = "backend-source/migrations/064_knowledge_topic_seed_catalog.sql" ]; then
+              continue
+            fi
             echo "Applying canonical Backend migration: $migration"
             docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < "$migration"
           done
@@ -491,6 +503,10 @@ jobs:
           # native identity, staff-console and WebAuthn prerequisites exist.
           echo "Applying deferred canonical Backend migration: backend-source/migrations/061_native_sensitive_action_integrity.sql"
           docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/061_native_sensitive_action_integrity.sql
+          echo "Applying deferred canonical Backend migration: backend-source/migrations/062_testagram_knowledge_engine.sql"
+          docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/062_testagram_knowledge_engine.sql
+          echo "Applying deferred canonical Backend migration: backend-source/migrations/064_knowledge_topic_seed_catalog.sql"
+          docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/064_knowledge_topic_seed_catalog.sql
           docker exec testagram-postgres psql -U postgres -d testagram -Atqc "SELECT to_regclass('testagram_local.federation_outbox') IS NOT NULL AND to_regclass('testagram_local.communication_outbox') IS NOT NULL" | grep -qx t
           docker build -f backend-source/Dockerfile -t testagram-backend-ci backend-source
           export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram
