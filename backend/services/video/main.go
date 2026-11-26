@@ -298,13 +298,72 @@ func (s *server) comments(w http.ResponseWriter, r *http.Request, id string) {
 	jsonOut(w, 201, map[string]bool{"created": true})
 }
 func (s *server) videos(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		user, ok := s.user(r)
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		rows, err := s.db.Query(r.Context(), `
+			select v.id::text,v.channel_id::text,c.handle,c.name,v.title,v.description,
+			       v.visibility,v.status,v.duration_ms,v.width,v.height,v.view_count,
+			       v.like_count,v.comment_count,v.created_at,v.updated_at,v.published_at
+			from testagram_video.videos v
+			join testagram_video.channels c on c.id=v.channel_id
+			where v.owner_id=$1
+			order by v.created_at desc,v.id desc
+			limit 100
+		`, user)
+		if err != nil {
+			http.Error(w, "creator video list failed", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		type creatorVideo struct {
+			ID string `json:"id"`
+			ChannelID string `json:"channel_id"`
+			ChannelHandle string `json:"channel_handle"`
+			ChannelName string `json:"channel_name"`
+			Title string `json:"title"`
+			Description string `json:"description"`
+			Visibility string `json:"visibility"`
+			Status string `json:"status"`
+			DurationMS int64 `json:"duration_ms"`
+			Width int `json:"width"`
+			Height int `json:"height"`
+			Views int64 `json:"views"`
+			Likes int64 `json:"likes"`
+			Comments int64 `json:"comments"`
+			CreatedAt time.Time `json:"created_at"`
+			UpdatedAt time.Time `json:"updated_at"`
+			PublishedAt *time.Time `json:"published_at"`
+		}
+		items := make([]creatorVideo, 0, 100)
+		for rows.Next() {
+			var item creatorVideo
+			if err := rows.Scan(&item.ID,&item.ChannelID,&item.ChannelHandle,&item.ChannelName,
+				&item.Title,&item.Description,&item.Visibility,&item.Status,&item.DurationMS,
+				&item.Width,&item.Height,&item.Views,&item.Likes,&item.Comments,
+				&item.CreatedAt,&item.UpdatedAt,&item.PublishedAt); err != nil {
+				http.Error(w, "creator video list failed", http.StatusInternalServerError)
+				return
+			}
+			items = append(items, item)
+		}
+		if err := rows.Err(); err != nil {
+			http.Error(w, "creator video list failed", http.StatusInternalServerError)
+			return
+		}
+		jsonOut(w, http.StatusOK, map[string]any{"items": items})
+		return
+	}
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	user, ok := s.user(r)
 	if !ok {
-		http.Error(w, "unauthorized", 401)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	select {
