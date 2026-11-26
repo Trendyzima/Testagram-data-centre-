@@ -196,6 +196,11 @@ func TestCreatorVideoReadsRequireNativeAuthentication(t *testing.T) {
 			handler: func(w http.ResponseWriter, r *http.Request) { s.videoStatus(w, r, "video-1") },
 		},
 		{
+			name: "video deletion requires native authentication",
+			path: "/v1/videos/video-1",
+			handler: func(w http.ResponseWriter, r *http.Request) { s.deleteVideo(w, r, "video-1") },
+		},
+		{
 			name: "video comments require native authentication",
 			path: "/v1/videos/video-1/comments",
 			handler: func(w http.ResponseWriter, r *http.Request) { s.comments(w, r, "video-1") },
@@ -214,6 +219,16 @@ func TestCreatorVideoReadsRequireNativeAuthentication(t *testing.T) {
 				t.Fatalf("unauthenticated request status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 			}
 		})
+	}
+}
+
+func TestVideoRouteDispatchesOwnerDeleteEndpoint(t *testing.T) {
+	s := &server{}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/v1/videos/video-1", nil)
+	s.videoRoute(recorder, request)
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("delete route response = %d, want authentication denial before data access", recorder.Code)
 	}
 }
 
