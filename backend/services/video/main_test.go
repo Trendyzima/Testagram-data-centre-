@@ -245,6 +245,9 @@ func TestVideoServiceUsesPrivateNetworksAndNotPublicEdge(t *testing.T) {
 	if !strings.Contains(videoService, "networks: [internal, platform, egress]") {
 		t.Fatalf("video service must use internal/platform/egress networks only; got:\n%s", videoService)
 	}
+	if strings.Contains(videoService, "\n    ports:") || strings.Contains(videoService, "\n    expose:") {
+		t.Fatalf("private video service must not publish or expose a container port:\n%s", videoService)
+	}
 	if strings.Contains(videoService, "edge") {
 		t.Fatalf("private video service must not join the public edge network:\n%s", videoService)
 	}
