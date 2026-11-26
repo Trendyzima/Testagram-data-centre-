@@ -87,7 +87,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: Trendyzima/Testagram-backend-
-          ref: fc51e21ca8bfc6f7402315d08998c64afece5654
+          ref: 4ca5da34222f70b120ec2bb144bc4ec40e6f6218
           path: backend-source
           persist-credentials: false
       - name: Verify canonical Backend Federation schema contract
@@ -102,9 +102,13 @@ jobs:
           test -f backend-source/migrations/20261115_testagram_native_auth_cutover_foundation.sql
           test -f backend-source/migrations/20261118_native_admin_console.sql
           test -f backend-source/migrations/20261121_native_staff_webauthn.sql
+          test -f backend-source/migrations/20261120_native_verification_decider.sql
+          test -f backend-source/migrations/20261120_native_identity_historical_attribution_archive.sql
           grep -Fq 'if [ "$migration" = "backend-source/migrations/061_native_sensitive_action_integrity.sql" ]; then' .github/workflows/vps-ci.yml
           grep -Fq 'if [ "$migration" = "backend-source/migrations/062_testagram_knowledge_engine.sql" ]; then' .github/workflows/vps-ci.yml
           grep -Fq 'if [ "$migration" = "backend-source/migrations/064_knowledge_topic_seed_catalog.sql" ]; then' .github/workflows/vps-ci.yml
+          grep -Fq 'if [ "$migration" = "backend-source/migrations/20261120_native_identity_historical_attribution_archive.sql" ]; then' .github/workflows/vps-ci.yml
+          grep -Fq 'if [ "$migration" = "backend-source/migrations/20261120_native_verification_decider.sql" ]; then' .github/workflows/vps-ci.yml
       - name: Set up canonical Backend Go toolchain
         uses: actions/setup-go@v7
         with:
@@ -478,6 +482,16 @@ jobs:
               docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/20261113_native_identity_verification.sql
             fi
             if [ "$migration" = "backend-source/migrations/20261113_native_identity_verification.sql" ]; then
+              continue
+            fi
+            # The historical attribution archive comments on and preserves the
+            # new native decider UUID. Its same-day decider migration sorts
+            # after the archive by filename, so apply the prerequisite first.
+            if [ "$migration" = "backend-source/migrations/20261120_native_identity_historical_attribution_archive.sql" ]; then
+              echo "Applying canonical Backend migration prerequisite: backend-source/migrations/20261120_native_verification_decider.sql"
+              docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/20261120_native_verification_decider.sql
+            fi
+            if [ "$migration" = "backend-source/migrations/20261120_native_verification_decider.sql" ]; then
               continue
             fi
             # The immutable sensitive-action migration depends on the native
