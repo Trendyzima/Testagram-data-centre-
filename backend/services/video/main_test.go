@@ -263,7 +263,7 @@ func TestVideoHLSRejectsInvalidMethodAndTokenQueryBeforeStorageAccess(t *testing
 		{"missing token", http.MethodGet, "/v1/videos/video-1/hls/master.m3u8", http.StatusBadRequest},
 		{"duplicate token", http.MethodGet, "/v1/videos/video-1/hls/master.m3u8?token=a&token=b", http.StatusBadRequest},
 		{"extra query", http.MethodGet, "/v1/videos/video-1/hls/master.m3u8?token=a&debug=1", http.StatusBadRequest},
-		{"unsafe filename", http.MethodGet, "/v1/videos/video-1/hls/../secret.ts?token=a", http.StatusBadRequest},
+		{"unsafe filename", http.MethodGet, "/v1/videos/video-1/hls/master..m3u8?token=a", http.StatusBadRequest},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
