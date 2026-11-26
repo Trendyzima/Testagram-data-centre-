@@ -125,6 +125,17 @@ func TestPlaybackTokenRoundTrip(t *testing.T) {
 	if s.validToken("video-1", token+".x") {
 		t.Fatal("malformed token accepted")
 	}
+	badSignature := "0" + token[1:]
+	if badSignature[0] == token[0] {
+		badSignature = "1" + token[1:]
+	}
+	if s.validToken("video-1", badSignature) {
+		t.Fatal("tampered signature accepted")
+	}
+	expired := s.sign("video-1", time.Now().Add(-time.Minute))
+	if s.validToken("video-1", expired) {
+		t.Fatal("correctly signed but expired token accepted")
+	}
 }
 
 func TestSecurityHeaders(t *testing.T) {
