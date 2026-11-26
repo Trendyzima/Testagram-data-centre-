@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -604,9 +605,20 @@ func (s *server) deleteVideo(w http.ResponseWriter, r *http.Request, id string) 
 	defer tx.Rollback(r.Context())
 
 	var owner, channelID, status string
-	if err := tx.QueryRow(r.Context(),
+	err = tx.QueryRow(r.Context(),
 		"select owner_id,channel_id,status from testagram_video.videos where id=$1 for update", id,
-	).Scan(&owner, &channelID, &status); err != nil || owner != user {
+	).Scan(&owner, &channelID, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// DELETE is idempotent for an authenticated caller. This also lets
+		// staging verify cleanup support before it creates public test media.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err != nil {
+		http.Error(w, "delete unavailable", http.StatusInternalServerError)
+		return
+	}
+	if owner != user {
 		http.NotFound(w, r)
 		return
 	}
