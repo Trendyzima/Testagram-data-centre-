@@ -201,7 +201,7 @@ func TestCreatorVideoReadsRequireNativeAuthentication(t *testing.T) {
 		{
 			name: "video likes require native authentication",
 			path: "/v1/videos/video-1/like",
-			handler: func(w http.ResponseWriter, r *http.Request) { s.like(w, r, "video-1") },
+			handler: func(w http.ResponseWriter, r *http.Request) { r.Method = http.MethodPost; s.like(w, r, "video-1") },
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
