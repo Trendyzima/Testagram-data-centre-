@@ -202,6 +202,11 @@ func TestCreatorVideoReadsRequireNativeAuthentication(t *testing.T) {
 			handler: s.channels,
 		},
 		{
+			name: "owned creator video list",
+			path: "/v1/videos",
+			handler: s.videos,
+		},
+		{
 			name: "owned video processing status",
 			path: "/v1/videos/video-1/status",
 			handler: func(w http.ResponseWriter, r *http.Request) { s.videoStatus(w, r, "video-1") },
