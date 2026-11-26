@@ -274,12 +274,24 @@ func (s *server) comments(w http.ResponseWriter, r *http.Request, id string) {
 		http.Error(w, "invalid comment", 400)
 		return
 	}
-	if _, err := s.db.Exec(r.Context(), `insert into testagram_video.comments(video_id,user_id,body) values($1,$2,$3)`, id, user, strings.TrimSpace(in.Body)); err != nil {
-		http.Error(w, "comment failed", 500)
-		return
-	}
-	if _, err := s.db.Exec(r.Context(), `update testagram_video.videos set comment_count=(select count(*) from testagram_video.comments where video_id=$1) where id=$1`, id); err != nil {
-		http.Error(w, "comment failed", 500)
+	// Persist the comment and its aggregate counter in one statement so a
+	// transient counter failure cannot leave the feed permanently inconsistent.
+	_, err := s.db.Exec(r.Context(), `
+		with inserted as (
+			insert into testagram_video.comments(video_id,user_id,body)
+			values($1,$2,$3)
+			returning 1
+		),
+		updated as (
+			update testagram_video.videos
+			set comment_count=comment_count+1
+			where id=$1 and exists(select 1 from inserted)
+			returning 1
+		)
+		select exists(select 1 from inserted)
+	`, id, user, strings.TrimSpace(in.Body))
+	if err != nil {
+		http.Error(w, "comment failed", http.StatusInternalServerError)
 		return
 	}
 	jsonOut(w, 201, map[string]bool{"created": true})
@@ -675,12 +687,25 @@ func (s *server) like(w http.ResponseWriter, r *http.Request, id string) {
 		http.NotFound(w, r)
 		return
 	}
-	if _, err := s.db.Exec(r.Context(), "insert into testagram_video.video_likes(video_id,user_id) values($1,$2) on conflict do nothing", id, user); err != nil {
-		http.Error(w, "like failed", 500)
-		return
-	}
-	if _, err := s.db.Exec(r.Context(), "update testagram_video.videos set like_count=(select count(*) from testagram_video.video_likes where video_id=$1) where id=$1", id); err != nil {
-		http.Error(w, "like failed", 500)
+	// Insert the unique user/video edge and increment the denormalized counter
+	// atomically. Retries after a successful like must not increment twice.
+	_, err := s.db.Exec(r.Context(), `
+		with inserted as (
+			insert into testagram_video.video_likes(video_id,user_id)
+			values($1,$2)
+			on conflict do nothing
+			returning 1
+		),
+		updated as (
+			update testagram_video.videos
+			set like_count=like_count+1
+			where id=$1 and exists(select 1 from inserted)
+			returning 1
+		)
+		select exists(select 1 from inserted)
+	`, id, user)
+	if err != nil {
+		http.Error(w, "like failed", http.StatusInternalServerError)
 		return
 	}
 	jsonOut(w, 200, map[string]bool{"liked": true})
