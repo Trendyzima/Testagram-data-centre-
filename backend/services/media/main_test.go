@@ -460,6 +460,35 @@ func TestEnqueueLegacyIdentityEvidencePurgesPostgresIntegration(t *testing.T) {
 	if _, err := db.Exec(ctx, `insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status) values($1,'media-public',$2,'image/jpeg',10,'deleted')`, ordinaryOwner, ordinaryKey); err != nil { t.Fatalf("insert ordinary deleted media: %v", err) }
 	if _, err := db.Exec(ctx, `insert into media_outbox(owner_id,namespace,object_key,operation,status,attempts) values($1,'media-public',$2,'delete','done',3)`, ordinaryOwner, ordinaryKey); err != nil { t.Fatalf("insert ordinary media outbox row: %v", err) }
 
+	// A missing database row must not be treated as proof that the B2 key
+	// and metadata sidecar are absent. Exercise the authenticated HTTP delete
+	// route and verify that it creates a durable permanent-purge tombstone.
+	orphanID, err := randomID()
+	if err != nil { t.Fatal(err) }
+	orphanOwner := orphanID[:8] + "-" + orphanID[8:12] + "-4" + orphanID[13:16] + "-8" + orphanID[17:20] + "-" + orphanID[20:]
+	orphanKey := "identity/" + orphanOwner + "/40000000-0000-4000-8000-000000000004/50000000-0000-4000-8000-000000000005.jpg"
+	defer func() {
+		_, _ = db.Exec(context.Background(), `delete from media_operations where owner_id=$1 and object_key=$2`, orphanOwner, orphanKey)
+		_, _ = db.Exec(context.Background(), `delete from media_outbox where owner_id=$1 and object_key=$2`, orphanOwner, orphanKey)
+		_, _ = db.Exec(context.Background(), `delete from media_objects where owner_id=$1 and object_key=$2`, orphanOwner, orphanKey)
+	}()
+	identityToken := strings.Repeat("i", 40)
+	orphanServer := &server{db:db,cfg:config{identityToken:identityToken}}
+	body := fmt.Sprintf(`{"requester_id":%q,"owner_id":%q,"namespace":"identity-evidence-private","key":%q}`,orphanOwner,orphanOwner,orphanKey)
+	request := httptest.NewRequest(http.MethodPost,"/internal/v1/identity-evidence/delete",strings.NewReader(body))
+	request.Header.Set("Authorization","Bearer "+identityToken)
+	request.Header.Set("X-Testagram-API-Version",apiVersion)
+	recorder := httptest.NewRecorder()
+	orphanServer.delete(recorder,request)
+	if recorder.Code!=http.StatusAccepted { t.Fatalf("orphaned identity evidence delete returned %d: %s",recorder.Code,recorder.Body.String()) }
+	var orphanMediaStatus,orphanOutboxStatus string
+	if err := db.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace='identity-evidence-private' and object_key=$2`,orphanOwner,orphanKey).Scan(&orphanMediaStatus); err != nil { t.Fatalf("orphan purge tombstone missing: %v",err) }
+	if err := db.QueryRow(ctx,`select status from media_outbox where owner_id=$1 and namespace='identity-evidence-private' and object_key=$2 and operation='delete'`,orphanOwner,orphanKey).Scan(&orphanOutboxStatus); err != nil { t.Fatalf("orphan purge outbox missing: %v",err) }
+	if orphanMediaStatus!="delete_pending"||orphanOutboxStatus!="pending" { t.Fatalf("orphan evidence was not durably queued: media=%q outbox=%q",orphanMediaStatus,orphanOutboxStatus) }
+	var orphanAuditCount int
+	if err := db.QueryRow(ctx,`select count(*) from media_operations where owner_id=$1 and namespace='identity-evidence-private' and object_key=$2 and operation='delete' and outcome='queued'`,orphanOwner,orphanKey).Scan(&orphanAuditCount); err != nil { t.Fatal(err) }
+	if orphanAuditCount!=1 { t.Fatalf("orphan evidence purge queued without exactly one audit event: %d",orphanAuditCount) }
+
 	s := &server{db:db}
 	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("enqueue legacy identity purge: %v", err) }
 	var mediaStatus, outboxStatus string
