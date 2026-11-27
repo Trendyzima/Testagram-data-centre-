@@ -56,6 +56,8 @@ jobs:
       B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET: ci-identity-evidence-b2
       B2_S3_ACCESS_KEY_ID: ci-b2-access
       B2_S3_SECRET_ACCESS_KEY: ci-b2-secret
+      B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID: ci-b2-identity-access
+      B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY: ci-b2-identity-secret
       CLOUDFLARE_R2_ENDPOINT: https://ci-account.r2.cloudflarestorage.com
       CLOUDFLARE_R2_REGION: auto
       CLOUDFLARE_R2_BUCKET: ci-media-replica
@@ -143,6 +145,12 @@ jobs:
           compose = Path("backend/docker-compose.yml").read_text()
           provisioner = Path("scripts/provision-media-database.sh").read_text()
           media_acceptance = Path(".github/workflows/media-provider-staging-acceptance.yml").read_text()
+          media_main = Path("backend/services/media/main.go").read_text()
+          media_compose = Path("vps/docker-compose.yml").read_text()
+          assert 'required("B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID")' in media_main, "identity evidence must use a dedicated B2 application key"
+          assert 'required("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY")' in media_main, "identity evidence must use a dedicated B2 application secret"
+          assert "B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:" in media_compose and "B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:" in media_compose, "private media container must receive the dedicated identity key only"
+          assert "TestLiveIdentityEvidenceProviderCredentialIsolation" in media_acceptance, "live acceptance must prove cross-bucket credential denial"
           assert "B2 and R2 staging endpoints must resolve to distinct hostnames" in media_acceptance, "provider acceptance must reject a shared B2/R2 endpoint"
           assert 'entrypoint: ["/bin/sh", "/scripts/provision-media-database.sh"]' in compose, "deployment media-migrate must execute the mounted database provisioner"
           assert "../scripts/provision-media-database.sh:/scripts/provision-media-database.sh:ro" in compose, "deployment media-migrate must mount the provisioner read-only"
