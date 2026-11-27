@@ -238,14 +238,15 @@ func TestMediaReadinessRequiresDedicatedMediaCredential(t *testing.T) {
 
 func TestIdentityEvidenceUsesDedicatedB2OnlyBucket(t *testing.T) {
  s := &server{cfg: config{
-  primary:s3Store{name:"b2-media",bucket:"media-b2"},
+  primary:s3Store{name:"b2-media",bucket:"media-b2",access:"media-key",secret:"media-secret"},
   replica:s3Store{name:"r2-media",bucket:"media-r2"},
-  identityPrimary:s3Store{name:"backblaze_b2_identity_evidence",bucket:"identity-b2"},
+  identityPrimary:s3Store{name:"backblaze_b2_identity_evidence",bucket:"identity-b2",access:"identity-key",secret:"identity-secret"},
   metadataPrimary:s3Store{name:"vps-metadata",bucket:"metadata-vps"},
   metadataReplica:s3Store{name:"r2-metadata",bucket:"metadata-r2"},
  }}
  p,r := s.storesForNamespace("identity-evidence-private")
  if p.bucket!="identity-b2" || p.name!="backblaze_b2_identity_evidence" { t.Fatalf("identity evidence routed to %q/%q",p.name,p.bucket) }
+ if p.access=="media-key" || p.secret=="media-secret" { t.Fatal("identity evidence reused ordinary media provider credentials") }
  if r.bucket!="" || r.name!="" { t.Fatalf("identity evidence unexpectedly has a replica: %#v",r) }
  p,r = s.storesForNamespace("media-private")
  if p.bucket!="media-b2" || r.bucket!="media-r2" { t.Fatalf("general media routing changed: %q/%q",p.bucket,r.bucket) }
