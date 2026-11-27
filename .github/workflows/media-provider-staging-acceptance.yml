@@ -121,11 +121,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for migration in backend/services/media/migrations/001_media_lifecycle.sql backend/services/media/migrations/002_primary_origin_restore.sql backend/services/media/migrations/003_identity_evidence_namespace.sql backend/services/media/migrations/004_identity_evidence_b2_only.sql backend/services/media/migrations/005_identity_evidence_permanent_purge.sql backend/services/media/migrations/006_identity_evidence_legacy_reverify.sql; do
+          for migration in backend/services/media/migrations/001_media_lifecycle.sql backend/services/media/migrations/002_primary_origin_restore.sql backend/services/media/migrations/003_identity_evidence_namespace.sql; do
+            psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration"
+          done
+          # Seed only disposable, synthetic rows so the legacy-reverification
+          # migration is exercised against stale primary/replica state and
+          # queued legacy R2 operations before the migration retires them.
+          psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/services/media/migrations/test_identity_evidence_legacy_reverify_setup.sql
+          for migration in backend/services/media/migrations/004_identity_evidence_b2_only.sql backend/services/media/migrations/005_identity_evidence_permanent_purge.sql backend/services/media/migrations/006_identity_evidence_legacy_reverify.sql; do
             psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration"
           done
           psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/services/media/migrations/test_identity_evidence_b2_only.sql
           psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/services/media/migrations/test_identity_evidence_permanent_purge.sql
+          psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/services/media/migrations/test_identity_evidence_legacy_reverify.sql
       - name: Exercise real provider round-trip, B2/R2 restore, repair and deletion
         run: go test -count=1 -run '^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete|TestLiveIdentityEvidenceLifecycle|TestLiveIdentityEvidenceProviderCredentialIsolation)$' -v ./backend/services/media
       - name: Stop isolated MinIO metadata store
