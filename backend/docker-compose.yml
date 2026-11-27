@@ -89,9 +89,7 @@ services:
       retries: 6
 
   video:
-    build:
-      context: ..
-      dockerfile: backend/services/video/Dockerfile
+    image: ${TESTAGRAM_VIDEO_IMAGE:?Set TESTAGRAM_VIDEO_IMAGE to a published immutable image digest}
     restart: unless-stopped
     depends_on:
       migrate:
@@ -115,9 +113,7 @@ services:
       start_period: 10s
 
   video-worker:
-    build:
-      context: ..
-      dockerfile: backend/services/video-worker/Dockerfile
+    image: ${TESTAGRAM_VIDEO_WORKER_IMAGE:?Set TESTAGRAM_VIDEO_WORKER_IMAGE to a published immutable image digest}
     restart: unless-stopped
     depends_on:
       migrate:
@@ -192,9 +188,7 @@ services:
     networks: [platform]
   media:
     profiles: ["media"]
-    build:
-      context: ..
-      dockerfile: backend/services/media/Dockerfile
+    image: ${TESTAGRAM_MEDIA_IMAGE:?Set TESTAGRAM_MEDIA_IMAGE to a published immutable image digest}
     restart: unless-stopped
     depends_on:
       media-migrate:
