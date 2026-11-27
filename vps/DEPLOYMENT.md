@@ -21,8 +21,11 @@ in `TESTAGRAM_BACKEND_IMAGE`; do not use the retired Fresh API image.
 - `federation-api`: optional private Federation profile. Its calls into the
   Backend use `FEDERATION_BACKEND_INTERNAL_TOKEN`; Backend calls to the
   Federation ingress use the separate `FEDERATION_INTERNAL_TOKEN`.
-- `media`: optional private Data Centre media service. B2/R2 credentials stay
-  in this service and are not passed to the Backend API container.
+- `media`: optional private Data Centre media service. Ordinary-media B2
+  credentials, the separate bucket-scoped identity-evidence B2 credentials, and
+  R2 credentials stay in this service and are not passed to the Backend API
+  container. The identity-evidence B2 key must be restricted to its dedicated
+  private bucket and must not be interchangeable with the ordinary-media key.
 - `control-plane`: Data Centre-owned infrastructure state only, using
   `DATA_CENTRE_DATABASE_URL`, separate from the canonical product
   `DATABASE_URL`.
