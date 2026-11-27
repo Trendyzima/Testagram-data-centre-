@@ -322,7 +322,8 @@ func TestMediaAuthRejectsAmbiguousAuthorizationHeaders(t *testing.T) {
 func TestIdentityCredentialIsolationUsesSignedReadOnlyVersionListing(t *testing.T) {
 	requests := make([]string, 0, 2)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Query().Get("versions") == "" ||
+		_, hasVersions := r.URL.Query()["versions"]
+		if r.Method != http.MethodGet || !hasVersions ||
 			r.URL.Query().Get("prefix") != "__testagram_identity_credential_scope_probe__/" ||
 			r.URL.Query().Get("max-keys") != "1" {
 			t.Errorf("credential isolation must use bounded read-only ListObjectVersions, got %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
