@@ -236,23 +236,32 @@ func TestMediaReadinessRequiresDedicatedMediaCredential(t *testing.T) {
 	}
 }
 
-func TestIdentityEvidenceUsesDedicatedB2AndR2Buckets(t *testing.T) {
+func TestIdentityEvidenceUsesDedicatedB2OnlyBucket(t *testing.T) {
  s := &server{cfg: config{
   primary:s3Store{name:"b2-media",bucket:"media-b2"},
   replica:s3Store{name:"r2-media",bucket:"media-r2"},
-  identityPrimary:s3Store{name:"b2-identity",bucket:"identity-b2"},
-  identityReplica:s3Store{name:"r2-identity",bucket:"identity-r2"},
+  identityPrimary:s3Store{name:"backblaze_b2_identity_evidence",bucket:"identity-b2"},
   metadataPrimary:s3Store{name:"vps-metadata",bucket:"metadata-vps"},
   metadataReplica:s3Store{name:"r2-metadata",bucket:"metadata-r2"},
  }}
  p,r := s.storesForNamespace("identity-evidence-private")
- if p.bucket!="identity-b2" || r.bucket!="identity-r2" { t.Fatalf("identity evidence routed to %q/%q",p.bucket,r.bucket) }
+ if p.bucket!="identity-b2" || p.name!="backblaze_b2_identity_evidence" { t.Fatalf("identity evidence routed to %q/%q",p.name,p.bucket) }
+ if r.bucket!="" || r.name!="" { t.Fatalf("identity evidence unexpectedly has a replica: %#v",r) }
  p,r = s.storesForNamespace("media-private")
- if p.bucket!="media-b2" || r.bucket!="media-r2" { t.Fatalf("media routed to %q/%q",p.bucket,r.bucket) }
+ if p.bucket!="media-b2" || r.bucket!="media-r2" { t.Fatalf("general media routing changed: %q/%q",p.bucket,r.bucket) }
  mp,mr := s.metadataStoresForNamespace("identity-evidence-private")
- if mp.bucket!="identity-b2" || mr.bucket!="identity-r2" { t.Fatalf("identity sidecars not isolated: %q/%q",mp.bucket,mr.bucket) }
+ if mp.bucket!="identity-b2" || mr.bucket!="" { t.Fatalf("identity metadata escaped dedicated B2 bucket: %q/%q",mp.bucket,mr.bucket) }
  mp,mr = s.metadataStoresForNamespace("media-private")
  if mp.bucket!="metadata-vps" || mr.bucket!="metadata-r2" { t.Fatalf("media metadata routing changed: %q/%q",mp.bucket,mr.bucket) }
+}
+func TestIdentityEvidenceCannotReplicateOrRestoreFromAnotherProvider(t *testing.T) {
+ s := &server{}
+ if err := s.replicate(context.Background(), "owner", "identity-evidence-private", "identity/key"); err == nil || !strings.Contains(err.Error(), "must never be replicated") {
+  t.Fatalf("identity replication was not rejected: %v", err)
+ }
+ if err := s.restorePrimary(context.Background(), "owner", "identity-evidence-private", "identity/key"); err == nil || !strings.Contains(err.Error(), "B2-only") {
+  t.Fatalf("identity restore from another provider was not rejected: %v", err)
+ }
 }
 
 func TestIdentityEvidenceBucketProbeWritesReadsAndDeletes(t *testing.T) {
