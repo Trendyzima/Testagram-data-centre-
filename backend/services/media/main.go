@@ -199,36 +199,34 @@ func (s *server) identityReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) probeIdentityEvidenceStore(ctx context.Context, store s3Store) error {
-	id, err := randomID()
+	// A readiness probe must never write synthetic objects into the identity
+	// bucket. HEAD Bucket verifies the configured B2 endpoint, bucket and
+	// credentials without creating non-identity content.
+	if err := validateStore(store); err != nil { return err }
+	base, err := url.Parse(strings.TrimRight(store.endpoint, "/"))
 	if err != nil { return err }
-	key := "system/readiness/" + id
-	payload := []byte("testagram-identity-evidence-private-readiness-v1")
-	put, err := s.signedRequest(ctx, store, http.MethodPut, key, &lengthReader{Reader: bytes.NewReader(payload), n: int64(len(payload))}, "application/octet-stream")
-	if err != nil { return fmt.Errorf("%s readiness PUT: %w", store.name, err) }
-	io.Copy(io.Discard, io.LimitReader(put.Body, 4096)); put.Body.Close()
-	if put.StatusCode < 200 || put.StatusCode >= 300 { return fmt.Errorf("%s readiness PUT status %d", store.name, put.StatusCode) }
-	cleaned := false
-	defer func() {
-		if cleaned { return }
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, key, nil, "")
-		if cleanupErr == nil { io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close() }
-	}()
-	got, err := s.signedRequest(ctx, store, http.MethodGet, key, nil, "")
-	if err != nil { return fmt.Errorf("%s readiness GET: %w", store.name, err) }
-	if got.StatusCode != http.StatusOK { got.Body.Close(); return fmt.Errorf("%s readiness GET status %d", store.name, got.StatusCode) }
-	actual, readErr := io.ReadAll(io.LimitReader(got.Body, int64(len(payload))+1))
-	got.Body.Close()
-	if readErr != nil || !bytes.Equal(actual, payload) { return fmt.Errorf("%s readiness read-back mismatch", store.name) }
-	remove, err := s.signedRequest(ctx, store, http.MethodDelete, key, nil, "")
-	if err != nil { return fmt.Errorf("%s readiness DELETE: %w", store.name, err) }
-	io.Copy(io.Discard, io.LimitReader(remove.Body, 4096))
-	remove.Body.Close()
-	if remove.StatusCode != http.StatusOK && remove.StatusCode != http.StatusNoContent && remove.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("%s readiness DELETE status %d", store.name, remove.StatusCode)
+	base.Path = "/" + store.bucket
+	date := time.Now().UTC().Format("20060102T150405Z")
+	day := date[:8]
+	payload := "UNSIGNED-PAYLOAD"
+	canonicalHeaders := "host:" + base.Host + "\nx-amz-content-sha256:" + payload + "\nx-amz-date:" + date + "\n"
+	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
+	canonical := http.MethodHead + "\n" + base.EscapedPath() + "\n\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + payload
+	scope := day + "/" + store.region + "/s3/aws4_request"
+	toSign := "AWS4-HMAC-SHA256\n" + date + "\n" + scope + "\n" + hashHex([]byte(canonical))
+	signature := hex.EncodeToString(hmacSHA(signingKey(store.secret, day, store.region), toSign))
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, base.String(), nil)
+	if err != nil { return err }
+	req.Header.Set("X-Amz-Date", date)
+	req.Header.Set("X-Amz-Content-Sha256", payload)
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+store.access+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+signature)
+	resp, err := s.http.Do(req)
+	if err != nil { return fmt.Errorf("%s bucket HEAD: %w", store.name, err) }
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s bucket HEAD status %d", store.name, resp.StatusCode)
 	}
-	cleaned = true
 	return nil
 }
 func (s *server) namespaceAllowedForRoute(w http.ResponseWriter,r *http.Request,namespace string)bool{
