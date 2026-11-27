@@ -370,7 +370,7 @@ func TestDeleteAllB2ObjectVersionsPermanentlyRemovesVersionsAndDeleteMarkers(t *
 	remaining := map[string]bool{"v3":true,"d2":true,"v1":true,"neighbor":true}
 	deleted := make([]string,0,3)
 	plainDeletes := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
 		if r.Header.Get("Authorization") == "" { t.Error("B2 request omitted SigV4 authorization") }
 		if r.Method == http.MethodGet {
 			if r.URL.Path != "/identity-bucket/" { t.Errorf("version list path=%q",r.URL.Path) }
@@ -403,9 +403,9 @@ func TestDeleteAllB2ObjectVersionsPermanentlyRemovesVersionsAndDeleteMarkers(t *
 		}
 		http.Error(w,"unexpected method",http.StatusMethodNotAllowed)
 	}))
-	defer server.Close()
-	store:=s3Store{name:"backblaze_b2_identity_evidence",endpoint:server.URL,region:"us-east-005",bucket:"identity-bucket",access:"identity-key",secret:"identity-secret"}
-	s:=&server{http:server.Client()}
+	defer httpServer.Close()
+	store:=s3Store{name:"backblaze_b2_identity_evidence",endpoint:httpServer.URL,region:"us-east-005",bucket:"identity-bucket",access:"identity-key",secret:"identity-secret"}
+	s:=&server{http:httpServer.Client()}
 	if err:=s.deleteAllB2ObjectVersions(context.Background(),store,key);err!=nil { t.Fatalf("permanent B2 version deletion: %v",err) }
 	if len(deleted)!=3 { t.Fatalf("deleted version IDs=%v, want all three data/delete-marker versions",deleted) }
 	if remaining["v3"]||remaining["d2"]||remaining["v1"] { t.Fatalf("identity evidence versions remain: %+v",remaining) }
