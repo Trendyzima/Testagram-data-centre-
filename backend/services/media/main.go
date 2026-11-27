@@ -112,6 +112,7 @@ func (s *server) writeMetadataSidecars(ctx context.Context, item reconcileItem) 
 	metadataPrimary, metadataReplica := s.metadataStoresForNamespace(item.namespace)
 	for _, store := range []s3Store{metadataPrimary, metadataReplica} {
 		if store.bucket == "" { continue }
+		if store.bucket == "" { continue }
 		reader := &lengthReader{Reader:bytes.NewReader(body), n:int64(len(body))}
 		resp, err := s.signedRequest(ctx, store, http.MethodPut, key, reader, "application/json")
 		if err != nil { return fmt.Errorf("%s metadata PUT: %w", store.name, err) }
@@ -134,6 +135,7 @@ func (s *server) deleteMetadataSidecars(ctx context.Context, namespace, key stri
 	metadataKey := key + ".metadata.json"
 	metadataPrimary, metadataReplica := s.metadataStoresForNamespace(namespace)
 	for _, store := range []s3Store{metadataPrimary, metadataReplica} {
+		if store.bucket == "" { continue }
 		resp, err := s.signedRequest(ctx, store, http.MethodDelete, metadataKey, nil, "")
 		if err != nil { return fmt.Errorf("%s metadata delete: %w", store.name, err) }
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
@@ -291,6 +293,8 @@ func (s *server) verify(w http.ResponseWriter,r *http.Request){
 				if currentStatus=="replication_failed" {
 					op:="verify";nextStatus:="uploaded"
 					if in.Namespace == "identity-evidence-private" {
+						primaryVerified = nil
+						replicaVerified = nil
 						_, _ = s.db.Exec(ctx, `update media_objects set primary_verified_at=null,replica_verified_at=null where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key)
 					}
 					if primaryVerified!=nil { op="replicate";nextStatus="replication_pending" }
@@ -392,7 +396,23 @@ func (s *server) processOne(parent context.Context)error{
 	err=tx.QueryRow(ctx,`select o.id,o.attempts,o.owner_id,o.namespace,o.object_key,o.operation from media_outbox o where o.status in ('pending','retry','processing') and o.available_at<=now() and (o.locked_until is null or o.locked_until<now()) and not exists (select 1 from media_outbox active where active.owner_id=o.owner_id and active.namespace=o.namespace and active.object_key=o.object_key and active.status='processing' and active.id<>o.id) order by o.id for update of o skip locked limit 1`).Scan(&id,&attempts,&owner,&ns,&key,&op)
 	if errors.Is(err,pgx.ErrNoRows){return nil};if err!=nil{return err}
 	_,err=tx.Exec(ctx,`update media_outbox set status='processing',locked_until=now()+interval '35 minutes',attempts=attempts+1 where id=$1`,id);if err!=nil{return err};if err=tx.Commit(ctx);err!=nil{return err};attempts++
-	switch op{case "verify":err=s.verifyPrimary(ctx,owner,ns,key);case "replicate":err=s.replicate(ctx,owner,ns,key);case "restore_primary":err=s.restorePrimary(ctx,owner,ns,key);case "delete":err=s.deleteOrigins(ctx,owner,ns,key);default:err=fmt.Errorf("unknown outbox operation %q",op)}
+	switch op {
+	case "verify":
+		err = s.verifyPrimary(ctx, owner, ns, key)
+	case "replicate":
+		if ns == "identity-evidence-private" {
+			_, _ = s.db.Exec(ctx, `update media_objects set primary_verified_at=null,replica_verified_at=null,status='uploaded' where owner_id=$1 and namespace=$2 and object_key=$3 and status not in ('delete_pending','deleted')`, owner, ns, key)
+			err = s.verifyPrimary(ctx, owner, ns, key)
+		} else {
+			err = s.replicate(ctx, owner, ns, key)
+		}
+	case "restore_primary":
+		err = s.restorePrimary(ctx, owner, ns, key)
+	case "delete":
+		err = s.deleteOrigins(ctx, owner, ns, key)
+	default:
+		err = fmt.Errorf("unknown outbox operation %q", op)
+	}
 	if err!=nil{
 		var objectStatus string
 		stateErr:=s.db.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&objectStatus)
@@ -421,6 +441,14 @@ func (s *server) verifyPrimary(ctx context.Context,owner,ns,key string)error{
 	if resp.ContentLength>=0&&resp.ContentLength!=size{return errors.New("primary object size mismatch")}
 	if got:=strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"),";")[0]);got!=""&&got!=typ{return errors.New("primary object content type mismatch")}
 	h:=sha256.New();n,err:=io.Copy(h,io.LimitReader(resp.Body,size+1));if err!=nil{return err};if n!=size||hex.EncodeToString(h.Sum(nil))!=want{return errors.New("primary object size or SHA-256 mismatch")}
+	if ns == "identity-evidence-private" {
+		item := reconcileItem{owner:owner,namespace:ns,key:key,contentType:typ,size:size,expectedSHA:want}
+		if err := s.writeMetadataSidecars(ctx, item); err != nil { return err }
+		tag, err := s.db.Exec(ctx, `update media_objects set status='protected',primary_verified_at=now(),replica_verified_at=null,reconciled_at=now(),reconciliation_claimed_at=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('uploaded','replication_failed') and primary_verified_at is null`, owner, ns, key)
+		if err != nil { return err }
+		if tag.RowsAffected() != 1 { return errors.New("identity evidence lifecycle changed during B2 verification") }
+		return nil
+	}
 	tx,err:=s.db.Begin(ctx);if err!=nil{return err};defer tx.Rollback(ctx)
 	now:=time.Now().UTC()
 	tag,err:=tx.Exec(ctx,`update media_objects set status='replication_pending',primary_verified_at=$4,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('uploaded','replication_failed') and primary_verified_at is null`,owner,ns,key,now)
@@ -430,6 +458,7 @@ func (s *server) verifyPrimary(ctx context.Context,owner,ns,key string)error{
 	if err==nil{err=tx.Commit(ctx)};return err
 }
 func (s *server) replicate(ctx context.Context,owner,ns,key string)error{
+	if ns == "identity-evidence-private" { return errors.New("identity evidence must never be replicated to another provider") }
 	var size int64;var typ,want string
 	if err:=s.db.QueryRow(ctx,`select size_bytes,content_type,sha256 from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&size,&typ,&want);err!=nil{return err}
 	primary, replica := s.storesForNamespace(ns)
@@ -440,12 +469,6 @@ func (s *server) replicate(ctx context.Context,owner,ns,key string)error{
 	check,err:=s.signedRequest(ctx,replica,http.MethodGet,key,nil,"");if err!=nil{return err};defer check.Body.Close();if check.StatusCode!=200{return fmt.Errorf("replica read-back status %d",check.StatusCode)}
 	h2:=sha256.New();n,err:=io.Copy(h2,io.LimitReader(check.Body,size+1));if err!=nil||n!=size||hex.EncodeToString(h2.Sum(nil))!=want{return errors.New("replica read-back SHA-256 or size mismatch")}
 	if err:=s.writeMetadataSidecars(ctx,reconcileItem{owner:owner,namespace:ns,key:key,contentType:typ,size:size,expectedSHA:want});err!=nil{return err}
-	if ns == "identity-evidence-private" {
-		tag, err := s.db.Exec(ctx, `update media_objects set status='protected',primary_verified_at=now(),replica_verified_at=null,reconciled_at=now(),reconciliation_claimed_at=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('uploaded','replication_failed')`, owner, ns, key)
-		if err != nil { return err }
-		if tag.RowsAffected() != 1 { return errors.New("identity evidence lifecycle changed during B2 verification") }
-		return nil
-	}
 	now:=time.Now().UTC();_,err=s.db.Exec(ctx,`update media_objects set status='protected',replica_verified_at=$4,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('replication_pending','replication_failed')`,owner,ns,key,now);return err
 }
 // restorePrimary rebuilds a missing or corrupt primary only from a replica that
@@ -453,6 +476,7 @@ func (s *server) replicate(ctx context.Context,owner,ns,key string)error{
 // (and therefore unavailable for download) until the restored primary passes a full read-back.
 // The outbox's per-object processing lease serializes this with deletion and other repairs.
 func (s *server) restorePrimary(ctx context.Context,owner,ns,key string)error{
+	if ns == "identity-evidence-private" { return errors.New("identity evidence is B2-only and cannot be restored from another provider") }
 	var size int64
 	var typ,want,status string
 	if err:=s.db.QueryRow(ctx,`select size_bytes,content_type,sha256,status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&size,&typ,&want,&status);err!=nil{return err}
