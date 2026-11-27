@@ -514,6 +514,11 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	statusResp = call(http.MethodGet, statusRoute, identityToken, nil)
 	decode(statusResp, &state, http.StatusOK)
 	if state["status"] != "deleted" { t.Fatalf("identity evidence deletion state=%v, want deleted", state["status"]) }
+	var deletionAuditCount int
+	if err := s.db.QueryRow(ctx, `SELECT count(*) FROM media_operations WHERE owner_id=$1 AND namespace='identity-evidence-private' AND object_key=$2 AND operation='delete' AND outcome='succeeded'`, owner, key).Scan(&deletionAuditCount); err != nil {
+		t.Fatalf("read identity evidence deletion audit: %v", err)
+	}
+	if deletionAuditCount != 1 { t.Fatalf("identity evidence physical deletion audit events=%d, want exactly one durable success event", deletionAuditCount) }
 	for _, store := range []s3Store{identityPrimary} {
 		head, err := s.signedRequest(ctx, store, http.MethodHead, key+".metadata.json", nil, "")
 		if err != nil { t.Fatalf("%s identity metadata HEAD after deletion: %v", store.name, err) }
