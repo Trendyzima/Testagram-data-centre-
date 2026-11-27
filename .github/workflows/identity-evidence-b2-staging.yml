@@ -1,0 +1,142 @@
+name: identity-evidence-b2-staging-acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_staging_provider_writes:
+        description: "Type true to authorize writes and permanent deletion in the dedicated NON-PRODUCTION B2 staging buckets"
+        required: true
+        type: choice
+        options:
+          - "false"
+          - "true"
+        default: "false"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: identity-evidence-b2-staging-acceptance
+  cancel-in-progress: false
+
+jobs:
+  authenticated-b2-staging:
+    name: Authenticated B2 identity-evidence lifecycle
+    if: ${{ inputs.confirm_staging_provider_writes == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testagram-staging-only
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      MEDIA_DATABASE_URL: postgres://postgres:testagram-staging-only@127.0.0.1:5432/testagram_media_staging?sslmode=disable
+      TESTAGRAM_LIVE_MEDIA_SMOKE: "true"
+      MEDIA_INTERNAL_TOKEN: ${{ secrets.MEDIA_SMOKE_INTERNAL_TOKEN }}
+      IDENTITY_EVIDENCE_INTERNAL_TOKEN: ${{ secrets.MEDIA_SMOKE_IDENTITY_INTERNAL_TOKEN }}
+      MEDIA_SMOKE_B2_ENDPOINT: ${{ secrets.MEDIA_SMOKE_B2_ENDPOINT }}
+      MEDIA_SMOKE_B2_REGION: ${{ secrets.MEDIA_SMOKE_B2_REGION }}
+      MEDIA_SMOKE_B2_BUCKET: ${{ secrets.MEDIA_SMOKE_B2_BUCKET }}
+      MEDIA_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_B2_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_B2_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_B2_IDENTITY_BUCKET: ${{ secrets.MEDIA_SMOKE_B2_IDENTITY_BUCKET }}
+      MEDIA_SMOKE_B2_IDENTITY_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_B2_IDENTITY_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_B2_IDENTITY_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_B2_IDENTITY_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_R2_ENDPOINT: ${{ secrets.MEDIA_SMOKE_R2_ENDPOINT }}
+      MEDIA_SMOKE_R2_REGION: ${{ secrets.MEDIA_SMOKE_R2_REGION }}
+      MEDIA_SMOKE_R2_BUCKET: ${{ secrets.MEDIA_SMOKE_R2_BUCKET }}
+      MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.MEDIA_SMOKE_R2_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_SMOKE_R2_SECRET_ACCESS_KEY }}
+
+    steps:
+      - name: Refuse unconfirmed provider writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.confirm_staging_provider_writes }}" != "true" ]]; then
+            echo "Provider writes were not explicitly authorized."
+            exit 1
+          fi
+          echo "Explicit non-production staging write authorization confirmed."
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: false
+
+      - name: Validate isolated staging configuration without printing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            MEDIA_INTERNAL_TOKEN IDENTITY_EVIDENCE_INTERNAL_TOKEN
+            MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION
+            MEDIA_SMOKE_B2_BUCKET MEDIA_SMOKE_B2_ACCESS_KEY_ID
+            MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_B2_IDENTITY_BUCKET
+            MEDIA_SMOKE_B2_IDENTITY_ACCESS_KEY_ID MEDIA_SMOKE_B2_IDENTITY_SECRET_ACCESS_KEY
+            MEDIA_SMOKE_R2_ENDPOINT MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_BUCKET
+            MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY
+          )
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Required staging secret is missing: $name"
+              exit 1
+            fi
+          done
+          [[ "${#MEDIA_INTERNAL_TOKEN}" -ge 32 ]]
+          [[ "${#IDENTITY_EVIDENCE_INTERNAL_TOKEN}" -ge 32 ]]
+          [[ "$MEDIA_INTERNAL_TOKEN" != "$IDENTITY_EVIDENCE_INTERNAL_TOKEN" ]]
+          [[ "$MEDIA_SMOKE_B2_BUCKET" != "$MEDIA_SMOKE_B2_IDENTITY_BUCKET" ]]
+          [[ "$MEDIA_SMOKE_B2_ACCESS_KEY_ID" != "$MEDIA_SMOKE_B2_IDENTITY_ACCESS_KEY_ID" ]]
+          [[ "$MEDIA_SMOKE_B2_SECRET_ACCESS_KEY" != "$MEDIA_SMOKE_B2_IDENTITY_SECRET_ACCESS_KEY" ]]
+          [[ "$MEDIA_SMOKE_B2_ENDPOINT" == "$MEDIA_SMOKE_R2_ENDPOINT" || "$MEDIA_SMOKE_B2_ENDPOINT" != "$MEDIA_SMOKE_R2_ENDPOINT" ]]
+          echo "Required credentials are present and distinct; values were not logged."
+
+      - name: Provision isolated media database and apply migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 40); do
+            if pg_isready -h 127.0.0.1 -p 5432 -U postgres -d postgres; then break; fi
+            if [[ "$attempt" -eq 40 ]]; then
+              echo "::error::Staging PostgreSQL did not become healthy"
+              exit 1
+            fi
+            sleep 2
+          done
+          createdb -h 127.0.0.1 -U postgres testagram_media_staging
+          for migration in \
+            backend/services/media/migrations/001_media_lifecycle.sql \
+            backend/services/media/migrations/002_primary_origin_restore.sql \
+            backend/services/media/migrations/003_identity_evidence_namespace.sql \
+            backend/services/media/migrations/004_identity_evidence_b2_only.sql \
+            backend/services/media/migrations/005_identity_evidence_permanent_purge.sql; do
+            psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration"
+          done
+          psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/services/media/migrations/test_identity_evidence_permanent_purge.sql
+
+      - name: Run real B2 lifecycle and provider credential-isolation acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./backend/services/media \
+            -run '^TestLiveIdentityEvidence(Lifecycle|ProviderCredentialIsolation)$' \
+            -count=1 -timeout=20m -v
+
+      - name: Report acceptance boundary
+        if: always()
+        run: |
+          echo "This workflow only tests explicitly configured non-production provider buckets."
+          echo "A successful result does not authorize production deletion, retention activation, or deployment."
