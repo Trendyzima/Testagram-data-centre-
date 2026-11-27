@@ -26,7 +26,7 @@ Environment secrets:
 - `MEDIA_STAGING_INTERNAL_TOKEN`
 - `MEDIA_STAGING_IDENTITY_EVIDENCE_INTERNAL_TOKEN`
 
-The media and identity-evidence service tokens must be different and at least 32 characters. Each endpoint must use HTTPS. Each bucket name must explicitly contain `ci`, `staging` or `smoke`, must not contain `prod` or `production`, and the identity-evidence bucket must be distinct from the ordinary media bucket for that provider, and the R2 metadata bucket must be distinct from R2 private, public and identity-evidence buckets.
+The media and identity-evidence service tokens must be different and at least 32 characters. Each endpoint must use HTTPS. B2 and R2 must also resolve to distinct hostnames; a single provider endpoint cannot satisfy both sides of the replication test. Each bucket name must explicitly contain `ci`, `staging` or `smoke`, must not contain `prod` or `production`, and the identity-evidence bucket must be distinct from the ordinary media bucket for that provider, and the R2 metadata bucket must be distinct from R2 private, public and identity-evidence buckets.
 
 ## Run
 
