@@ -164,6 +164,26 @@ func TestLiveMediaReplicationRestoreDelete(t *testing.T) {
 	}
 	primary := readStore("MEDIA_SMOKE_B2", "backblaze_b2")
 	replica := readStore("MEDIA_SMOKE_R2", "cloudflare_r2")
+	metadataPrimary := s3Store{
+		name: "instabox_vps_metadata",
+		endpoint: os.Getenv("MEDIA_SMOKE_MINIO_METADATA_ENDPOINT"),
+		region: os.Getenv("MEDIA_SMOKE_MINIO_METADATA_REGION"),
+		bucket: os.Getenv("MEDIA_SMOKE_MINIO_METADATA_BUCKET"),
+		access: os.Getenv("MEDIA_SMOKE_MINIO_METADATA_ACCESS_KEY_ID"),
+		secret: os.Getenv("MEDIA_SMOKE_MINIO_METADATA_SECRET_ACCESS_KEY"),
+	}
+	metadataReplica := replica
+	metadataReplica.name = "cloudflare_r2_metadata"
+	metadataReplica.bucket = os.Getenv("MEDIA_SMOKE_R2_METADATA_BUCKET")
+	if err := validateStore(metadataPrimary); err != nil {
+		t.Fatalf("VPS MinIO metadata smoke configuration invalid: %v", err)
+	}
+	if err := validateStore(metadataReplica); err != nil {
+		t.Fatalf("R2 metadata smoke configuration invalid: %v", err)
+	}
+	if metadataReplica.bucket == replica.bucket {
+		t.Fatal("R2 metadata sidecar bucket must be distinct from the media bucket")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	db, err := pgxpool.New(ctx, databaseURL)
@@ -175,7 +195,7 @@ func TestLiveMediaReplicationRestoreDelete(t *testing.T) {
 		t.Fatalf("media smoke database unavailable: %v", err)
 	}
 	s := &server{
-		cfg: config{token: token, primary: primary, replica: replica},
+		cfg: config{token: token, primary: primary, replica: replica, metadataPrimary: metadataPrimary, metadataReplica: metadataReplica},
 		db: db,
 		http: &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -192,11 +212,13 @@ func TestLiveMediaReplicationRestoreDelete(t *testing.T) {
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanupCancel()
-		for _, store := range []s3Store{primary, replica} {
-			resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, key, nil, "")
-			if cleanupErr == nil {
-				io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-				resp.Body.Close()
+		for _, store := range []s3Store{primary, replica, metadataPrimary, metadataReplica} {
+			for _, objectKey := range []string{key, key + ".metadata.json"} {
+				resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, objectKey, nil, "")
+				if cleanupErr == nil {
+					io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+					resp.Body.Close()
+				}
 			}
 		}
 		_, _ = db.Exec(cleanupCtx, `delete from media_operations where owner_id=$1 and namespace=$2 and object_key=$3`, owner, item.namespace, key)
@@ -281,6 +303,17 @@ func TestLiveMediaReplicationRestoreDelete(t *testing.T) {
 		t.Fatalf("process durable two-provider deletion: %v", err)
 	}
 	assertState("deleted")
+	for _, store := range []s3Store{metadataPrimary, metadataReplica} {
+		head, err := s.signedRequest(ctx, store, http.MethodHead, key+".metadata.json", nil, "")
+		if err != nil {
+			t.Fatalf("%s metadata HEAD after deletion: %v", store.name, err)
+		}
+		io.Copy(io.Discard, io.LimitReader(head.Body, 4096))
+		head.Body.Close()
+		if head.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s retained media metadata sidecar after deletion (HTTP %d)", store.name, head.StatusCode)
+		}
+	}
 	for _, store := range []s3Store{primary, replica} {
 		head, err := s.signedRequest(ctx, store, http.MethodHead, key, nil, "")
 		if err != nil {
@@ -360,8 +393,10 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanupCancel()
 		for _, store := range []s3Store{identityPrimary, identityReplica} {
-			resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, key, nil, "")
-			if cleanupErr == nil { io.Copy(io.Discard, io.LimitReader(resp.Body,4096)); resp.Body.Close() }
+			for _, objectKey := range []string{key, key + ".metadata.json"} {
+				resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, objectKey, nil, "")
+				if cleanupErr == nil { io.Copy(io.Discard, io.LimitReader(resp.Body,4096)); resp.Body.Close() }
+			}
 		}
 		_, _ = db.Exec(cleanupCtx, "delete from media_operations where owner_id=$1 and namespace=$2 and object_key=$3", owner, item.namespace, key)
 		_, _ = db.Exec(cleanupCtx, "delete from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3", owner, item.namespace, key)
@@ -477,6 +512,12 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	statusResp = call(http.MethodGet, statusRoute, identityToken, nil)
 	decode(statusResp, &state, http.StatusOK)
 	if state["status"] != "deleted" { t.Fatalf("identity evidence deletion state=%v, want deleted", state["status"]) }
+	for _, store := range []s3Store{identityPrimary, identityReplica} {
+		head, err := s.signedRequest(ctx, store, http.MethodHead, key+".metadata.json", nil, "")
+		if err != nil { t.Fatalf("%s identity metadata HEAD after deletion: %v", store.name, err) }
+		io.Copy(io.Discard, io.LimitReader(head.Body,4096)); head.Body.Close()
+		if head.StatusCode != http.StatusNotFound { t.Fatalf("%s retained identity metadata sidecar after deletion (HTTP %d)", store.name, head.StatusCode) }
+	}
 	for _, store := range []s3Store{identityPrimary, identityReplica} {
 		head, err := s.signedRequest(ctx, store, http.MethodHead, key, nil, "")
 		if err != nil { t.Fatalf("%s HEAD after identity evidence deletion: %v", store.name, err) }
