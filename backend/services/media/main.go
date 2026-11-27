@@ -660,7 +660,7 @@ func (s *server) deleteOrigins(ctx context.Context, owner, namespace, key string
 		select exists(
 			select 1 from media_upload_grants
 			where owner_id=$1 and namespace=$2 and object_key=$3
-			  and expires_at + interval '60 seconds' > now()
+			  and expires_at + interval '5 minutes' > now()
 		)
 	`, owner, namespace, key).Scan(&uploadURLStillValid); err != nil {
 		return fmt.Errorf("check outstanding presigned upload grants: %w", err)
