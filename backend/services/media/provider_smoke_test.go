@@ -349,6 +349,11 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	identityPrimary := primary
 	identityPrimary.name = "backblaze_b2_identity_evidence"
 	identityPrimary.bucket = os.Getenv("MEDIA_SMOKE_B2_IDENTITY_BUCKET")
+	identityPrimary.access = os.Getenv("MEDIA_SMOKE_B2_IDENTITY_ACCESS_KEY_ID")
+	identityPrimary.secret = os.Getenv("MEDIA_SMOKE_B2_IDENTITY_SECRET_ACCESS_KEY")
+	if identityPrimary.access == primary.access || identityPrimary.secret == primary.secret {
+		t.Fatal("identity evidence B2 credentials must be distinct from ordinary media B2 credentials")
+	}
 	if err := validateStore(identityPrimary); err != nil { t.Fatalf("B2 identity evidence smoke configuration invalid: %v", err) }
 	if identityPrimary.bucket == primary.bucket {
 		t.Fatal("B2 identity evidence smoke bucket must be distinct from the ordinary media bucket")
