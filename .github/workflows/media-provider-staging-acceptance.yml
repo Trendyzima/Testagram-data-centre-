@@ -120,7 +120,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for migration in backend/services/media/migrations/001_media_lifecycle.sql backend/services/media/migrations/002_primary_origin_restore.sql backend/services/media/migrations/003_identity_evidence_namespace.sql backend/services/media/migrations/004_identity_evidence_b2_only.sql backend/services/media/migrations/005_identity_evidence_permanent_purge.sql; do
+          for migration in backend/services/media/migrations/001_media_lifecycle.sql backend/services/media/migrations/002_primary_origin_restore.sql backend/services/media/migrations/003_identity_evidence_namespace.sql backend/services/media/migrations/004_identity_evidence_b2_only.sql backend/services/media/migrations/005_identity_evidence_permanent_purge.sql backend/services/media/migrations/006_identity_evidence_legacy_reverify.sql; do
             psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration"
           done
           psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/services/media/migrations/test_identity_evidence_b2_only.sql

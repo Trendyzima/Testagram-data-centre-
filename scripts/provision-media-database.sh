@@ -59,5 +59,6 @@ psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/002_primary_origin_
 psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/003_identity_evidence_namespace.sql
 psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/004_identity_evidence_b2_only.sql
 psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/005_identity_evidence_permanent_purge.sql
+psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/006_identity_evidence_legacy_reverify.sql
 
 echo "Media database provisioned and migrations applied using the dedicated non-superuser role."
