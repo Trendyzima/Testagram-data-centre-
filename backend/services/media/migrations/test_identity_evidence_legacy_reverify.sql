@@ -50,3 +50,8 @@ BEGIN
     RAISE EXCEPTION 'legacy identity replica or restore job remains executable';
   END IF;
 END $$;
+
+-- Remove deterministic fixtures after all assertions pass.
+DELETE FROM media_operations WHERE owner_id IN ('legacy-owner-1','legacy-owner-2','legacy-owner-3');
+DELETE FROM media_outbox WHERE owner_id IN ('legacy-owner-1','legacy-owner-2','legacy-owner-3');
+DELETE FROM media_objects WHERE owner_id IN ('legacy-owner-1','legacy-owner-2','legacy-owner-3');
