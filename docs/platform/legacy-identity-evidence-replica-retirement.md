@@ -4,7 +4,7 @@
 
 The live application path for identity-verification photos/documents is exclusively the dedicated private Backblaze B2 identity-evidence bucket. No new identity object or metadata sidecar may be written to Cloudflare R2, InstaBox MinIO, general-media buckets or the CDN.
 
-The B2-only source change prevents new R2/MinIO writes and prevents application-level R2 replica reads/restores. Migration `004_identity_evidence_b2_only.sql` clears stale replica verification timestamps and dead-letters queued legacy R2-to-B2 restore jobs so they cannot silently execute.
+The B2-only source change prevents new R2/MinIO writes and prevents application-level R2 replica reads/restores. Migration `004_identity_evidence_b2_only.sql` clears stale replica verification timestamps and dead-letters queued legacy R2-to-B2 restore jobs so they cannot silently execute. Migration `006_identity_evidence_legacy_reverify.sql` then queues direct verification against the dedicated B2 primary for legacy objects whose primary verification was cleared. It reuses the existing verification worker, validates the stored size and SHA-256, and never restores from R2. The migration is repeat-safe and records its queue action in the media operations audit journal.
 
 ## Important: historical bytes are a separate cleanup gate
 

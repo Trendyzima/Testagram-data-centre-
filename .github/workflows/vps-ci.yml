@@ -163,9 +163,31 @@ jobs:
           assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/002_primary_origin_restore.sql' in provisioner, "media provisioner must apply the primary restoration migration"
           assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/003_identity_evidence_namespace.sql' in provisioner, "media provisioner must apply the isolated identity evidence namespace migration"
           assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/004_identity_evidence_b2_only.sql' in provisioner, "media provisioner must retire identity replica state and legacy R2 restores"
+          assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/006_identity_evidence_legacy_reverify.sql' in provisioner, "media provisioner must queue legacy identity objects for direct B2 verification"
+          assert '006_identity_evidence_legacy_reverify.sql' in media_compose, "media migration container must apply legacy identity B2 re-verification"
           PY
       - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker ./backend/services/platform ./backend/services/media
 
+      - name: Verify legacy identity evidence is requeued for direct B2 verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network host \
+            -e PGPASSWORD=testagram \
+            -v "$PWD:/workspace:ro" \
+            postgres:17-alpine \
+            sh -ec 'createdb -h 127.0.0.1 -U postgres testagram_identity_reverify_ci;
+              psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/001_media_lifecycle.sql;
+              psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/002_primary_origin_restore.sql;
+              psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/003_identity_evidence_namespace.sql;
+              psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -c "INSERT INTO media_objects(owner_id,namespace,object_key,content_type,size_bytes,sha256,status,primary_verified_at,replica_verified_at) VALUES (\$\$legacy-owner-1\$\$ ,\$\$identity-evidence-private\$\$,\$\$identity/legacy-replication\$\$,\$\$image/jpeg\$\$,4,repeat(\$\$a\$\$,64),\$\$replication_pending\$\$,now(),now()),(\$\$legacy-owner-2\$\$,\$\$identity-evidence-private\$\$,\$\$identity/legacy-restore\$\$,\$\$image/jpeg\$\$,4,repeat(\$\$b\$\$,64),\$\$restore_pending\$\$,NULL,now()),(\$\$legacy-owner-3\$\$,\$\$identity-evidence-private\$\$,\$\$identity/legacy-replication-failed\$\$,\$\$image/jpeg\$\$,4,repeat(\$\$c\$\$,64),\$\$replication_failed\$\$,now(),now()); INSERT INTO media_outbox(owner_id,namespace,object_key,operation,status) VALUES (\$\$legacy-owner-1\$\$ ,\$\$identity-evidence-private\$\$,\$\$identity/legacy-replication\$\$,\$\$replicate\$\$,\$\$retry\$\$),(\$\$legacy-owner-2\$\$,\$\$identity-evidence-private\$\$,\$\$identity/legacy-restore\$\$,\$\$restore_primary\$\$,\$\$retry\$\$),(\$\$legacy-owner-1\$\$ ,\$\$identity-evidence-private\$\$,\$\$identity/legacy-replication\$\$,\$\$verify\$\$,\$\$done\$\$);";
+              psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/004_identity_evidence_b2_only.sql;
+              psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/005_identity_evidence_permanent_purge.sql;
+              psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/006_identity_evidence_legacy_reverify.sql;
+              psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/test_identity_evidence_b2_only.sql;
+              psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/test_identity_evidence_legacy_reverify.sql;
+              psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/006_identity_evidence_legacy_reverify.sql;
+              psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/test_identity_evidence_legacy_reverify.sql'
       - name: Exercise isolated media database bootstrap and least-privilege role
         shell: bash
         run: |
