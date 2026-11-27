@@ -238,14 +238,15 @@ func TestMediaReadinessRequiresDedicatedMediaCredential(t *testing.T) {
 
 func TestIdentityEvidenceUsesDedicatedB2OnlyBucket(t *testing.T) {
  s := &server{cfg: config{
-  primary:s3Store{name:"b2-media",bucket:"media-b2"},
+  primary:s3Store{name:"b2-media",bucket:"media-b2",access:"media-key",secret:"media-secret"},
   replica:s3Store{name:"r2-media",bucket:"media-r2"},
-  identityPrimary:s3Store{name:"backblaze_b2_identity_evidence",bucket:"identity-b2"},
+  identityPrimary:s3Store{name:"backblaze_b2_identity_evidence",bucket:"identity-b2",access:"identity-key",secret:"identity-secret"},
   metadataPrimary:s3Store{name:"vps-metadata",bucket:"metadata-vps"},
   metadataReplica:s3Store{name:"r2-metadata",bucket:"metadata-r2"},
  }}
  p,r := s.storesForNamespace("identity-evidence-private")
  if p.bucket!="identity-b2" || p.name!="backblaze_b2_identity_evidence" { t.Fatalf("identity evidence routed to %q/%q",p.name,p.bucket) }
+ if p.access=="media-key" || p.secret=="media-secret" { t.Fatal("identity evidence reused ordinary media provider credentials") }
  if r.bucket!="" || r.name!="" { t.Fatalf("identity evidence unexpectedly has a replica: %#v",r) }
  p,r = s.storesForNamespace("media-private")
  if p.bucket!="media-b2" || r.bucket!="media-r2" { t.Fatalf("general media routing changed: %q/%q",p.bucket,r.bucket) }
@@ -337,5 +338,27 @@ func TestIdentityEvidenceReadinessUsesReadOnlyBucketHead(t *testing.T) {
 	if err := s.probeIdentityEvidenceStore(context.Background(), store); err != nil { t.Fatalf("read-only B2 readiness failed: %v",err) }
 	if len(methods)!=1 || methods[0]!=http.MethodHead || len(paths)!=1 || paths[0]!="/identity-evidence-private" {
 		t.Fatalf("readiness performed unexpected object operations: methods=%v paths=%v",methods,paths)
+	}
+}
+
+
+func TestIdentityEvidenceB2StoreRequiresSeparateBucketAndApplicationKey(t *testing.T) {
+	media := s3Store{name:"backblaze_b2",endpoint:"https://s3.us-west-004.backblazeb2.com",region:"us-west-004",bucket:"ordinary-media-staging",access:"media-key-id",secret:"media-secret"}
+	identity := s3Store{name:"backblaze_b2_identity_evidence",endpoint:media.endpoint,region:media.region,bucket:"identity-evidence-staging",access:"identity-key-id",secret:"identity-secret"}
+	if err := validateIdentityStoreIsolation(media,identity); err != nil { t.Fatalf("separate identity store rejected: %v",err) }
+
+	cases := []struct{name string; mutate func(*s3Store)}{
+		{"shared bucket",func(s *s3Store){s.bucket=media.bucket}},
+		{"shared access key",func(s *s3Store){s.access=media.access}},
+		{"shared secret",func(s *s3Store){s.secret=media.secret}},
+		{"different endpoint",func(s *s3Store){s.endpoint="https://other.example.invalid"}},
+		{"different region",func(s *s3Store){s.region="us-east-1"}},
+	}
+	for _,tc:=range cases {
+		t.Run(tc.name,func(t *testing.T){
+			candidate:=identity
+			tc.mutate(&candidate)
+			if err:=validateIdentityStoreIsolation(media,candidate);err==nil{t.Fatalf("%s was accepted",tc.name)}
+		})
 	}
 }

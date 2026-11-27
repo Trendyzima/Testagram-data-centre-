@@ -46,6 +46,8 @@ jobs:
       MEDIA_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.MEDIA_STAGING_B2_ACCESS_KEY_ID }}
       MEDIA_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_STAGING_B2_SECRET_ACCESS_KEY }}
       MEDIA_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.MEDIA_STAGING_B2_IDENTITY_BUCKET }}
+      MEDIA_SMOKE_B2_IDENTITY_ACCESS_KEY_ID: ${{ secrets.MEDIA_STAGING_B2_IDENTITY_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_B2_IDENTITY_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_STAGING_B2_IDENTITY_SECRET_ACCESS_KEY }}
       MEDIA_SMOKE_R2_ENDPOINT: ${{ vars.MEDIA_STAGING_R2_ENDPOINT }}
       MEDIA_SMOKE_R2_REGION: ${{ vars.MEDIA_STAGING_R2_REGION }}
       MEDIA_SMOKE_R2_BUCKET: ${{ vars.MEDIA_STAGING_R2_PRIVATE_BUCKET }}
@@ -72,11 +74,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in MEDIA_INTERNAL_TOKEN IDENTITY_EVIDENCE_INTERNAL_TOKEN MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION MEDIA_SMOKE_B2_BUCKET MEDIA_SMOKE_B2_ACCESS_KEY_ID MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_B2_IDENTITY_BUCKET MEDIA_SMOKE_R2_ENDPOINT MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_BUCKET MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_METADATA_BUCKET MEDIA_SMOKE_R2_PUBLIC_BUCKET; do
+          for name in MEDIA_INTERNAL_TOKEN IDENTITY_EVIDENCE_INTERNAL_TOKEN MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION MEDIA_SMOKE_B2_BUCKET MEDIA_SMOKE_B2_ACCESS_KEY_ID MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_B2_IDENTITY_BUCKET MEDIA_SMOKE_B2_IDENTITY_ACCESS_KEY_ID MEDIA_SMOKE_B2_IDENTITY_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_ENDPOINT MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_BUCKET MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_METADATA_BUCKET MEDIA_SMOKE_R2_PUBLIC_BUCKET; do
             [[ -n "${!name:-}" ]] || { echo "::error::Missing media-staging environment setting: $name"; exit 1; }
           done
           [[ "${#MEDIA_INTERNAL_TOKEN}" -ge 32 && "${#IDENTITY_EVIDENCE_INTERNAL_TOKEN}" -ge 32 ]] || { echo "::error::Dedicated media service tokens must be at least 32 characters"; exit 1; }
           [[ "$MEDIA_INTERNAL_TOKEN" != "$IDENTITY_EVIDENCE_INTERNAL_TOKEN" ]] || { echo "::error::Media and identity-evidence service tokens must be distinct"; exit 1; }
+          [[ "$MEDIA_SMOKE_B2_ACCESS_KEY_ID" != "$MEDIA_SMOKE_B2_IDENTITY_ACCESS_KEY_ID" ]] || { echo "::error::Ordinary-media and identity-evidence B2 access key IDs must be distinct"; exit 1; }
+          [[ "$MEDIA_SMOKE_B2_SECRET_ACCESS_KEY" != "$MEDIA_SMOKE_B2_IDENTITY_SECRET_ACCESS_KEY" ]] || { echo "::error::Ordinary-media and identity-evidence B2 secrets must be distinct"; exit 1; }
           [[ "$MEDIA_SMOKE_B2_ENDPOINT" == https://* && "$MEDIA_SMOKE_R2_ENDPOINT" == https://* ]] || { echo "::error::B2 and R2 endpoints must use HTTPS"; exit 1; }
 
           b2_host="$(printf '%s' "$MEDIA_SMOKE_B2_ENDPOINT" | sed -E 's#^https://([^/:]+).*$#\1#' | tr '[:upper:]' '[:lower:]' | sed 's/\.$//')"
@@ -120,7 +124,26 @@ jobs:
           done
           psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/services/media/migrations/test_identity_evidence_b2_only.sql
       - name: Exercise real provider round-trip, B2/R2 restore, repair and deletion
-        run: go test -count=1 -run '^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete|TestLiveIdentityEvidenceLifecycle)$' -v ./backend/services/media
+        run: go test -count=1 -run '^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete|TestLiveIdentityEvidenceLifecycle|TestLiveIdentityEvidenceProviderCredentialIsolation)
+      - name: Stop isolated MinIO metadata store
+        if: always()
+        run: docker rm -f testagram-minio-media-metadata-smoke >/dev/null 2>&1 || true
+      - name: Record staging acceptance scope
+        if: success()
+        run: |
+          {
+            echo "### Data Centre media provider staging acceptance"
+            echo "- Source revision: $GITHUB_SHA"
+            echo "- B2 and R2 upload, HEAD, read-back and SHA-256 verification exercised."
+            echo "- Durable B2-to-R2 replication and R2-to-B2 primary restoration exercised."
+            echo "- Identity evidence was stored, verified, downloaded and deleted exclusively in the dedicated Backblaze B2 identity bucket."
+            echo "- Separate bucket-scoped B2 application keys were exercised; each key was denied access to the other bucket."
+            echo "- Separate identity-evidence service token, namespace authorization and cross-application denial exercised."
+            echo "- Temporary objects and database rows are cleaned by the test harness."
+            echo "- No production buckets, credentials, DNS, deployments or VPS services were used."
+            echo "- This is provider/service lifecycle evidence, not proof of same-deployment Backend-to-CDN-to-Flutter acceptance."
+          } >> "$GITHUB_STEP_SUMMARY"
+ -v ./backend/services/media
       - name: Stop isolated MinIO metadata store
         if: always()
         run: docker rm -f testagram-minio-media-metadata-smoke >/dev/null 2>&1 || true

@@ -349,6 +349,11 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	identityPrimary := primary
 	identityPrimary.name = "backblaze_b2_identity_evidence"
 	identityPrimary.bucket = os.Getenv("MEDIA_SMOKE_B2_IDENTITY_BUCKET")
+	identityPrimary.access = os.Getenv("MEDIA_SMOKE_B2_IDENTITY_ACCESS_KEY_ID")
+	identityPrimary.secret = os.Getenv("MEDIA_SMOKE_B2_IDENTITY_SECRET_ACCESS_KEY")
+	if identityPrimary.access == primary.access || identityPrimary.secret == primary.secret {
+		t.Fatal("identity evidence B2 credentials must be distinct from ordinary media B2 credentials")
+	}
 	if err := validateStore(identityPrimary); err != nil { t.Fatalf("B2 identity evidence smoke configuration invalid: %v", err) }
 	if identityPrimary.bucket == primary.bucket {
 		t.Fatal("B2 identity evidence smoke bucket must be distinct from the ordinary media bucket")
@@ -520,5 +525,55 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 		if err != nil { t.Fatalf("%s HEAD after identity evidence deletion: %v", store.name, err) }
 		io.Copy(io.Discard, io.LimitReader(head.Body,4096)); head.Body.Close()
 		if head.StatusCode != http.StatusNotFound { t.Fatalf("%s retained identity evidence after deletion (HTTP %d)", store.name, head.StatusCode) }
+	}
+}
+
+
+// TestLiveIdentityEvidenceProviderCredentialIsolation proves the Backblaze
+// application keys themselves are bucket-scoped in opposite directions. This
+// is stronger than checking the service bearer-token boundary alone.
+func TestLiveIdentityEvidenceProviderCredentialIsolation(t *testing.T) {
+	if os.Getenv("TESTAGRAM_LIVE_MEDIA_SMOKE") != "true" {
+		t.Skip("requires explicit approval for isolated non-production B2 credential-scope checks")
+	}
+	store := func(name, bucket, access, secret string) s3Store {
+		s := s3Store{name:name, endpoint:os.Getenv("MEDIA_SMOKE_B2_ENDPOINT"), region:os.Getenv("MEDIA_SMOKE_B2_REGION"), bucket:bucket, access:access, secret:secret}
+		if err := validateStore(s); err != nil { t.Fatalf("%s configuration invalid: %v", name, err) }
+		return s
+	}
+	ordinary := store("backblaze_b2_media", os.Getenv("MEDIA_SMOKE_B2_BUCKET"), os.Getenv("MEDIA_SMOKE_B2_ACCESS_KEY_ID"), os.Getenv("MEDIA_SMOKE_B2_SECRET_ACCESS_KEY"))
+	identity := store("backblaze_b2_identity_evidence", os.Getenv("MEDIA_SMOKE_B2_IDENTITY_BUCKET"), os.Getenv("MEDIA_SMOKE_B2_IDENTITY_ACCESS_KEY_ID"), os.Getenv("MEDIA_SMOKE_B2_IDENTITY_SECRET_ACCESS_KEY"))
+	if ordinary.bucket == identity.bucket { t.Fatal("ordinary media and identity evidence must use separate B2 buckets") }
+	if ordinary.access == identity.access || ordinary.secret == identity.secret { t.Fatal("ordinary media and identity evidence must use separate B2 application keys") }
+	if ordinary.endpoint != identity.endpoint || ordinary.region != identity.region { t.Fatal("ordinary and identity evidence keys must target the same configured B2 S3 service") }
+
+	id, err := randomID()
+	if err != nil { t.Fatal(err) }
+	ordinaryKey := "ci-smoke/credential-isolation-media-" + id
+	identityKey := "ci-smoke/credential-isolation-identity-" + id
+	payload := []byte("Testagram B2 bucket-scoped credential isolation " + id)
+	s := &server{http:&http.Client{Timeout:30*time.Second, CheckRedirect:func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	defer func() {
+		for _, target := range []struct{store s3Store; key string}{{ordinary,ordinaryKey},{identity,identityKey}} {
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			resp, cleanupErr := s.signedRequest(cleanupCtx,target.store,http.MethodDelete,target.key,nil,"")
+			if cleanupErr == nil { io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close() }
+			cleanupCancel()
+		}
+	}()
+
+	for _, target := range []struct{store s3Store; key string}{{ordinary,ordinaryKey},{identity,identityKey}} {
+		resp, err := s.signedRequest(ctx,target.store,http.MethodPut,target.key,&lengthReader{Reader:bytes.NewReader(payload),n:int64(len(payload))},"application/octet-stream")
+		if err != nil { t.Fatalf("%s test object upload failed: %v",target.store.name,err) }
+		io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 { t.Fatalf("%s test object upload returned HTTP %d",target.store.name,resp.StatusCode) }
+	}
+	for _, denied := range []struct{store s3Store; key string; label string}{{identity,ordinaryKey,"identity key reading ordinary-media bucket"},{ordinary,identityKey,"ordinary-media key reading identity bucket"}} {
+		resp, err := s.signedRequest(ctx,denied.store,http.MethodHead,denied.key,nil,"")
+		if err != nil { t.Fatalf("%s request failed: %v",denied.label,err) }
+		io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden { t.Fatalf("%s returned HTTP %d, want 403 AccessDenied",denied.label,resp.StatusCode) }
 	}
 }

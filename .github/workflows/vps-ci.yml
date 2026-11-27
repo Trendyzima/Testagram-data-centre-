@@ -56,6 +56,8 @@ jobs:
       B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET: ci-identity-evidence-b2
       B2_S3_ACCESS_KEY_ID: ci-b2-access
       B2_S3_SECRET_ACCESS_KEY: ci-b2-secret
+      B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID: ci-b2-identity-access
+      B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY: ci-b2-identity-secret
       CLOUDFLARE_R2_ENDPOINT: https://ci-account.r2.cloudflarestorage.com
       CLOUDFLARE_R2_REGION: auto
       CLOUDFLARE_R2_BUCKET: ci-media-replica
@@ -143,6 +145,12 @@ jobs:
           compose = Path("backend/docker-compose.yml").read_text()
           provisioner = Path("scripts/provision-media-database.sh").read_text()
           media_acceptance = Path(".github/workflows/media-provider-staging-acceptance.yml").read_text()
+          media_main = Path("backend/services/media/main.go").read_text()
+          media_compose = Path("vps/docker-compose.yml").read_text()
+          assert 'required("B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID")' in media_main, "identity evidence must use a dedicated B2 application key"
+          assert 'required("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY")' in media_main, "identity evidence must use a dedicated B2 application secret"
+          assert "B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:" in media_compose and "B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:" in media_compose, "private media container must receive the dedicated identity key only"
+          assert "TestLiveIdentityEvidenceProviderCredentialIsolation" in media_acceptance, "live acceptance must prove cross-bucket credential denial"
           assert "B2 and R2 staging endpoints must resolve to distinct hostnames" in media_acceptance, "provider acceptance must reject a shared B2/R2 endpoint"
           assert 'entrypoint: ["/bin/sh", "/scripts/provision-media-database.sh"]' in compose, "deployment media-migrate must execute the mounted database provisioner"
           assert "../scripts/provision-media-database.sh:/scripts/provision-media-database.sh:ro" in compose, "deployment media-migrate must mount the provisioner read-only"
@@ -408,16 +416,19 @@ jobs:
         run: |
           set -euo pipefail
           token=ci-media-internal-token-at-least-32-chars
+          identity_token=ci-identity-evidence-service-token-at-least-32-chars
           trap 'status=$?; echo "Dedicated media runtime failed; container state and logs follow"; docker inspect testagram-media-runtime-ci --format "{{json .State}}" 2>/dev/null || true; docker logs testagram-media-runtime-ci 2>&1 || true; exit "$status"' ERR
           trap 'docker rm -f testagram-media-runtime-ci >/dev/null 2>&1 || true' EXIT
           docker run -d --name testagram-media-runtime-ci --network host \
             -e MEDIA_ADDR=:8096 \
             -e MEDIA_INTERNAL_TOKEN="$token" \
+            -e IDENTITY_EVIDENCE_INTERNAL_TOKEN="$identity_token" \
             -e MEDIA_DATABASE_URL=postgresql://postgres:testagram@127.0.0.1:5432/testagram_media_ci?sslmode=disable \
             -e B2_S3_ENDPOINT=https://b2.invalid \
             -e B2_S3_REGION=us-west-004 -e B2_S3_BUCKET=ci-media-primary \
             -e B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET=ci-identity-evidence-b2 \
             -e B2_S3_ACCESS_KEY_ID=ci-b2-access -e B2_S3_SECRET_ACCESS_KEY=ci-b2-secret \
+            -e B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID=ci-b2-identity-access -e B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY=ci-b2-identity-secret \
             -e CLOUDFLARE_R2_ENDPOINT=https://r2.invalid \
             -e CLOUDFLARE_R2_REGION=auto -e CLOUDFLARE_R2_BUCKET=ci-media-replica \
             -e CLOUDFLARE_R2_ACCESS_KEY_ID=ci-r2-access -e CLOUDFLARE_R2_SECRET_ACCESS_KEY=ci-r2-secret \
@@ -435,6 +446,13 @@ jobs:
           test "$ready" = 1
           unauthorized="$(curl -sS -o /tmp/media-unauthorized.json -w '%{http_code}' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2F0123456789abcdef0123456789abcdef')"
           test "$unauthorized" = 401
+          ordinary_on_identity="$(curl -sS -o /tmp/media-ordinary-on-identity.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/identity-evidence/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"identity-evidence-private","key":"identity/owner-1/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001.jpg-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","content_type":"image/jpeg","size_bytes":123}')"
+          test "$ordinary_on_identity" = 401
+          identity_on_ordinary="$(curl -sS -o /tmp/media-identity-on-ordinary.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $identity_token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123}')"
+          test "$identity_on_ordinary" = 401
+          identity_created="$(curl -sS -o /tmp/identity-upload-grant.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/identity-evidence/upload-url -H "Authorization: Bearer $identity_token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"identity-evidence-private","key":"identity/owner-1/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001.jpg-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","content_type":"image/jpeg","size_bytes":123}')"
+          test "$identity_created" = 201
+          python -c 'import json,urllib.parse; d=json.load(open("/tmp/identity-upload-grant.json")); path=urllib.parse.urlparse(d["upload_url"]).path; assert d["primary"]=="backblaze_b2" and "/ci-identity-evidence-b2/" in path'
           created="$(curl -sS -o /tmp/media-upload-grant.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123}')"
           test "$created" = 201
           python -c 'import json; d=json.load(open("/tmp/media-upload-grant.json")); assert d["primary"]=="backblaze_b2" and d["max_bytes"]==123 and d["upload_url"].startswith("https://")'
@@ -454,7 +472,7 @@ jobs:
           deleted="$(curl -sS -o /tmp/media-delete.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/delete -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"requester_id":"owner-1","owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef"}')"
           test "$deleted" = 202
           python -c 'import json; assert json.load(open("/tmp/media-delete.json"))["status"]=="delete_pending"'
-          echo "Dedicated media API auth, grant idempotency, path validation, verify queue, fail-closed delivery and durable deletion: PASS"
+          echo "Dedicated media/identity service-token isolation, B2 identity route selection, grant idempotency, path validation, verify queue and durable deletion: PASS"
       - name: Backend runtime smoke test
         run: |
           set -euo pipefail
