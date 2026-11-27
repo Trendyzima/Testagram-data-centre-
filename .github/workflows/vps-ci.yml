@@ -151,7 +151,9 @@ jobs:
           assert 'required("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY")' in media_main, "identity evidence must use a dedicated B2 application secret"
           assert "B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:" in media_compose and "B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:" in media_compose, "private media container must receive the dedicated identity key only"
           assert "TestLiveIdentityEvidenceProviderCredentialIsolation" in media_acceptance, "live acceptance must prove cross-bucket credential denial"
-          assert "TestLiveIdentityEvidenceProviderCredentialIsolation)
+          assert "TestLiveIdentityEvidenceProviderCredentialIsolation" in media_acceptance and "go test -count=1 -run" in media_acceptance, "live acceptance must invoke the B2 credential isolation test"
+          assert media_acceptance.count("- name: Stop isolated MinIO metadata store") == 1, "media staging workflow must have exactly one MinIO cleanup step"
+          assert media_acceptance.count("- name: Record staging acceptance scope") == 1, "media staging workflow must have exactly one acceptance summary step"
           assert "B2 and R2 staging endpoints must resolve to distinct hostnames" in media_acceptance, "provider acceptance must reject a shared B2/R2 endpoint"
           assert 'entrypoint: ["/bin/sh", "/scripts/provision-media-database.sh"]' in compose, "deployment media-migrate must execute the mounted database provisioner"
           assert "../scripts/provision-media-database.sh:/scripts/provision-media-database.sh:ro" in compose, "deployment media-migrate must mount the provisioner read-only"
