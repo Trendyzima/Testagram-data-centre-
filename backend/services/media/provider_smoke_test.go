@@ -358,7 +358,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if identityPrimary.bucket == primary.bucket {
 		t.Fatal("B2 identity evidence smoke bucket must be distinct from the ordinary media bucket")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	db, err := pgxpool.New(ctx, databaseURL)
 	if err != nil { t.Fatalf("open isolated media smoke database: %v", err) }
@@ -391,10 +391,10 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	payload := []byte{0xff,0xd8,0xff,0xe0,0x00,0x10,0x4a,0x46,0x49,0x46,0x00}
 	item := reconcileItem{owner:owner, namespace:"identity-evidence-private", key:key, contentType:"image/jpeg", size:int64(len(payload)), expectedSHA:hashHex(payload)}
 	defer func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 7*time.Minute)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 12*time.Minute)
 		defer cleanupCancel()
 		var cleanupAfter *time.Time
-		if cleanupErr := db.QueryRow(cleanupCtx, `select max(expires_at + interval '60 seconds') from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3`, owner, item.namespace, key).Scan(&cleanupAfter); cleanupErr != nil {
+		if cleanupErr := db.QueryRow(cleanupCtx, `select max(expires_at + interval '5 minutes') from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3`, owner, item.namespace, key).Scan(&cleanupAfter); cleanupErr != nil {
 			t.Errorf("read upload grant expiry before cleanup: %v", cleanupErr)
 		}
 		if cleanupAfter != nil {
