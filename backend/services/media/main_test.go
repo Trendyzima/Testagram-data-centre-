@@ -490,6 +490,7 @@ func TestEnqueueLegacyIdentityEvidencePurgesPostgresIntegration(t *testing.T) {
 	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, ordinaryOwner, ordinaryKey).Scan(&outboxStatus); err != nil { t.Fatal(err) }
 	if outboxStatus!="done" { t.Fatalf("legacy sweep modified ordinary media outbox: %q",outboxStatus) }
 
+	if _, err := db.Exec(ctx, `update media_outbox set status='done' where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey); err != nil { t.Fatal(err) }
 	if _, err := db.Exec(ctx, `update media_objects set status='deleted',identity_evidence_purged_at=now() where owner_id=$1 and object_key=$2`, owner, identityKey); err != nil { t.Fatal(err) }
 	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("skip already-purged identity evidence: %v", err) }
 	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus); err != nil { t.Fatal(err) }
