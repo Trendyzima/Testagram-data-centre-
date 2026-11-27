@@ -2,14 +2,19 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 	"time"
 )
 
@@ -314,30 +319,41 @@ func TestMediaAuthRejectsAmbiguousAuthorizationHeaders(t *testing.T) {
  }
 }
 
-func TestIdentityEvidenceReadinessUsesReadOnlyBucketHead(t *testing.T) {
+func TestIdentityEvidenceReadinessUsesReadOnlyVersionListing(t *testing.T) {
 	methods := make([]string, 0, 2)
 	paths := make([]string, 0, 2)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var queryValues []url.Values
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		methods = append(methods, r.Method)
 		paths = append(paths, r.URL.Path)
-		if r.Method != http.MethodHead || r.URL.Path != "/identity-evidence-private" {
-			t.Errorf("identity readiness must issue only HEAD Bucket, got %s %s", r.Method, r.URL.Path)
+		queryValues = append(queryValues, r.URL.Query())
+		if r.Method != http.MethodGet || r.URL.Path != "/identity-evidence-private/" {
+			t.Errorf("identity readiness must issue only read-only ListObjectVersions, got %s %s", r.Method, r.URL.Path)
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}
+		if _, ok := r.URL.Query()["versions"]; !ok || r.URL.Query().Get("prefix") != "__testagram_identity_readiness_probe__/" {
+			t.Errorf("identity readiness must list only the reserved read-only probe prefix: %v", r.URL.Query())
+			http.Error(w, "invalid list prefix", http.StatusBadRequest)
+			return
+		}
 		if r.Header.Get("Authorization") == "" || r.Header.Get("X-Amz-Date") == "" {
-			t.Errorf("HEAD Bucket request must be SigV4 authenticated")
+			t.Errorf("ListObjectVersions request must be SigV4 authenticated")
 			http.Error(w, "missing signature", http.StatusForbidden)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListVersionsResult>`))
 	}))
-	defer ts.Close()
-	store := s3Store{name:"backblaze_b2_identity_evidence", endpoint:ts.URL, region:"us-west-004", bucket:"identity-evidence-private", access:"test-access", secret:strings.Repeat("s",40)}
-	s := &server{cfg:config{identityPrimary:store},http:ts.Client()}
+	defer httpServer.Close()
+	store := s3Store{name:"backblaze_b2_identity_evidence", endpoint:httpServer.URL, region:"us-west-004", bucket:"identity-evidence-private", access:"test-access", secret:strings.Repeat("s",40)}
+	s := &server{cfg:config{identityPrimary:store},http:httpServer.Client()}
 	if err := s.probeIdentityEvidenceStore(context.Background(), store); err != nil { t.Fatalf("read-only B2 readiness failed: %v",err) }
-	if len(methods)!=1 || methods[0]!=http.MethodHead || len(paths)!=1 || paths[0]!="/identity-evidence-private" {
-		t.Fatalf("readiness performed unexpected object operations: methods=%v paths=%v",methods,paths)
+	if len(methods)!=1 || methods[0]!=http.MethodGet || len(paths)!=1 || paths[0]!="/identity-evidence-private/" {
+		t.Fatalf("readiness performed unexpected provider operations: methods=%v paths=%v",methods,paths)
+	}
+	if len(queryValues)!=1 || queryValues[0].Get("max-keys")!="1000" {
+		t.Fatalf("readiness did not use bounded version listing: %v",queryValues)
 	}
 }
 
@@ -361,4 +377,154 @@ func TestIdentityEvidenceB2StoreRequiresSeparateBucketAndApplicationKey(t *testi
 			if err:=validateIdentityStoreIsolation(media,candidate);err==nil{t.Fatalf("%s was accepted",tc.name)}
 		})
 	}
+}
+
+
+func TestDeleteAllB2ObjectVersionsPermanentlyRemovesVersionsAndDeleteMarkers(t *testing.T) {
+	const key = "identity/owner/evidence.jpg"
+	remaining := map[string]bool{"v3":true,"d2":true,"v1":true,"neighbor":true}
+	deleted := make([]string,0,3)
+	plainDeletes := 0
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
+		if r.Header.Get("Authorization") == "" { t.Error("B2 request omitted SigV4 authorization") }
+		if r.Method == http.MethodGet {
+			if r.URL.Path != "/identity-bucket/" { t.Errorf("version list path=%q",r.URL.Path) }
+			if _,ok:=r.URL.Query()["versions"];!ok { t.Error("version list omitted versions subresource") }
+			if got:=r.URL.Query().Get("prefix");got!=key { t.Errorf("version list prefix=%q, want exact evidence key",got) }
+			if got:=r.URL.Query().Get("max-keys");got!="1000" { t.Errorf("version list max-keys=%q",got) }
+			w.Header().Set("Content-Type","application/xml")
+			if r.URL.Query().Get("key-marker")=="" {
+				if remaining["v3"]||remaining["d2"]||remaining["v1"] {
+					_,_=fmt.Fprintf(w,`<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Version><Key>%s</Key><VersionId>v3</VersionId></Version><DeleteMarker><Key>%s</Key><VersionId>d2</VersionId></DeleteMarker><Version><Key>%s-neighbor</Key><VersionId>neighbor</VersionId></Version><IsTruncated>true</IsTruncated><NextKeyMarker>%s</NextKeyMarker><NextVersionIdMarker>d2</NextVersionIdMarker></ListVersionsResult>`,key,key,key,key)
+				} else {
+					_,_=fmt.Fprintf(w,`<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Version><Key>%s-neighbor</Key><VersionId>neighbor</VersionId></Version><IsTruncated>false</IsTruncated></ListVersionsResult>`,key)
+				}
+				return
+			}
+			if r.URL.Query().Get("key-marker")!=key || r.URL.Query().Get("version-id-marker")!="d2" { t.Errorf("unexpected pagination markers: %v",r.URL.Query()) }
+			if remaining["v1"] {
+				_,_=fmt.Fprintf(w,`<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Version><Key>%s</Key><VersionId>v1</VersionId></Version><Version><Key>%s-neighbor</Key><VersionId>neighbor</VersionId></Version><IsTruncated>false</IsTruncated></ListVersionsResult>`,key,key)
+			} else {
+				_,_=fmt.Fprintf(w,`<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Version><Key>%s-neighbor</Key><VersionId>neighbor</VersionId></Version><IsTruncated>false</IsTruncated></ListVersionsResult>`,key)
+			}
+			return
+		}
+		if r.Method==http.MethodDelete {
+			if r.URL.Path!="/identity-bucket/"+key { t.Errorf("version delete path=%q",r.URL.Path) }
+			versionID:=r.URL.Query().Get("versionId")
+			if versionID=="" { plainDeletes++;http.Error(w,"versionId is required for permanent deletion",http.StatusBadRequest);return }
+			if !remaining[versionID] { http.Error(w,"version not found",http.StatusNotFound);return }
+			delete(remaining,versionID);deleted=append(deleted,versionID);w.WriteHeader(http.StatusNoContent);return
+		}
+		http.Error(w,"unexpected method",http.StatusMethodNotAllowed)
+	}))
+	defer httpServer.Close()
+	store:=s3Store{name:"backblaze_b2_identity_evidence",endpoint:httpServer.URL,region:"us-east-005",bucket:"identity-bucket",access:"identity-key",secret:"identity-secret"}
+	s:=&server{http:httpServer.Client()}
+	if err:=s.deleteAllB2ObjectVersions(context.Background(),store,key);err!=nil { t.Fatalf("permanent B2 version deletion: %v",err) }
+	if len(deleted)!=3 { t.Fatalf("deleted version IDs=%v, want all three data/delete-marker versions",deleted) }
+	if remaining["v3"]||remaining["d2"]||remaining["v1"] { t.Fatalf("identity evidence versions remain: %+v",remaining) }
+	if !remaining["neighbor"] { t.Fatal("version deletion crossed the exact object-key boundary") }
+	if plainDeletes!=0 { t.Fatalf("permanent deletion issued %d unversioned DELETE requests",plainDeletes) }
+	if deleted[0]!="v3"||deleted[1]!="d2"||deleted[2]!="v1" { t.Fatalf("unexpected version deletion order: %v",deleted) }
+}
+
+
+func TestEnqueueLegacyIdentityEvidencePurgesPostgresIntegration(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("MEDIA_PURGE_INTEGRATION")) != "true" {
+		t.Skip("set MEDIA_PURGE_INTEGRATION=true to run against an explicitly provisioned disposable media database")
+	}
+	databaseURL := strings.TrimSpace(os.Getenv("MEDIA_DATABASE_URL"))
+	if databaseURL == "" { t.Fatal("MEDIA_PURGE_INTEGRATION=true requires MEDIA_DATABASE_URL") }
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	db, err := pgxpool.New(ctx, databaseURL)
+	if err != nil { t.Fatalf("open media integration database: %v", err) }
+	defer db.Close()
+	if err := db.Ping(ctx); err != nil { t.Fatalf("media integration database unavailable: %v", err) }
+
+	id, err := randomID()
+	if err != nil { t.Fatal(err) }
+	owner := id[:8] + "-" + id[8:12] + "-4" + id[13:16] + "-8" + id[17:20] + "-" + id[20:]
+	identityKey := "identity/" + owner + "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000002.jpg"
+	ordinaryOwner := "30000000-0000-4000-8000-000000000003"
+	ordinaryKey := "users/" + ordinaryOwner + "/legacy-media.jpg"
+	defer func() {
+		_, _ = db.Exec(context.Background(), `delete from media_outbox where owner_id=$1 and object_key=$2`, owner, identityKey)
+		_, _ = db.Exec(context.Background(), `delete from media_objects where owner_id=$1 and object_key=$2`, owner, identityKey)
+		_, _ = db.Exec(context.Background(), `delete from media_outbox where owner_id=$1 and object_key=$2`, ordinaryOwner, ordinaryKey)
+		_, _ = db.Exec(context.Background(), `delete from media_objects where owner_id=$1 and object_key=$2`, ordinaryOwner, ordinaryKey)
+	}()
+	if _, err := db.Exec(ctx, `insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status,identity_evidence_purged_at) values($1,'identity-evidence-private',$2,'image/jpeg',10,'deleted',null)`, owner, identityKey); err != nil { t.Fatalf("insert legacy deleted identity evidence: %v", err) }
+	if _, err := db.Exec(ctx, `insert into media_outbox(owner_id,namespace,object_key,operation,status,attempts,available_at) values($1,'identity-evidence-private',$2,'delete','done',9,now()-interval '1 minute')`, owner, identityKey); err != nil { t.Fatalf("insert prior delete-marker-only outbox row: %v", err) }
+	if _, err := db.Exec(ctx, `insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status) values($1,'media-public',$2,'image/jpeg',10,'deleted')`, ordinaryOwner, ordinaryKey); err != nil { t.Fatalf("insert ordinary deleted media: %v", err) }
+	if _, err := db.Exec(ctx, `insert into media_outbox(owner_id,namespace,object_key,operation,status,attempts) values($1,'media-public',$2,'delete','done',3)`, ordinaryOwner, ordinaryKey); err != nil { t.Fatalf("insert ordinary media outbox row: %v", err) }
+
+	// A missing database row must not be treated as proof that the B2 key
+	// and metadata sidecar are absent. Exercise the authenticated HTTP delete
+	// route and verify that it creates a durable permanent-purge tombstone.
+	orphanID, err := randomID()
+	if err != nil { t.Fatal(err) }
+	orphanOwner := orphanID[:8] + "-" + orphanID[8:12] + "-4" + orphanID[13:16] + "-8" + orphanID[17:20] + "-" + orphanID[20:]
+	orphanKey := "identity/" + orphanOwner + "/40000000-0000-4000-8000-000000000004/50000000-0000-4000-8000-000000000005.jpg-" + strings.Repeat("a", 43)
+	defer func() {
+		_, _ = db.Exec(context.Background(), `delete from media_operations where owner_id=$1 and object_key=$2`, orphanOwner, orphanKey)
+		_, _ = db.Exec(context.Background(), `delete from media_outbox where owner_id=$1 and object_key=$2`, orphanOwner, orphanKey)
+		_, _ = db.Exec(context.Background(), `delete from media_objects where owner_id=$1 and object_key=$2`, orphanOwner, orphanKey)
+	}()
+	identityToken := strings.Repeat("i", 40)
+	orphanServer := &server{db:db,cfg:config{identityToken:identityToken}}
+	body := fmt.Sprintf(`{"requester_id":%q,"owner_id":%q,"namespace":"identity-evidence-private","key":%q}`,orphanOwner,orphanOwner,orphanKey)
+	request := httptest.NewRequest(http.MethodPost,"/internal/v1/identity-evidence/delete",strings.NewReader(body))
+	request.Header.Set("Authorization","Bearer "+identityToken)
+	request.Header.Set("X-Testagram-API-Version",apiVersion)
+	recorder := httptest.NewRecorder()
+	orphanServer.delete(recorder,request)
+	if recorder.Code!=http.StatusAccepted { t.Fatalf("orphaned identity evidence delete returned %d: %s",recorder.Code,recorder.Body.String()) }
+	var orphanMediaStatus,orphanOutboxStatus string
+	if err := db.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace='identity-evidence-private' and object_key=$2`,orphanOwner,orphanKey).Scan(&orphanMediaStatus); err != nil { t.Fatalf("orphan purge tombstone missing: %v",err) }
+	if err := db.QueryRow(ctx,`select status from media_outbox where owner_id=$1 and namespace='identity-evidence-private' and object_key=$2 and operation='delete'`,orphanOwner,orphanKey).Scan(&orphanOutboxStatus); err != nil { t.Fatalf("orphan purge outbox missing: %v",err) }
+	if orphanMediaStatus!="delete_pending"||orphanOutboxStatus!="pending" { t.Fatalf("orphan evidence was not durably queued: media=%q outbox=%q",orphanMediaStatus,orphanOutboxStatus) }
+	var orphanAuditCount int
+	if err := db.QueryRow(ctx,`select count(*) from media_operations where owner_id=$1 and namespace='identity-evidence-private' and object_key=$2 and operation='delete' and outcome='queued'`,orphanOwner,orphanKey).Scan(&orphanAuditCount); err != nil { t.Fatal(err) }
+	if orphanAuditCount!=1 { t.Fatalf("orphan evidence purge queued without exactly one audit event: %d",orphanAuditCount) }
+
+	s := &server{db:db}
+	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("enqueue legacy identity purge: %v", err) }
+	var mediaStatus, outboxStatus string
+	var attempts int
+	if err := db.QueryRow(ctx, `select status from media_objects where owner_id=$1 and object_key=$2`, owner, identityKey).Scan(&mediaStatus); err != nil { t.Fatal(err) }
+	if err := db.QueryRow(ctx, `select status,attempts from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus,&attempts); err != nil { t.Fatal(err) }
+	if mediaStatus!="delete_pending" || outboxStatus!="pending" || attempts!=0 { t.Fatalf("legacy identity purge not requeued: media=%q outbox=%q attempts=%d",mediaStatus,outboxStatus,attempts) }
+
+	if _, err := db.Exec(ctx, `update media_outbox set status='retry',attempts=7,available_at=now()+interval '10 minutes' where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey); err != nil { t.Fatal(err) }
+	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("preserve scheduled retry: %v", err) }
+	var retryAvailable time.Time
+	if err := db.QueryRow(ctx, `select status,attempts,available_at from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus,&attempts,&retryAvailable); err != nil { t.Fatal(err) }
+	if outboxStatus!="retry" || attempts!=7 || !retryAvailable.After(time.Now().Add(5*time.Minute)) { t.Fatalf("legacy sweep reset an active retry schedule: status=%q attempts=%d available=%s",outboxStatus,attempts,retryAvailable) }
+
+	if _, err := db.Exec(ctx, `update media_outbox set status='done' where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey); err != nil { t.Fatal(err) }
+	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("requeue stale completed purge: %v", err) }
+	if err := db.QueryRow(ctx, `select status,attempts from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus,&attempts); err != nil { t.Fatal(err) }
+	if outboxStatus!="pending" || attempts!=0 { t.Fatalf("stale completed identity purge was not requeued: status=%q attempts=%d",outboxStatus,attempts) }
+
+	if _, err := db.Exec(ctx, `update media_outbox set status='dead',attempts=12 where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey); err != nil { t.Fatal(err) }
+	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("preserve permanent-purge dead letter: %v", err) }
+	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus); err != nil { t.Fatal(err) }
+	if outboxStatus!="dead" { t.Fatalf("legacy sweep silently retried a permanent-purge dead letter: %q",outboxStatus) }
+	if _, err := db.Exec(ctx, `update media_objects set status='deleted' where owner_id=$1 and object_key=$2`, owner, identityKey); err != nil { t.Fatal(err) }
+	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("requeue pre-existing legacy deleted record: %v", err) }
+	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus); err != nil { t.Fatal(err) }
+	if outboxStatus!="pending" { t.Fatalf("legacy deleted row with a prior dead job was not requeued once: %q",outboxStatus) }
+
+	if err := db.QueryRow(ctx, `select status from media_objects where owner_id=$1 and object_key=$2`, ordinaryOwner, ordinaryKey).Scan(&mediaStatus); err != nil { t.Fatal(err) }
+	if mediaStatus!="deleted" { t.Fatalf("legacy sweep modified ordinary media status: %q",mediaStatus) }
+	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, ordinaryOwner, ordinaryKey).Scan(&outboxStatus); err != nil { t.Fatal(err) }
+	if outboxStatus!="done" { t.Fatalf("legacy sweep modified ordinary media outbox: %q",outboxStatus) }
+
+	if _, err := db.Exec(ctx, `update media_outbox set status='done' where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey); err != nil { t.Fatal(err) }
+	if _, err := db.Exec(ctx, `update media_objects set status='deleted',identity_evidence_purged_at=now() where owner_id=$1 and object_key=$2`, owner, identityKey); err != nil { t.Fatal(err) }
+	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("skip already-purged identity evidence: %v", err) }
+	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus); err != nil { t.Fatal(err) }
+	if outboxStatus!="done" { t.Fatalf("verified permanent purge was incorrectly requeued: %q",outboxStatus) }
 }

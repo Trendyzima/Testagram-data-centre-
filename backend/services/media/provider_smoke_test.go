@@ -56,7 +56,7 @@ func TestLiveProviderRoundTrip(t *testing.T) {
 			}
 			key := "ci-smoke/" + id
 			defer func() {
-				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 7*time.Minute)
 				defer cleanupCancel()
 				resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, key, nil, "")
 				if cleanupErr != nil {
@@ -184,7 +184,7 @@ func TestLiveMediaReplicationRestoreDelete(t *testing.T) {
 	if metadataReplica.bucket == replica.bucket {
 		t.Fatal("R2 metadata sidecar bucket must be distinct from the media bucket")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	db, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -358,7 +358,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if identityPrimary.bucket == primary.bucket {
 		t.Fatal("B2 identity evidence smoke bucket must be distinct from the ordinary media bucket")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	db, err := pgxpool.New(ctx, databaseURL)
 	if err != nil { t.Fatalf("open isolated media smoke database: %v", err) }
@@ -391,12 +391,20 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	payload := []byte{0xff,0xd8,0xff,0xe0,0x00,0x10,0x4a,0x46,0x49,0x46,0x00}
 	item := reconcileItem{owner:owner, namespace:"identity-evidence-private", key:key, contentType:"image/jpeg", size:int64(len(payload)), expectedSHA:hashHex(payload)}
 	defer func() {
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 12*time.Minute)
 		defer cleanupCancel()
+		var cleanupAfter *time.Time
+		if cleanupErr := db.QueryRow(cleanupCtx, `select max(expires_at + interval '5 minutes') from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3`, owner, item.namespace, key).Scan(&cleanupAfter); cleanupErr != nil {
+			t.Errorf("read upload grant expiry before cleanup: %v", cleanupErr)
+		}
+		if cleanupAfter != nil {
+			if wait := time.Until(*cleanupAfter); wait > 0 { time.Sleep(wait + time.Second) }
+		}
 		for _, store := range []s3Store{identityPrimary} {
 			for _, objectKey := range []string{key, key + ".metadata.json"} {
-				resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, objectKey, nil, "")
-				if cleanupErr == nil { io.Copy(io.Discard, io.LimitReader(resp.Body,4096)); resp.Body.Close() }
+				if cleanupErr := s.deleteAllB2ObjectVersions(cleanupCtx, store, objectKey); cleanupErr != nil {
+					t.Errorf("%s cleanup could not permanently purge all B2 versions: %v", objectKey, cleanupErr)
+				}
 			}
 		}
 		_, _ = db.Exec(cleanupCtx, "delete from media_operations where owner_id=$1 and namespace=$2 and object_key=$3", owner, item.namespace, key)
@@ -453,13 +461,17 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	uploadURL, ok := upload["upload_url"].(string)
 	if !ok || !strings.HasPrefix(uploadURL, "https://") { t.Fatal("Data Centre returned a non-HTTPS identity evidence upload grant") }
 
-	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(payload))
-	if err != nil { t.Fatal(err) }
-	putReq.Header.Set("Content-Type", item.contentType)
-	putResp, err := apiClient.Do(putReq)
-	if err != nil { t.Fatalf("upload identity evidence to B2: %v", err) }
-	io.Copy(io.Discard, io.LimitReader(putResp.Body,4096)); putResp.Body.Close()
-	if putResp.StatusCode < 200 || putResp.StatusCode >= 300 { t.Fatalf("B2 identity evidence PUT returned HTTP %d", putResp.StatusCode) }
+	// Reuse the same short-lived upload grant twice to create two B2 object
+	// versions. The retention test must erase every version, not only the head.
+	for version := 0; version < 2; version++ {
+		putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(payload))
+		if err != nil { t.Fatal(err) }
+		putReq.Header.Set("Content-Type", item.contentType)
+		putResp, err := apiClient.Do(putReq)
+		if err != nil { t.Fatalf("upload identity evidence version %d to B2: %v", version+1, err) }
+		io.Copy(io.Discard, io.LimitReader(putResp.Body,4096)); putResp.Body.Close()
+		if putResp.StatusCode < 200 || putResp.StatusCode >= 300 { t.Fatalf("B2 identity evidence version %d PUT returned HTTP %d", version+1, putResp.StatusCode) }
+	}
 
 	verifyResp := call(http.MethodPost, "/internal/v1/identity-evidence/verify", identityToken, verifyRequest{
 		uploadRequest:uploadRequest{OwnerID:owner, Namespace:item.namespace, Key:key, ContentType:item.contentType, SizeBytes:item.size},
@@ -506,11 +518,41 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if err := s.replicate(ctx, owner, item.namespace, key); err == nil { t.Fatal("identity evidence replication unexpectedly succeeded") }
 	if err := s.restorePrimary(ctx, owner, item.namespace, key); err == nil { t.Fatal("identity evidence cross-provider restore unexpectedly succeeded") }
 
+	versionsBeforeDelete, err := s.collectB2ObjectVersions(ctx, identityPrimary, key)
+	if err != nil { t.Fatalf("list identity evidence versions before deletion: %v", err) }
+	if len(versionsBeforeDelete) < 2 { t.Fatalf("B2 identity evidence has %d versions before deletion, want at least two", len(versionsBeforeDelete)) }
+	// Create a B2 delete marker deliberately. A normal S3 DELETE hides the
+	// current version but leaves older versions intact; the retention executor
+	// must permanently remove both the marker and every data version.
+	markerResp, err := s.signedRequest(ctx, identityPrimary, http.MethodDelete, key, nil, "")
+	if err != nil { t.Fatalf("create B2 delete marker for purge acceptance: %v", err) }
+	io.Copy(io.Discard, io.LimitReader(markerResp.Body,4096)); markerResp.Body.Close()
+	if markerResp.StatusCode != http.StatusNoContent && markerResp.StatusCode != http.StatusOK { t.Fatalf("B2 delete-marker setup returned HTTP %d", markerResp.StatusCode) }
+	versionsWithMarker, err := s.collectB2ObjectVersions(ctx, identityPrimary, key)
+	if err != nil { t.Fatalf("list identity evidence versions and delete marker: %v", err) }
+	markerCount := 0
+	for _, version := range versionsWithMarker { if version.DeleteMarker { markerCount++ } }
+	if len(versionsWithMarker) < 3 || markerCount < 1 { t.Fatalf("B2 purge fixture has %d versions and %d delete markers; want >=3 versions and >=1 marker", len(versionsWithMarker), markerCount) }
+
 	deleteResp := call(http.MethodPost, "/internal/v1/identity-evidence/delete", identityToken, deleteRequest{
 		RequesterID:owner, OwnerID:owner, Namespace:item.namespace, Key:key,
 	})
 	decode(deleteResp, nil, http.StatusAccepted)
-	if err := s.processOne(ctx); err != nil { t.Fatalf("durable identity evidence deletion: %v", err) }
+	firstDeleteErr := s.processOne(ctx)
+	if firstDeleteErr == nil || !strings.Contains(firstDeleteErr.Error(), "presigned upload URL remains valid") {
+		t.Fatalf("deletion did not wait for the outstanding B2 upload URL to expire: %v", firstDeleteErr)
+	}
+	var pendingMediaStatus, pendingOutboxStatus string
+	if err := db.QueryRow(ctx, `select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`, owner, item.namespace, key).Scan(&pendingMediaStatus); err != nil { t.Fatal(err) }
+	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete'`, owner, item.namespace, key).Scan(&pendingOutboxStatus); err != nil { t.Fatal(err) }
+	if pendingMediaStatus != "delete_pending" || pendingOutboxStatus != "retry" { t.Fatalf("active upload grant did not leave deletion safely pending: media=%q outbox=%q", pendingMediaStatus, pendingOutboxStatus) }
+	versionsWhileGrantValid, err := s.collectB2ObjectVersions(ctx, identityPrimary, key)
+	if err != nil { t.Fatalf("list B2 versions while upload grant remains valid: %v", err) }
+	if len(versionsWhileGrantValid) < 3 { t.Fatalf("B2 versions were purged while a signed upload URL was still valid: %d remain", len(versionsWhileGrantValid)) }
+	var retryAt time.Time
+	if err := db.QueryRow(ctx, `select available_at from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete'`, owner, item.namespace, key).Scan(&retryAt); err != nil { t.Fatal(err) }
+	if wait := time.Until(retryAt); wait > 0 { time.Sleep(wait + time.Second) }
+	if err := s.processOne(ctx); err != nil { t.Fatalf("permanent identity evidence deletion after upload URL expiry: %v", err) }
 	statusResp = call(http.MethodGet, statusRoute, identityToken, nil)
 	decode(statusResp, &state, http.StatusOK)
 	if state["status"] != "deleted" { t.Fatalf("identity evidence deletion state=%v, want deleted", state["status"]) }
@@ -519,6 +561,14 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 		t.Fatalf("read identity evidence deletion audit: %v", err)
 	}
 	if deletionAuditCount != 1 { t.Fatalf("identity evidence physical deletion audit events=%d, want exactly one durable success event", deletionAuditCount) }
+	for _, objectKey := range []string{key, key + ".metadata.json"} {
+		remaining, err := s.collectB2ObjectVersions(ctx, identityPrimary, objectKey)
+		if err != nil { t.Fatalf("list B2 versions after permanent deletion of %s: %v", objectKey, err) }
+		if len(remaining) != 0 { t.Fatalf("B2 retained %d versions or delete markers for %s after physical deletion", len(remaining), objectKey) }
+	}
+	var remainingGrants int
+	if err := db.QueryRow(ctx, `select count(*) from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3`, owner, item.namespace, key).Scan(&remainingGrants); err != nil { t.Fatalf("read upload grants after deletion: %v", err) }
+	if remainingGrants != 0 { t.Fatalf("permanently deleted identity evidence retained %d upload grants", remainingGrants) }
 	for _, store := range []s3Store{identityPrimary} {
 		head, err := s.signedRequest(ctx, store, http.MethodHead, key+".metadata.json", nil, "")
 		if err != nil { t.Fatalf("%s identity metadata HEAD after deletion: %v", store.name, err) }
@@ -555,17 +605,23 @@ func TestLiveIdentityEvidenceProviderCredentialIsolation(t *testing.T) {
 	id, err := randomID()
 	if err != nil { t.Fatal(err) }
 	ordinaryKey := "ci-smoke/credential-isolation-media-" + id
-	identityKey := "ci-smoke/credential-isolation-identity-" + id
+	ordinaryProbeKey := ordinaryKey + ".cross-access-probe"
+	identityKey := "identity/ci-smoke/credential-isolation-" + id
+	identityProbeKey := identityKey + ".cross-access-probe"
 	payload := []byte("Testagram B2 bucket-scoped credential isolation " + id)
 	s := &server{http:&http.Client{Timeout:30*time.Second, CheckRedirect:func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	defer func() {
-		for _, target := range []struct{store s3Store; key string}{{ordinary,ordinaryKey},{identity,identityKey}} {
-			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
-			resp, cleanupErr := s.signedRequest(cleanupCtx,target.store,http.MethodDelete,target.key,nil,"")
-			if cleanupErr == nil { io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close() }
-			cleanupCancel()
+		for _, target := range []struct{store s3Store; keys []string}{{ordinary,[]string{ordinaryKey,ordinaryProbeKey}},{identity,[]string{identityKey,identityProbeKey}}} {
+			for _, objectKey := range target.keys {
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				if cleanupErr := s.deleteAllB2ObjectVersions(cleanupCtx,target.store,objectKey); cleanupErr != nil {
+					resp, fallbackErr := s.signedRequest(cleanupCtx,target.store,http.MethodDelete,objectKey,nil,"")
+					if fallbackErr == nil { io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close() } else { t.Errorf("%s cleanup failed: purge=%v fallback=%v",objectKey,cleanupErr,fallbackErr) }
+				}
+				cleanupCancel()
+			}
 		}
 	}()
 
@@ -575,10 +631,41 @@ func TestLiveIdentityEvidenceProviderCredentialIsolation(t *testing.T) {
 		io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 { t.Fatalf("%s test object upload returned HTTP %d",target.store.name,resp.StatusCode) }
 	}
-	for _, denied := range []struct{store s3Store; key string; label string}{{identity,ordinaryKey,"identity key reading ordinary-media bucket"},{ordinary,identityKey,"ordinary-media key reading identity bucket"}} {
-		resp, err := s.signedRequest(ctx,denied.store,http.MethodHead,denied.key,nil,"")
-		if err != nil { t.Fatalf("%s request failed: %v",denied.label,err) }
+	// Sign requests for the *other bucket* with the wrong bucket's credentials.
+	// Using the target bucket's object name against the caller's own bucket
+	// would only prove that the names differ, not that bucket restrictions work.
+	for _, denied := range []struct{target s3Store; wrongAccess,wrongSecret,key,probe,label string}{
+		{ordinary,identity.access,identity.secret,ordinaryKey,ordinaryProbeKey,"identity key against ordinary-media bucket"},
+		{identity,ordinary.access,ordinary.secret,identityKey,identityProbeKey,"ordinary-media key against identity-evidence bucket"},
+	} {
+		wrongCredentialOnTargetBucket := denied.target
+		wrongCredentialOnTargetBucket.access = denied.wrongAccess
+		wrongCredentialOnTargetBucket.secret = denied.wrongSecret
+		resp, err := s.signedRequest(ctx,wrongCredentialOnTargetBucket,http.MethodHead,denied.key,nil,"")
+		if err != nil { t.Fatalf("%s HEAD request failed: %v",denied.label,err) }
 		io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden { t.Fatalf("%s returned HTTP %d, want 403 AccessDenied",denied.label,resp.StatusCode) }
+		if resp.StatusCode != http.StatusForbidden { t.Fatalf("%s HEAD returned HTTP %d, want 403 AccessDenied",denied.label,resp.StatusCode) }
+
+		resp, err = s.signedRequest(ctx,wrongCredentialOnTargetBucket,http.MethodPut,denied.probe,&lengthReader{Reader:bytes.NewReader(payload),n:int64(len(payload))},"application/octet-stream")
+		if err != nil { t.Fatalf("%s PUT request failed: %v",denied.label,err) }
+		io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden { t.Fatalf("%s PUT returned HTTP %d, want 403 AccessDenied",denied.label,resp.StatusCode) }
+
+		// Prove the correct bucket key can enumerate its own versions, then
+		// prove the opposite bucket's key cannot list or delete those versions.
+		versions, err := s.collectB2ObjectVersions(ctx,denied.target,denied.key)
+		if err != nil || len(versions) == 0 { t.Fatalf("%s correct key could not list its own test-object versions: versions=%d err=%v",denied.label,len(versions),err) }
+		if _, err := s.collectB2ObjectVersions(ctx,wrongCredentialOnTargetBucket,denied.key); err == nil || !strings.Contains(err.Error(),"status 403") {
+			t.Fatalf("%s wrong key version listing error=%v, want 403 AccessDenied",denied.label,err)
+		}
+		versionURL, err := objectURL(wrongCredentialOnTargetBucket,denied.key)
+		if err != nil { t.Fatal(err) }
+		versionQuery := url.Values{}
+		versionQuery.Set("versionId",versions[0].VersionID)
+		versionURL.RawQuery = versionQuery.Encode()
+		resp, err = s.signedRequestURL(ctx,wrongCredentialOnTargetBucket,http.MethodDelete,versionURL,nil,"")
+		if err != nil { t.Fatalf("%s wrong-key permanent version delete request failed: %v",denied.label,err) }
+		io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden { t.Fatalf("%s wrong-key permanent version DELETE returned HTTP %d, want 403 AccessDenied",denied.label,resp.StatusCode) }
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -101,6 +102,12 @@ func main() {
 	mux.HandleFunc("/internal/v1/identity-evidence/status",s.status)
 	mux.HandleFunc("/internal/v1/identity-evidence/download-url",s.downloadURL)
 	mux.HandleFunc("/internal/v1/identity-evidence/delete",s.delete)
+	purgeStartupCtx, purgeStartupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := s.enqueueLegacyIdentityEvidencePurges(purgeStartupCtx); err != nil {
+		purgeStartupCancel()
+		log.Fatalf("cannot initialize legacy identity evidence permanent-purge queue: %v", err)
+	}
+	purgeStartupCancel()
 	go s.worker(context.Background())
 	go s.reconcileWorker(context.Background())
 	srv:=&http.Server{Addr:cfg.addr,Handler:logging(mux),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:30*time.Second,IdleTimeout:60*time.Second}
@@ -149,10 +156,18 @@ func (s *server) deleteMetadataSidecars(ctx context.Context, namespace, key stri
 	metadataPrimary, metadataReplica := s.metadataStoresForNamespace(namespace)
 	for _, store := range []s3Store{metadataPrimary, metadataReplica} {
 		if store.bucket == "" { continue }
+		if namespace == "identity-evidence-private" {
+			if err := s.deleteAllB2ObjectVersions(ctx, store, metadataKey); err != nil {
+				return fmt.Errorf("%s permanent identity metadata purge: %w", store.name, err)
+			}
+			continue
+		}
 		resp, err := s.signedRequest(ctx, store, http.MethodDelete, metadataKey, nil, "")
 		if err != nil { return fmt.Errorf("%s metadata delete: %w", store.name, err) }
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound { return fmt.Errorf("%s metadata delete status %d", store.name, resp.StatusCode) }
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+			return fmt.Errorf("%s metadata delete status %d", store.name, resp.StatusCode)
+		}
 	}
 	return nil
 }
@@ -213,36 +228,16 @@ func (s *server) identityReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) probeIdentityEvidenceStore(ctx context.Context, store s3Store) error {
-	// A readiness probe must never write synthetic objects into the identity
-	// bucket. HEAD Bucket verifies the configured B2 endpoint, bucket and
-	// credentials without creating non-identity content.
+	// ListObjectVersions is read-only and proves the dedicated key has the
+	// bucket-scoped list capability required for permanent deletion. Unlike
+	// HEAD Bucket, it does not require permission to enumerate bucket names.
 	if err := validateStore(store); err != nil { return err }
-	base, err := url.Parse(strings.TrimRight(store.endpoint, "/"))
-	if err != nil { return err }
-	base.Path = "/" + store.bucket
-	date := time.Now().UTC().Format("20060102T150405Z")
-	day := date[:8]
-	payload := "UNSIGNED-PAYLOAD"
-	canonicalHeaders := "host:" + base.Host + "\nx-amz-content-sha256:" + payload + "\nx-amz-date:" + date + "\n"
-	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
-	canonical := http.MethodHead + "\n" + base.EscapedPath() + "\n\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + payload
-	scope := day + "/" + store.region + "/s3/aws4_request"
-	toSign := "AWS4-HMAC-SHA256\n" + date + "\n" + scope + "\n" + hashHex([]byte(canonical))
-	signature := hex.EncodeToString(hmacSHA(signingKey(store.secret, day, store.region), toSign))
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, base.String(), nil)
-	if err != nil { return err }
-	req.Header.Set("X-Amz-Date", date)
-	req.Header.Set("X-Amz-Content-Sha256", payload)
-	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+store.access+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+signature)
-	resp, err := s.http.Do(req)
-	if err != nil { return fmt.Errorf("%s bucket HEAD: %w", store.name, err) }
-	defer resp.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s bucket HEAD status %d", store.name, resp.StatusCode)
+	if _, err := s.collectB2ObjectVersions(ctx, store, "__testagram_identity_readiness_probe__/"); err != nil {
+		return fmt.Errorf("%s identity evidence version-list readiness: %w", store.name, err)
 	}
 	return nil
 }
+
 func (s *server) namespaceAllowedForRoute(w http.ResponseWriter,r *http.Request,namespace string)bool{
 	identityRoute:=strings.HasPrefix(r.URL.Path,"/internal/v1/identity-evidence/")
 	identityNamespace:=namespace=="identity-evidence-private"
@@ -257,9 +252,13 @@ func (s *server) uploadURL(w http.ResponseWriter, r *http.Request) {
 	if !s.namespaceAllowedForRoute(w, r, in.Namespace) { return }
 	id, err := randomID()
 	if err != nil { writeErr(w, 503, "secure upload grant generation failed"); return }
-	exp := time.Now().UTC().Add(s.cfg.uploadTTL)
+	uploadTTL := s.cfg.uploadTTL
+	// Identity evidence upload grants are deliberately short-lived. Permanent
+	// deletion waits until the signed PUT URL and a short in-flight grace expire.
+	if in.Namespace == "identity-evidence-private" && uploadTTL > 5*time.Minute { uploadTTL = 5*time.Minute }
+	exp := time.Now().UTC().Add(uploadTTL)
 	primary, _ := s.storesForNamespace(in.Namespace)
-	u, err := presign(primary, http.MethodPut, in.Key, s.cfg.uploadTTL, in.ContentType)
+	u, err := presign(primary, http.MethodPut, in.Key, uploadTTL, in.ContentType)
 	if err != nil { writeErr(w, 503, "primary storage signing failed"); return }
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second); defer cancel()
 	tx, err := s.db.Begin(ctx)
@@ -271,8 +270,9 @@ func (s *server) uploadURL(w http.ResponseWriter, r *http.Request) {
 		values($1,$2,$3,$4,$5,'upload_pending',now())
 		on conflict(owner_id,namespace,object_key) do update
 		set content_type=excluded.content_type,size_bytes=excluded.size_bytes,status='upload_pending',
-			sha256=null,primary_verified_at=null,replica_verified_at=null,updated_at=now()
-		where media_objects.status='deleted'
+			sha256=null,primary_verified_at=null,replica_verified_at=null,identity_evidence_purged_at=null,updated_at=now()
+		where (media_objects.status='deleted'
+		       and ($2 <> 'identity-evidence-private' or media_objects.identity_evidence_purged_at is not null))
 		   or (media_objects.status='upload_pending' and not exists (
 				select 1 from media_upload_grants g
 				where g.owner_id=excluded.owner_id and g.namespace=excluded.namespace and g.object_key=excluded.object_key
@@ -365,23 +365,116 @@ func (s *server) downloadURL(w http.ResponseWriter, r *http.Request) {
 	}
 	writeErr(w, 503, "no verified origin is currently readable")
 }
-func (s *server) delete(w http.ResponseWriter,r *http.Request){
-	if r.Method!=http.MethodPost{method(w,"POST");return};if !s.auth(w,r){return}
-	var in deleteRequest;if !decode(w,r,&in)||!validIdentity(in.RequesterID)||!validIdentity(in.OwnerID)||!validNamespace(in.Namespace)||!validObjectForNamespace(in.Namespace,in.Key,in.OwnerID){writeErr(w,400,"invalid delete request");return};if !s.namespaceAllowedForRoute(w,r,in.Namespace){return}
-	if in.Namespace == "identity-evidence-private" && in.RequesterID != in.OwnerID { writeErr(w,403,"identity evidence is restricted to its owning Backend application"); return }
-	ctx,c:=context.WithTimeout(r.Context(),5*time.Second);defer c()
-	tx,err:=s.db.Begin(ctx);if err!=nil{writeErr(w,503,"durable state unavailable");return};defer tx.Rollback(ctx)
-	var old string;err=tx.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3 for update`,in.OwnerID,in.Namespace,in.Key).Scan(&old)
-	if errors.Is(err,pgx.ErrNoRows){writeJSON(w,200,map[string]string{"status":"deleted"});return};if err!=nil{writeErr(w,503,"media state unavailable");return}
-	if old=="deleted"{writeJSON(w,200,map[string]string{"status":"deleted"});return}
-	if old=="delete_pending" { var jobStatus string; if err=tx.QueryRow(ctx,`select status from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete'`,in.OwnerID,in.Namespace,in.Key).Scan(&jobStatus);err!=nil{writeErr(w,503,"deletion job state unavailable");return};if jobStatus=="dead"{_,err=tx.Exec(ctx,`update media_outbox set status='retry',attempts=0,available_at=now(),locked_until=null,last_error=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete' and status='dead'`,in.OwnerID,in.Namespace,in.Key);if err!=nil{writeErr(w,503,"could not retry dead-letter deletion");return};if err=tx.Commit(ctx);err!=nil{writeErr(w,503,"could not persist deletion retry");return}};writeJSON(w,202,map[string]string{"status":"delete_pending"});return }
-	_,err=tx.Exec(ctx,`update media_objects set status='delete_pending',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key)
-	if err==nil{_,err=tx.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete' where owner_id=$1 and namespace=$2 and object_key=$3 and operation in ('verify','replicate','restore_primary') and status in ('pending','retry')`,in.OwnerID,in.Namespace,in.Key)}
-	if err==nil{_,err=tx.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'delete','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),last_error=null`,in.OwnerID,in.Namespace,in.Key)}
-	if err==nil{eventID,idErr:=randomID();if idErr!=nil{err=idErr}else{_,err=tx.Exec(ctx,`insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome) values($1,$2,$3,$4,'delete','queued')`,eventID,in.OwnerID,in.Namespace,in.Key)}}
-	if err==nil{err=tx.Commit(ctx)};if err!=nil{writeErr(w,503,"could not queue durable deletion");return}
-	writeJSON(w,202,map[string]string{"status":"delete_pending"})
+func (s *server) delete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost { method(w, "POST"); return }
+	if !s.auth(w, r) { return }
+	var in deleteRequest
+	if !decode(w, r, &in) || !validIdentity(in.RequesterID) || !validIdentity(in.OwnerID) || !validNamespace(in.Namespace) || !validObjectForNamespace(in.Namespace, in.Key, in.OwnerID) {
+		writeErr(w, 400, "invalid delete request")
+		return
+	}
+	if !s.namespaceAllowedForRoute(w, r, in.Namespace) { return }
+	if in.Namespace == "identity-evidence-private" && in.RequesterID != in.OwnerID {
+		writeErr(w, 403, "identity evidence is restricted to its owning Backend application")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil { writeErr(w, 503, "durable state unavailable"); return }
+	defer tx.Rollback(ctx)
+	var old string
+	var purgedAt *time.Time
+	err = tx.QueryRow(ctx, `select status,identity_evidence_purged_at from media_objects where owner_id=$1 and namespace=$2 and object_key=$3 for update`, in.OwnerID, in.Namespace, in.Key).Scan(&old, &purgedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if in.Namespace != "identity-evidence-private" {
+			writeJSON(w, 200, map[string]string{"status":"deleted"})
+			return
+		}
+		// A missing database row does not prove that no historical B2 versions
+		// or metadata sidecar exist. Create a minimal tombstone and send it
+		// through the same version-aware permanent-purge worker.
+		if _, err = tx.Exec(ctx, `insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status) values($1,$2,$3,'application/octet-stream',1,'delete_pending') on conflict(owner_id,namespace,object_key) do nothing`, in.OwnerID, in.Namespace, in.Key); err != nil {
+			writeErr(w, 503, "could not create identity evidence purge tombstone")
+			return
+		}
+		if _, err = tx.Exec(ctx, `insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'delete','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),locked_until=null,last_error=null,updated_at=now() where media_outbox.status in ('done','cancelled','dead')`, in.OwnerID, in.Namespace, in.Key); err != nil {
+			writeErr(w, 503, "could not queue orphaned identity evidence permanent purge")
+			return
+		}
+		eventID, idErr := randomID()
+		if idErr != nil {
+			writeErr(w, 503, "could not record orphaned identity evidence purge")
+			return
+		}
+		if _, err = tx.Exec(ctx, `insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome) values($1,$2,$3,$4,'delete','queued')`, eventID, in.OwnerID, in.Namespace, in.Key); err != nil {
+			writeErr(w, 503, "could not audit orphaned identity evidence purge")
+			return
+		}
+		if err = tx.Commit(ctx); err != nil {
+			writeErr(w, 503, "could not persist orphaned identity evidence purge")
+			return
+		}
+		writeJSON(w, 202, map[string]string{"status":"delete_pending"})
+		return
+	}
+	if err != nil { writeErr(w, 503, "media state unavailable"); return }
+	if old == "deleted" {
+		if in.Namespace != "identity-evidence-private" || purgedAt != nil {
+			writeJSON(w, 200, map[string]string{"status":"deleted"})
+			return
+		}
+		// Legacy rows marked deleted by an unversioned S3 DELETE may still
+		// contain older B2 versions. Keep them pending until the permanent
+		// version-purge worker verifies the object and sidecar are empty.
+		if _, err = tx.Exec(ctx, `update media_objects set status='delete_pending',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key); err != nil {
+			writeErr(w, 503, "could not quarantine legacy identity evidence for permanent purge")
+			return
+		}
+		if _, err = tx.Exec(ctx, `update media_outbox set status='retry',attempts=0,available_at=now(),locked_until=null,last_error=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete' and status='dead'`, in.OwnerID, in.Namespace, in.Key); err != nil {
+			writeErr(w, 503, "could not retry legacy identity evidence purge")
+			return
+		}
+		if err = tx.Commit(ctx); err != nil { writeErr(w, 503, "could not persist legacy identity evidence purge"); return }
+		writeJSON(w, 202, map[string]string{"status":"delete_pending"})
+		return
+	}
+	if old == "delete_pending" {
+		var jobStatus string
+		err = tx.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete'`, in.OwnerID, in.Namespace, in.Key).Scan(&jobStatus)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The periodic legacy-purge sweep will create the missing durable job.
+			if err = tx.Commit(ctx); err != nil { writeErr(w, 503, "could not persist deletion state"); return }
+			writeJSON(w, 202, map[string]string{"status":"delete_pending"})
+			return
+		}
+		if err != nil { writeErr(w, 503, "deletion job state unavailable"); return }
+		if jobStatus == "dead" {
+			_, err = tx.Exec(ctx, `update media_outbox set status='retry',attempts=0,available_at=now(),locked_until=null,last_error=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete' and status='dead'`, in.OwnerID, in.Namespace, in.Key)
+			if err != nil { writeErr(w, 503, "could not retry dead-letter deletion"); return }
+			if err = tx.Commit(ctx); err != nil { writeErr(w, 503, "could not persist deletion retry"); return }
+		}
+		writeJSON(w, 202, map[string]string{"status":"delete_pending"})
+		return
+	}
+	_, err = tx.Exec(ctx, `update media_objects set status='delete_pending',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key)
+	if err == nil {
+		_, err = tx.Exec(ctx, `update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete' where owner_id=$1 and namespace=$2 and object_key=$3 and operation in ('verify','replicate','restore_primary') and status in ('pending','retry')`, in.OwnerID, in.Namespace, in.Key)
+	}
+	if err == nil {
+		_, err = tx.Exec(ctx, `insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'delete','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),last_error=null,updated_at=now()`, in.OwnerID, in.Namespace, in.Key)
+	}
+	if err == nil {
+		eventID, idErr := randomID()
+		if idErr != nil { err = idErr } else {
+			_, err = tx.Exec(ctx, `insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome) values($1,$2,$3,$4,'delete','queued')`, eventID, in.OwnerID, in.Namespace, in.Key)
+		}
+	}
+	if err == nil { err = tx.Commit(ctx) }
+	if err != nil { writeErr(w, 503, "could not queue durable deletion"); return }
+	writeJSON(w, 202, map[string]string{"status":"delete_pending"})
 }
+
 func mediaRetryDelaySeconds(attempt int) int {
 	if attempt < 1 { attempt = 1 }
 	base := 5
@@ -396,9 +489,65 @@ func mediaRetryDelaySeconds(attempt int) int {
 	return delay
 }
 
-func (s *server) worker(ctx context.Context){
-	t:=time.NewTicker(3*time.Second);defer t.Stop()
-	for{select{case<-ctx.Done():return;case<-t.C:if err:=s.processOne(ctx);err!=nil{log.Printf("media outbox worker: %v",err)}}}
+func (s *server) worker(ctx context.Context) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil {
+				log.Printf("legacy identity evidence purge enqueue: %v", err)
+			}
+			if err := s.processOne(ctx); err != nil {
+				log.Printf("media outbox worker: %v", err)
+			}
+		}
+	}
+}
+
+// enqueueLegacyIdentityEvidencePurges repairs objects marked deleted by the
+// former delete-marker-only implementation. The durable marker is written
+// only after all B2 versions and delete markers have been permanently erased.
+func (s *server) enqueueLegacyIdentityEvidencePurges(ctx context.Context) error {
+	_, err := s.db.Exec(ctx, `
+		WITH legacy AS (
+			UPDATE media_objects
+			SET status='delete_pending', updated_at=now()
+			WHERE namespace='identity-evidence-private'
+			  AND status IN ('deleted','delete_pending')
+			  AND identity_evidence_purged_at IS NULL
+			  AND NOT EXISTS (
+				SELECT 1 FROM media_outbox active
+				WHERE active.owner_id=media_objects.owner_id
+				  AND active.namespace=media_objects.namespace
+				  AND active.object_key=media_objects.object_key
+				  AND active.operation='delete'
+				  AND active.status IN ('pending','processing','retry')
+			  )
+			  AND NOT (
+				status='delete_pending'
+				AND EXISTS (
+					SELECT 1 FROM media_outbox dead
+					WHERE dead.owner_id=media_objects.owner_id
+					  AND dead.namespace=media_objects.namespace
+					  AND dead.object_key=media_objects.object_key
+					  AND dead.operation='delete'
+					  AND dead.status='dead'
+				)
+			  )
+			RETURNING owner_id, namespace, object_key
+		)
+		INSERT INTO media_outbox(owner_id,namespace,object_key,operation,status,attempts,available_at,locked_until,last_error)
+		SELECT owner_id,namespace,object_key,'delete','pending',0,now(),NULL,'requeued for permanent B2 version purge'
+		FROM legacy
+		ON CONFLICT(owner_id,namespace,object_key,operation) DO UPDATE
+		SET status='pending', attempts=0, available_at=now(), locked_until=NULL,
+		    last_error='requeued for permanent B2 version purge', updated_at=now()
+		WHERE media_outbox.status IN ('done','cancelled','dead')
+	`)
+	return err
 }
 func (s *server) processOne(parent context.Context)error{
 	ctx,c:=context.WithTimeout(parent,30*time.Minute);defer c()
@@ -427,7 +576,12 @@ func (s *server) processOne(parent context.Context)error{
 	if err!=nil{
 		var objectStatus string
 		stateErr:=s.db.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&objectStatus)
-		if stateErr==nil&&(objectStatus=="delete_pending"||objectStatus=="deleted") { _,cancelErr:=s.db.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete',updated_at=now() where id=$1 and status='processing'`,id);return cancelErr }
+		if stateErr==nil&&(objectStatus=="deleted"||(objectStatus=="delete_pending"&&op!="delete")) { _,cancelErr:=s.db.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete',updated_at=now() where id=$1 and status='processing'`,id);return cancelErr }
+		var grantWait uploadGrantActiveError
+		if errors.As(err,&grantWait) {
+			tag,updateErr:=s.db.Exec(ctx,`update media_outbox set status='retry',available_at=$3,locked_until=null,last_error=left($2,1000),updated_at=now() where id=$1 and status='processing'`,id,err.Error(),grantWait.retryAt)
+			if updateErr!=nil{return updateErr};if tag.RowsAffected()==0{return nil};return err
+		}
 		delaySeconds:=mediaRetryDelaySeconds(attempts)
 		tag,updateErr:=s.db.Exec(ctx,`update media_outbox set status=case when attempts>=12 then 'dead' else 'retry' end,available_at=now()+make_interval(secs=>$3),locked_until=null,last_error=left($2,1000),updated_at=now() where id=$1 and status='processing'`,id,err.Error(),delaySeconds)
 		if updateErr!=nil{return updateErr};if tag.RowsAffected()==0{return nil}
@@ -525,28 +679,197 @@ func (s *server) restorePrimary(ctx context.Context,owner,ns,key string)error{
 	return nil
 }
 
-func (s *server) deleteOrigins(ctx context.Context,owner,ns,key string)error{
-	primary, replica := s.storesForNamespace(ns)
-	for _,store:=range []s3Store{primary,replica}{
-		if store.bucket == "" { continue }
-		resp,err:=s.signedRequest(ctx,store,http.MethodDelete,key,nil,"");if err!=nil{return err};io.Copy(io.Discard,io.LimitReader(resp.Body,4096));resp.Body.Close();if resp.StatusCode!=200&&resp.StatusCode!=204&&resp.StatusCode!=404{return fmt.Errorf("%s delete status %d",store.name,resp.StatusCode)
+func (s *server) deleteOrigins(ctx context.Context, owner, namespace, key string) error {
+	// A presigned PUT remains valid at B2 even after its database grant is
+	// consumed or the object is hidden. Wait until every issued URL has expired
+	// plus a bounded in-flight upload grace before enumerating versions.
+	var uploadURLStillValid bool
+	if err := s.db.QueryRow(ctx, `
+		select exists(
+			select 1 from media_upload_grants
+			where owner_id=$1 and namespace=$2 and object_key=$3
+			  and expires_at + interval '5 minutes' > now()
+		)
+	`, owner, namespace, key).Scan(&uploadURLStillValid); err != nil {
+		return fmt.Errorf("check outstanding presigned upload grants: %w", err)
+	}
+	if uploadURLStillValid {
+		var retryAt time.Time
+		if err := s.db.QueryRow(ctx, `
+			select max(expires_at + interval '5 minutes')
+			from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3
+			  and expires_at + interval '60 seconds' > now()
+		`, owner, namespace, key).Scan(&retryAt); err != nil {
+			return fmt.Errorf("read presigned upload grant expiry: %w", err)
+		}
+		return uploadGrantActiveError{retryAt: retryAt}
+	}
+	primary, replica := s.storesForNamespace(namespace)
+	if namespace == "identity-evidence-private" {
+		if primary.bucket == "" { return errors.New("dedicated B2 identity evidence bucket is not configured") }
+		if err := s.deleteAllB2ObjectVersions(ctx, primary, key); err != nil {
+			return fmt.Errorf("permanent identity evidence purge: %w", err)
+		}
+	} else {
+		for _, store := range []s3Store{primary, replica} {
+			if store.bucket == "" { continue }
+			resp, err := s.signedRequest(ctx, store, http.MethodDelete, key, nil, "")
+			if err != nil { return err }
+			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
+			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+				return fmt.Errorf("%s delete status %d", store.name, resp.StatusCode)
+			}
 		}
 	}
-	if err:=s.deleteMetadataSidecars(ctx,ns,key);err!=nil{return err}
-	_,err:=s.db.Exec(ctx,`update media_objects set status='deleted',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key);return err
+	if err := s.deleteMetadataSidecars(ctx, namespace, key); err != nil { return err }
+	tx, err := s.db.Begin(ctx)
+	if err != nil { return fmt.Errorf("begin media deletion finalization: %w", err) }
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `delete from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3`, owner, namespace, key); err != nil {
+		return fmt.Errorf("remove expired media upload grants: %w", err)
+	}
+	if namespace == "identity-evidence-private" {
+		if _, err := tx.Exec(ctx, `update media_objects set status='deleted',identity_evidence_purged_at=now(),updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`, owner, namespace, key); err != nil {
+			return fmt.Errorf("persist permanently purged identity evidence state: %w", err)
+		}
+	} else if _, err := tx.Exec(ctx, `update media_objects set status='deleted',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`, owner, namespace, key); err != nil {
+		return fmt.Errorf("persist deleted media state: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil { return fmt.Errorf("commit media deletion finalization: %w", err) }
+	return nil
 }
-func (s *server) signedRequest(ctx context.Context,store s3Store,method,key string,body io.Reader,contentType string)(*http.Response,error){
-	u,err:=objectURL(store,key);if err!=nil{return nil,err};payload:="UNSIGNED-PAYLOAD";date:=time.Now().UTC().Format("20060102T150405Z");day:=date[:8]
-	req,err:=http.NewRequestWithContext(ctx,method,u.String(),body);if err!=nil{return nil,err};if sized,ok:=body.(interface{Len64() int64});ok{req.ContentLength=sized.Len64()}
-	req.Header.Set("X-Amz-Date",date);req.Header.Set("X-Amz-Content-Sha256",payload);if contentType!=""{req.Header.Set("Content-Type",contentType)}
-	canonicalHeaders:="host:"+u.Host+"\nx-amz-content-sha256:"+payload+"\nx-amz-date:"+date+"\n";signed:="host;x-amz-content-sha256;x-amz-date"
-	if contentType!=""{canonicalHeaders="content-type:"+contentType+"\n"+canonicalHeaders;signed="content-type;"+signed}
-	canonical:=method+"\n"+u.EscapedPath()+"\n\n"+canonicalHeaders+"\n"+signed+"\n"+payload
-	scope:=day+"/"+store.region+"/s3/aws4_request";toSign:="AWS4-HMAC-SHA256\n"+date+"\n"+scope+"\n"+hashHex([]byte(canonical))
-	sig:=hex.EncodeToString(hmacSHA(signingKey(store.secret,day,store.region),toSign))
-	req.Header.Set("Authorization","AWS4-HMAC-SHA256 Credential="+store.access+"/"+scope+", SignedHeaders="+signed+", Signature="+sig)
+
+type uploadGrantActiveError struct { retryAt time.Time }
+func (e uploadGrantActiveError) Error() string {
+	return "presigned upload URL remains valid; deletion deferred until " + e.retryAt.UTC().Format(time.RFC3339)
+}
+
+
+func (s *server) signedRequest(ctx context.Context, store s3Store, method, key string, body io.Reader, contentType string) (*http.Response, error) {
+	u, err := objectURL(store, key)
+	if err != nil { return nil, err }
+	return s.signedRequestURL(ctx, store, method, u, body, contentType)
+}
+
+func (s *server) signedRequestURL(ctx context.Context, store s3Store, method string, u *url.URL, body io.Reader, contentType string) (*http.Response, error) {
+	payload := "UNSIGNED-PAYLOAD"
+	date := time.Now().UTC().Format("20060102T150405Z")
+	day := date[:8]
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
+	if err != nil { return nil, err }
+	if sized, ok := body.(interface{ Len64() int64 }); ok { req.ContentLength = sized.Len64() }
+	req.Header.Set("X-Amz-Date", date)
+	req.Header.Set("X-Amz-Content-Sha256", payload)
+	if contentType != "" { req.Header.Set("Content-Type", contentType) }
+	canonicalHeaders := "host:" + u.Host + "\nx-amz-content-sha256:" + payload + "\nx-amz-date:" + date + "\n"
+	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
+	if contentType != "" {
+		canonicalHeaders = "content-type:" + contentType + "\n" + canonicalHeaders
+		signedHeaders = "content-type;" + signedHeaders
+	}
+	canonicalQuery := u.Query().Encode()
+	canonical := method + "\n" + u.EscapedPath() + "\n" + canonicalQuery + "\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + payload
+	scope := day + "/" + store.region + "/s3/aws4_request"
+	toSign := "AWS4-HMAC-SHA256\n" + date + "\n" + scope + "\n" + hashHex([]byte(canonical))
+	signature := hex.EncodeToString(hmacSHA(signingKey(store.secret, day, store.region), toSign))
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+store.access+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+signature)
 	return s.http.Do(req)
 }
+
+type b2ObjectVersion struct {
+	Key string `xml:"Key"`
+	VersionID string `xml:"VersionId"`
+	DeleteMarker bool
+}
+
+type b2VersionListPage struct {
+	Versions []b2ObjectVersion `xml:"Version"`
+	DeleteMarkers []b2ObjectVersion `xml:"DeleteMarker"`
+	IsTruncated bool `xml:"IsTruncated"`
+	NextKeyMarker string `xml:"NextKeyMarker"`
+	NextVersionIDMarker string `xml:"NextVersionIdMarker"`
+}
+
+func (s *server) listB2ObjectVersionsPage(ctx context.Context, store s3Store, prefix, keyMarker, versionIDMarker string) (b2VersionListPage, error) {
+	var page b2VersionListPage
+	if err := validateStore(store); err != nil { return page, err }
+	base, err := url.Parse(strings.TrimRight(store.endpoint, "/"))
+	if err != nil { return page, err }
+	base.Path = "/" + store.bucket + "/"
+	query := url.Values{}
+	query.Set("versions", "")
+	query.Set("prefix", prefix)
+	query.Set("max-keys", "1000")
+	if keyMarker != "" { query.Set("key-marker", keyMarker) }
+	if versionIDMarker != "" { query.Set("version-id-marker", versionIDMarker) }
+	base.RawQuery = query.Encode()
+	resp, err := s.signedRequestURL(ctx, store, http.MethodGet, base, nil, "")
+	if err != nil { return page, fmt.Errorf("%s list object versions: %w", store.name, err) }
+	defer resp.Body.Close()
+	const maxXMLBytes = 8 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxXMLBytes+1))
+	if err != nil { return page, fmt.Errorf("%s read object version listing: %w", store.name, err) }
+	if len(body) > maxXMLBytes { return page, fmt.Errorf("%s object version listing exceeded %d bytes", store.name, maxXMLBytes) }
+	if resp.StatusCode != http.StatusOK { return page, fmt.Errorf("%s list object versions status %d: %s", store.name, resp.StatusCode, strings.TrimSpace(string(body))) }
+	if err := xml.Unmarshal(body, &page); err != nil { return page, fmt.Errorf("%s parse object version listing: %w", store.name, err) }
+	for i := range page.DeleteMarkers { page.DeleteMarkers[i].DeleteMarker = true }
+	return page, nil
+}
+
+func (s *server) collectB2ObjectVersions(ctx context.Context, store s3Store, key string) ([]b2ObjectVersion, error) {
+	if key == "" || strings.ContainsAny(key, "\r\n") { return nil, errors.New("invalid object key for permanent B2 deletion") }
+	var versions []b2ObjectVersion
+	seenIDs := make(map[string]struct{})
+	seenMarkers := make(map[string]struct{})
+	keyMarker, versionIDMarker := "", ""
+	for pageNumber := 0; pageNumber < 100; pageNumber++ {
+		page, err := s.listB2ObjectVersionsPage(ctx, store, key, keyMarker, versionIDMarker)
+		if err != nil { return nil, err }
+		entries := append(append([]b2ObjectVersion{}, page.Versions...), page.DeleteMarkers...)
+		for _, entry := range entries {
+			if entry.Key != key { continue }
+			if entry.VersionID == "" { return nil, errors.New("B2 returned an object version without a version ID") }
+			if _, exists := seenIDs[entry.VersionID]; exists { continue }
+			seenIDs[entry.VersionID] = struct{}{}
+			versions = append(versions, entry)
+			if len(versions) > 10000 { return nil, errors.New("identity evidence object exceeds the 10000-version permanent deletion safety limit") }
+		}
+		if !page.IsTruncated { return versions, nil }
+		nextKey, nextVersion := page.NextKeyMarker, page.NextVersionIDMarker
+		marker := nextKey + "\x00" + nextVersion
+		if nextKey == "" && nextVersion == "" { return nil, errors.New("B2 truncated object version listing omitted pagination markers") }
+		if marker == keyMarker+"\x00"+versionIDMarker { return nil, errors.New("B2 object version pagination marker did not advance") }
+		if _, exists := seenMarkers[marker]; exists { return nil, errors.New("B2 object version pagination repeated a marker") }
+		seenMarkers[marker] = struct{}{}
+		keyMarker, versionIDMarker = nextKey, nextVersion
+	}
+	return nil, errors.New("B2 object version listing exceeded the 100-page safety limit")
+}
+
+func (s *server) deleteAllB2ObjectVersions(ctx context.Context, store s3Store, key string) error {
+	versions, err := s.collectB2ObjectVersions(ctx, store, key)
+	if err != nil { return err }
+	for _, version := range versions {
+		u, err := objectURL(store, key)
+		if err != nil { return err }
+		query := url.Values{}
+		query.Set("versionId", version.VersionID)
+		u.RawQuery = query.Encode()
+		resp, err := s.signedRequestURL(ctx, store, http.MethodDelete, u, nil, "")
+		if err != nil { return fmt.Errorf("%s permanently delete version %q: %w", store.name, version.VersionID, err) }
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+			return fmt.Errorf("%s permanently delete version %q status %d", store.name, version.VersionID, resp.StatusCode)
+		}
+	}
+	remaining, err := s.collectB2ObjectVersions(ctx, store, key)
+	if err != nil { return fmt.Errorf("%s verify permanent deletion: %w", store.name, err) }
+	if len(remaining) != 0 {
+		return fmt.Errorf("%s retained %d object versions or delete markers after permanent deletion", store.name, len(remaining))
+	}
+	return nil
+}
+
 func presign(store s3Store,method,key string,ttl time.Duration,contentType string)(string,error){
 	u,err:=objectURL(store,key);if err!=nil{return "",err};now:=time.Now().UTC();date:=now.Format("20060102T150405Z");day:=date[:8];scope:=day+"/"+store.region+"/s3/aws4_request";signed:="host";if contentType!=""{signed="content-type;host"}
 	q:=u.Query();q.Set("X-Amz-Algorithm","AWS4-HMAC-SHA256");q.Set("X-Amz-Credential",store.access+"/"+scope);q.Set("X-Amz-Date",date);q.Set("X-Amz-Expires",strconv.Itoa(int(ttl.Seconds())));q.Set("X-Amz-SignedHeaders",signed);u.RawQuery=q.Encode()
