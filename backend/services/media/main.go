@@ -365,23 +365,84 @@ func (s *server) downloadURL(w http.ResponseWriter, r *http.Request) {
 	}
 	writeErr(w, 503, "no verified origin is currently readable")
 }
-func (s *server) delete(w http.ResponseWriter,r *http.Request){
-	if r.Method!=http.MethodPost{method(w,"POST");return};if !s.auth(w,r){return}
-	var in deleteRequest;if !decode(w,r,&in)||!validIdentity(in.RequesterID)||!validIdentity(in.OwnerID)||!validNamespace(in.Namespace)||!validObjectForNamespace(in.Namespace,in.Key,in.OwnerID){writeErr(w,400,"invalid delete request");return};if !s.namespaceAllowedForRoute(w,r,in.Namespace){return}
-	if in.Namespace == "identity-evidence-private" && in.RequesterID != in.OwnerID { writeErr(w,403,"identity evidence is restricted to its owning Backend application"); return }
-	ctx,c:=context.WithTimeout(r.Context(),5*time.Second);defer c()
-	tx,err:=s.db.Begin(ctx);if err!=nil{writeErr(w,503,"durable state unavailable");return};defer tx.Rollback(ctx)
-	var old string;err=tx.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3 for update`,in.OwnerID,in.Namespace,in.Key).Scan(&old)
-	if errors.Is(err,pgx.ErrNoRows){writeJSON(w,200,map[string]string{"status":"deleted"});return};if err!=nil{writeErr(w,503,"media state unavailable");return}
-	if old=="deleted"{writeJSON(w,200,map[string]string{"status":"deleted"});return}
-	if old=="delete_pending" { var jobStatus string; if err=tx.QueryRow(ctx,`select status from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete'`,in.OwnerID,in.Namespace,in.Key).Scan(&jobStatus);err!=nil{writeErr(w,503,"deletion job state unavailable");return};if jobStatus=="dead"{_,err=tx.Exec(ctx,`update media_outbox set status='retry',attempts=0,available_at=now(),locked_until=null,last_error=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete' and status='dead'`,in.OwnerID,in.Namespace,in.Key);if err!=nil{writeErr(w,503,"could not retry dead-letter deletion");return};if err=tx.Commit(ctx);err!=nil{writeErr(w,503,"could not persist deletion retry");return}};writeJSON(w,202,map[string]string{"status":"delete_pending"});return }
-	_,err=tx.Exec(ctx,`update media_objects set status='delete_pending',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,in.OwnerID,in.Namespace,in.Key)
-	if err==nil{_,err=tx.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete' where owner_id=$1 and namespace=$2 and object_key=$3 and operation in ('verify','replicate','restore_primary') and status in ('pending','retry')`,in.OwnerID,in.Namespace,in.Key)}
-	if err==nil{_,err=tx.Exec(ctx,`insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'delete','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),last_error=null`,in.OwnerID,in.Namespace,in.Key)}
-	if err==nil{eventID,idErr:=randomID();if idErr!=nil{err=idErr}else{_,err=tx.Exec(ctx,`insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome) values($1,$2,$3,$4,'delete','queued')`,eventID,in.OwnerID,in.Namespace,in.Key)}}
-	if err==nil{err=tx.Commit(ctx)};if err!=nil{writeErr(w,503,"could not queue durable deletion");return}
-	writeJSON(w,202,map[string]string{"status":"delete_pending"})
+func (s *server) delete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost { method(w, "POST"); return }
+	if !s.auth(w, r) { return }
+	var in deleteRequest
+	if !decode(w, r, &in) || !validIdentity(in.RequesterID) || !validIdentity(in.OwnerID) || !validNamespace(in.Namespace) || !validObjectForNamespace(in.Namespace, in.Key, in.OwnerID) {
+		writeErr(w, 400, "invalid delete request")
+		return
+	}
+	if !s.namespaceAllowedForRoute(w, r, in.Namespace) { return }
+	if in.Namespace == "identity-evidence-private" && in.RequesterID != in.OwnerID {
+		writeErr(w, 403, "identity evidence is restricted to its owning Backend application")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	tx, err := s.db.Begin(ctx)
+	if err != nil { writeErr(w, 503, "durable state unavailable"); return }
+	defer tx.Rollback(ctx)
+	var old string
+	var purgedAt *time.Time
+	err = tx.QueryRow(ctx, `select status,identity_evidence_purged_at from media_objects where owner_id=$1 and namespace=$2 and object_key=$3 for update`, in.OwnerID, in.Namespace, in.Key).Scan(&old, &purgedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, 200, map[string]string{"status":"deleted"})
+		return
+	}
+	if err != nil { writeErr(w, 503, "media state unavailable"); return }
+	if old == "deleted" {
+		if in.Namespace != "identity-evidence-private" || purgedAt != nil {
+			writeJSON(w, 200, map[string]string{"status":"deleted"})
+			return
+		}
+		// Legacy rows marked deleted by an unversioned S3 DELETE may still
+		// contain older B2 versions. Keep them pending until the permanent
+		// version-purge worker verifies the object and sidecar are empty.
+		if _, err = tx.Exec(ctx, `update media_objects set status='delete_pending',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key); err != nil {
+			writeErr(w, 503, "could not quarantine legacy identity evidence for permanent purge")
+			return
+		}
+		if err = tx.Commit(ctx); err != nil { writeErr(w, 503, "could not persist legacy identity evidence purge"); return }
+		writeJSON(w, 202, map[string]string{"status":"delete_pending"})
+		return
+	}
+	if old == "delete_pending" {
+		var jobStatus string
+		err = tx.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete'`, in.OwnerID, in.Namespace, in.Key).Scan(&jobStatus)
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The periodic legacy-purge sweep will create the missing durable job.
+			if err = tx.Commit(ctx); err != nil { writeErr(w, 503, "could not persist deletion state"); return }
+			writeJSON(w, 202, map[string]string{"status":"delete_pending"})
+			return
+		}
+		if err != nil { writeErr(w, 503, "deletion job state unavailable"); return }
+		if jobStatus == "dead" {
+			_, err = tx.Exec(ctx, `update media_outbox set status='retry',attempts=0,available_at=now(),locked_until=null,last_error=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete' and status='dead'`, in.OwnerID, in.Namespace, in.Key)
+			if err != nil { writeErr(w, 503, "could not retry dead-letter deletion"); return }
+			if err = tx.Commit(ctx); err != nil { writeErr(w, 503, "could not persist deletion retry"); return }
+		}
+		writeJSON(w, 202, map[string]string{"status":"delete_pending"})
+		return
+	}
+	_, err = tx.Exec(ctx, `update media_objects set status='delete_pending',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key)
+	if err == nil {
+		_, err = tx.Exec(ctx, `update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete' where owner_id=$1 and namespace=$2 and object_key=$3 and operation in ('verify','replicate','restore_primary') and status in ('pending','retry')`, in.OwnerID, in.Namespace, in.Key)
+	}
+	if err == nil {
+		_, err = tx.Exec(ctx, `insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'delete','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),last_error=null,updated_at=now()`, in.OwnerID, in.Namespace, in.Key)
+	}
+	if err == nil {
+		eventID, idErr := randomID()
+		if idErr != nil { err = idErr } else {
+			_, err = tx.Exec(ctx, `insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome) values($1,$2,$3,$4,'delete','queued')`, eventID, in.OwnerID, in.Namespace, in.Key)
+		}
+	}
+	if err == nil { err = tx.Commit(ctx) }
+	if err != nil { writeErr(w, 503, "could not queue durable deletion"); return }
+	writeJSON(w, 202, map[string]string{"status":"delete_pending"})
 }
+
 func mediaRetryDelaySeconds(attempt int) int {
 	if attempt < 1 { attempt = 1 }
 	base := 5
