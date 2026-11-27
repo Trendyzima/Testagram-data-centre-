@@ -19,7 +19,7 @@ concurrency:
 jobs:
   media-provider-lifecycle:
     if: inputs.confirm_staging_provider_writes == true
-    name: B2/R2 media, restore, identity-evidence and deletion lifecycle
+    name: General-media B2/R2 replication and B2-only identity-evidence lifecycle
     runs-on: ubuntu-latest
     environment: media-staging
     timeout-minutes: 30
@@ -87,8 +87,8 @@ jobs:
             [[ ! "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]] || { echo "::error::Production bucket rejected"; exit 1; }
           done
           [[ "$MEDIA_SMOKE_B2_BUCKET" != "$MEDIA_SMOKE_B2_IDENTITY_BUCKET" ]] || { echo "::error::Identity evidence buckets must be separate from ordinary media buckets"; exit 1; }
-          [[ "$MEDIA_SMOKE_R2_BUCKET" != "$MEDIA_SMOKE_R2_PUBLIC_BUCKET" ]] || { echo "::error::R2 private, public and identity-evidence buckets must all be distinct"; exit 1; }
-          [[ "$MEDIA_SMOKE_R2_METADATA_BUCKET" != "$MEDIA_SMOKE_R2_BUCKET" && "$MEDIA_SMOKE_R2_METADATA_BUCKET" != "$MEDIA_SMOKE_R2_PUBLIC_BUCKET" ]] || { echo "::error::R2 metadata sidecar bucket must be separate from media and identity evidence"; exit 1; }
+          [[ "$MEDIA_SMOKE_R2_BUCKET" != "$MEDIA_SMOKE_R2_PUBLIC_BUCKET" ]] || { echo "::error::R2 private and public general-media buckets must be distinct"; exit 1; }
+          [[ "$MEDIA_SMOKE_R2_METADATA_BUCKET" != "$MEDIA_SMOKE_R2_BUCKET" && "$MEDIA_SMOKE_R2_METADATA_BUCKET" != "$MEDIA_SMOKE_R2_PUBLIC_BUCKET" ]] || { echo "::error::R2 metadata sidecar bucket must be separate from general media"; exit 1; }
           echo "Validated dedicated staging-only B2/R2 buckets and distinct service credentials. Values are not printed."
       - name: Install AWS CLI for isolated MinIO metadata bucket
         run: |
