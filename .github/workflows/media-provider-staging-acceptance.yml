@@ -1,0 +1,102 @@
+name: Data Centre media provider staging acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_staging_provider_writes:
+        description: Confirm that the configured B2/R2 buckets and service tokens are dedicated non-production staging resources and may be written, repaired and deleted.
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testagram-data-centre-media-staging
+  cancel-in-progress: false
+
+jobs:
+  media-provider-lifecycle:
+    if: inputs.confirm_staging_provider_writes == true
+    name: B2/R2 media, restore, identity-evidence and deletion lifecycle
+    runs-on: ubuntu-latest
+    environment: media-staging
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: testagram_media
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-media-db-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d testagram_media"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      TESTAGRAM_LIVE_MEDIA_SMOKE: "true"
+      MEDIA_DATABASE_URL: postgresql://postgres:ci-only-media-db-password@127.0.0.1:5432/testagram_media?sslmode=disable
+      MEDIA_INTERNAL_TOKEN: ${{ secrets.MEDIA_STAGING_INTERNAL_TOKEN }}
+      IDENTITY_EVIDENCE_INTERNAL_TOKEN: ${{ secrets.MEDIA_STAGING_IDENTITY_EVIDENCE_INTERNAL_TOKEN }}
+      MEDIA_SMOKE_B2_ENDPOINT: ${{ vars.MEDIA_STAGING_B2_ENDPOINT }}
+      MEDIA_SMOKE_B2_REGION: ${{ vars.MEDIA_STAGING_B2_REGION }}
+      MEDIA_SMOKE_B2_BUCKET: ${{ vars.MEDIA_STAGING_B2_PRIVATE_BUCKET }}
+      MEDIA_SMOKE_B2_ACCESS_KEY_ID: ${{ secrets.MEDIA_STAGING_B2_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_B2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_STAGING_B2_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_B2_IDENTITY_BUCKET: ${{ vars.MEDIA_STAGING_B2_IDENTITY_BUCKET }}
+      MEDIA_SMOKE_R2_ENDPOINT: ${{ vars.MEDIA_STAGING_R2_ENDPOINT }}
+      MEDIA_SMOKE_R2_REGION: ${{ vars.MEDIA_STAGING_R2_REGION }}
+      MEDIA_SMOKE_R2_BUCKET: ${{ vars.MEDIA_STAGING_R2_PRIVATE_BUCKET }}
+      MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.MEDIA_STAGING_R2_ACCESS_KEY_ID }}
+      MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_STAGING_R2_SECRET_ACCESS_KEY }}
+      MEDIA_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.MEDIA_STAGING_R2_IDENTITY_BUCKET }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.23"
+          cache: true
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client
+      - name: Validate isolated staging resources before any provider write
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in MEDIA_INTERNAL_TOKEN IDENTITY_EVIDENCE_INTERNAL_TOKEN MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION MEDIA_SMOKE_B2_BUCKET MEDIA_SMOKE_B2_ACCESS_KEY_ID MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_B2_IDENTITY_BUCKET MEDIA_SMOKE_R2_ENDPOINT MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_BUCKET MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_IDENTITY_BUCKET; do
+            [[ -n "${!name:-}" ]] || { echo "::error::Missing media-staging environment setting: $name"; exit 1; }
+          done
+          [[ "${#MEDIA_INTERNAL_TOKEN}" -ge 32 && "${#IDENTITY_EVIDENCE_INTERNAL_TOKEN}" -ge 32 ]] || { echo "::error::Dedicated media service tokens must be at least 32 characters"; exit 1; }
+          [[ "$MEDIA_INTERNAL_TOKEN" != "$IDENTITY_EVIDENCE_INTERNAL_TOKEN" ]] || { echo "::error::Media and identity-evidence service tokens must be distinct"; exit 1; }
+          [[ "$MEDIA_SMOKE_B2_ENDPOINT" == https://* && "$MEDIA_SMOKE_R2_ENDPOINT" == https://* ]] || { echo "::error::B2 and R2 endpoints must use HTTPS"; exit 1; }
+          for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_B2_IDENTITY_BUCKET" "$MEDIA_SMOKE_R2_BUCKET" "$MEDIA_SMOKE_R2_IDENTITY_BUCKET"; do
+            [[ "$bucket" =~ (^|[-_])(ci|staging|smoke)([-_]|$) ]] || { echo "::error::Every provider bucket must explicitly identify isolated staging/smoke data"; exit 1; }
+            [[ ! "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]] || { echo "::error::Production bucket rejected"; exit 1; }
+          done
+          [[ "$MEDIA_SMOKE_B2_BUCKET" != "$MEDIA_SMOKE_B2_IDENTITY_BUCKET" && "$MEDIA_SMOKE_R2_BUCKET" != "$MEDIA_SMOKE_R2_IDENTITY_BUCKET" ]] || { echo "::error::Identity evidence buckets must be separate from ordinary media buckets"; exit 1; }
+          echo "Validated dedicated staging-only B2/R2 buckets and distinct service credentials. Values are not printed."
+      - name: Apply isolated Data Centre media database migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          for migration in backend/services/media/migrations/001_media_lifecycle.sql backend/services/media/migrations/002_primary_origin_restore.sql backend/services/media/migrations/003_identity_evidence_namespace.sql; do
+            psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f "$migration"
+          done
+      - name: Exercise real provider round-trip, B2/R2 restore, repair and deletion
+        run: go test -count=1 -run '^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete|TestLiveIdentityEvidenceLifecycle)$' -v ./backend/services/media
+      - name: Record staging acceptance scope
+        if: success()
+        run: |
+          {
+            echo "### Data Centre media provider staging acceptance"
+            echo "- Source revision: $GITHUB_SHA"
+            echo "- B2 and R2 upload, HEAD, read-back and SHA-256 verification exercised."
+            echo "- Durable B2-to-R2 replication and R2-to-B2 primary restoration exercised."
+            echo "- Separate identity-evidence credentials, namespace authorization, cross-application denial and deletion exercised."
+            echo "- Temporary objects and database rows are cleaned by the test harness."
+            echo "- No production buckets, credentials, DNS, deployments or VPS services were used."
+            echo "- This is provider/service lifecycle evidence, not proof of same-deployment Backend-to-CDN-to-Flutter acceptance."
+          } >> "$GITHUB_STEP_SUMMARY"
