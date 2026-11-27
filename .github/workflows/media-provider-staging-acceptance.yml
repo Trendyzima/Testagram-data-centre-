@@ -52,6 +52,12 @@ jobs:
       MEDIA_SMOKE_R2_ACCESS_KEY_ID: ${{ secrets.MEDIA_STAGING_R2_ACCESS_KEY_ID }}
       MEDIA_SMOKE_R2_SECRET_ACCESS_KEY: ${{ secrets.MEDIA_STAGING_R2_SECRET_ACCESS_KEY }}
       MEDIA_SMOKE_R2_IDENTITY_BUCKET: ${{ vars.MEDIA_STAGING_R2_IDENTITY_BUCKET }}
+      MEDIA_SMOKE_R2_METADATA_BUCKET: ${{ vars.MEDIA_STAGING_R2_METADATA_BUCKET }}
+      MEDIA_SMOKE_MINIO_METADATA_ENDPOINT: http://127.0.0.1:9000
+      MEDIA_SMOKE_MINIO_METADATA_REGION: us-east-1
+      MEDIA_SMOKE_MINIO_METADATA_BUCKET: testagram-ci-media-metadata
+      MEDIA_SMOKE_MINIO_METADATA_ACCESS_KEY_ID: ci-testagram-metadata
+      MEDIA_SMOKE_MINIO_METADATA_SECRET_ACCESS_KEY: ci-only-metadata-secret-32-characters
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -66,7 +72,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in MEDIA_INTERNAL_TOKEN IDENTITY_EVIDENCE_INTERNAL_TOKEN MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION MEDIA_SMOKE_B2_BUCKET MEDIA_SMOKE_B2_ACCESS_KEY_ID MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_B2_IDENTITY_BUCKET MEDIA_SMOKE_R2_ENDPOINT MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_BUCKET MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_IDENTITY_BUCKET; do
+          for name in MEDIA_INTERNAL_TOKEN IDENTITY_EVIDENCE_INTERNAL_TOKEN MEDIA_SMOKE_B2_ENDPOINT MEDIA_SMOKE_B2_REGION MEDIA_SMOKE_B2_BUCKET MEDIA_SMOKE_B2_ACCESS_KEY_ID MEDIA_SMOKE_B2_SECRET_ACCESS_KEY MEDIA_SMOKE_B2_IDENTITY_BUCKET MEDIA_SMOKE_R2_ENDPOINT MEDIA_SMOKE_R2_REGION MEDIA_SMOKE_R2_BUCKET MEDIA_SMOKE_R2_ACCESS_KEY_ID MEDIA_SMOKE_R2_SECRET_ACCESS_KEY MEDIA_SMOKE_R2_IDENTITY_BUCKET MEDIA_SMOKE_R2_METADATA_BUCKET; do
             [[ -n "${!name:-}" ]] || { echo "::error::Missing media-staging environment setting: $name"; exit 1; }
           done
           [[ "${#MEDIA_INTERNAL_TOKEN}" -ge 32 && "${#IDENTITY_EVIDENCE_INTERNAL_TOKEN}" -ge 32 ]] || { echo "::error::Dedicated media service tokens must be at least 32 characters"; exit 1; }
@@ -77,7 +83,31 @@ jobs:
             [[ ! "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]] || { echo "::error::Production bucket rejected"; exit 1; }
           done
           [[ "$MEDIA_SMOKE_B2_BUCKET" != "$MEDIA_SMOKE_B2_IDENTITY_BUCKET" && "$MEDIA_SMOKE_R2_BUCKET" != "$MEDIA_SMOKE_R2_IDENTITY_BUCKET" ]] || { echo "::error::Identity evidence buckets must be separate from ordinary media buckets"; exit 1; }
+          [[ "$MEDIA_SMOKE_R2_METADATA_BUCKET" != "$MEDIA_SMOKE_R2_BUCKET" && "$MEDIA_SMOKE_R2_METADATA_BUCKET" != "$MEDIA_SMOKE_R2_IDENTITY_BUCKET" ]] || { echo "::error::R2 metadata sidecar bucket must be separate from media and identity evidence"; exit 1; }
           echo "Validated dedicated staging-only B2/R2 buckets and distinct service credentials. Values are not printed."
+      - name: Install AWS CLI for isolated MinIO metadata bucket
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends awscli
+      - name: Start isolated MinIO metadata store
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --rm --name testagram-minio-media-metadata-smoke \\
+            -p 9000:9000 \\
+            -e MINIO_ROOT_USER="$MEDIA_SMOKE_MINIO_METADATA_ACCESS_KEY_ID" \\
+            -e MINIO_ROOT_PASSWORD="$MEDIA_SMOKE_MINIO_METADATA_SECRET_ACCESS_KEY" \\
+            ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9 \\
+            server /data --address ":9000" --console-address ":9001"
+          for attempt in $(seq 1 40); do
+            if curl -fsS "$MEDIA_SMOKE_MINIO_METADATA_ENDPOINT/minio/health/live" >/dev/null; then break; fi
+            if [ "$attempt" -eq 40 ]; then echo "::error::Isolated MinIO metadata store did not become healthy"; exit 1; fi
+            sleep 2
+          done
+          export AWS_ACCESS_KEY_ID="$MEDIA_SMOKE_MINIO_METADATA_ACCESS_KEY_ID"
+          export AWS_SECRET_ACCESS_KEY="$MEDIA_SMOKE_MINIO_METADATA_SECRET_ACCESS_KEY"
+          export AWS_DEFAULT_REGION="$MEDIA_SMOKE_MINIO_METADATA_REGION"
+          aws --endpoint-url "$MEDIA_SMOKE_MINIO_METADATA_ENDPOINT" s3api create-bucket --bucket "$MEDIA_SMOKE_MINIO_METADATA_BUCKET" >/dev/null
       - name: Apply isolated Data Centre media database migrations
         shell: bash
         run: |
@@ -87,6 +117,9 @@ jobs:
           done
       - name: Exercise real provider round-trip, B2/R2 restore, repair and deletion
         run: go test -count=1 -run '^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete|TestLiveIdentityEvidenceLifecycle)$' -v ./backend/services/media
+      - name: Stop isolated MinIO metadata store
+        if: always()
+        run: docker rm -f testagram-minio-media-metadata-smoke >/dev/null 2>&1 || true
       - name: Record staging acceptance scope
         if: success()
         run: |
