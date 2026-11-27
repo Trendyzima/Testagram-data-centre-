@@ -389,9 +389,46 @@ func mediaRetryDelaySeconds(attempt int) int {
 	return delay
 }
 
-func (s *server) worker(ctx context.Context){
-	t:=time.NewTicker(3*time.Second);defer t.Stop()
-	for{select{case<-ctx.Done():return;case<-t.C:if err:=s.processOne(ctx);err!=nil{log.Printf("media outbox worker: %v",err)}}}
+func (s *server) worker(ctx context.Context) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil {
+				log.Printf("legacy identity evidence purge enqueue: %v", err)
+			}
+			if err := s.processOne(ctx); err != nil {
+				log.Printf("media outbox worker: %v", err)
+			}
+		}
+	}
+}
+
+// enqueueLegacyIdentityEvidencePurges repairs objects marked deleted by the
+// former delete-marker-only implementation. The durable marker is written
+// only after all B2 versions and delete markers have been permanently erased.
+func (s *server) enqueueLegacyIdentityEvidencePurges(ctx context.Context) error {
+	_, err := s.db.Exec(ctx, `
+		WITH legacy AS (
+			UPDATE media_objects
+			SET status='delete_pending', updated_at=now()
+			WHERE namespace='identity-evidence-private'
+			  AND status='deleted'
+			  AND identity_evidence_purged_at IS NULL
+			RETURNING owner_id, namespace, object_key
+		)
+		INSERT INTO media_outbox(owner_id,namespace,object_key,operation,status,attempts,available_at,locked_until,last_error)
+		SELECT owner_id,namespace,object_key,'delete','pending',0,now(),NULL,'requeued for permanent B2 version purge'
+		FROM legacy
+		ON CONFLICT(owner_id,namespace,object_key,operation) DO UPDATE
+		SET status='pending', attempts=0, available_at=now(), locked_until=NULL,
+		    last_error='requeued for permanent B2 version purge', updated_at=now()
+		WHERE media_outbox.status <> 'processing'
+	`)
+	return err
 }
 func (s *server) processOne(parent context.Context)error{
 	ctx,c:=context.WithTimeout(parent,30*time.Minute);defer c()
@@ -572,7 +609,11 @@ func (s *server) deleteOrigins(ctx context.Context, owner, namespace, key string
 	if _, err := tx.Exec(ctx, `delete from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3`, owner, namespace, key); err != nil {
 		return fmt.Errorf("remove expired media upload grants: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `update media_objects set status='deleted',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`, owner, namespace, key); err != nil {
+	if namespace == "identity-evidence-private" {
+		if _, err := tx.Exec(ctx, `update media_objects set status='deleted',identity_evidence_purged_at=now(),updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`, owner, namespace, key); err != nil {
+			return fmt.Errorf("persist permanently purged identity evidence state: %w", err)
+		}
+	} else if _, err := tx.Exec(ctx, `update media_objects set status='deleted',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`, owner, namespace, key); err != nil {
 		return fmt.Errorf("persist deleted media state: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil { return fmt.Errorf("commit media deletion finalization: %w", err) }
