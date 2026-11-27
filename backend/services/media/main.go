@@ -403,6 +403,10 @@ func (s *server) delete(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 503, "could not quarantine legacy identity evidence for permanent purge")
 			return
 		}
+		if _, err = tx.Exec(ctx, `update media_outbox set status='retry',attempts=0,available_at=now(),locked_until=null,last_error=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete' and status='dead'`, in.OwnerID, in.Namespace, in.Key); err != nil {
+			writeErr(w, 503, "could not retry legacy identity evidence purge")
+			return
+		}
 		if err = tx.Commit(ctx); err != nil { writeErr(w, 503, "could not persist legacy identity evidence purge"); return }
 		writeJSON(w, 202, map[string]string{"status":"delete_pending"})
 		return
