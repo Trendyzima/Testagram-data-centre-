@@ -112,7 +112,6 @@ func (s *server) writeMetadataSidecars(ctx context.Context, item reconcileItem) 
 	metadataPrimary, metadataReplica := s.metadataStoresForNamespace(item.namespace)
 	for _, store := range []s3Store{metadataPrimary, metadataReplica} {
 		if store.bucket == "" { continue }
-		if store.bucket == "" { continue }
 		reader := &lengthReader{Reader:bytes.NewReader(body), n:int64(len(body))}
 		resp, err := s.signedRequest(ctx, store, http.MethodPut, key, reader, "application/json")
 		if err != nil { return fmt.Errorf("%s metadata PUT: %w", store.name, err) }
