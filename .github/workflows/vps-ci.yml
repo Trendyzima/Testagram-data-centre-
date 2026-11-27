@@ -150,6 +150,9 @@ jobs:
           assert 'required("B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID")' in media_main, "identity evidence must use a dedicated B2 application key"
           assert 'required("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY")' in media_main, "identity evidence must use a dedicated B2 application secret"
           assert "B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:" in media_compose and "B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:" in media_compose, "private media container must receive the dedicated identity key only"
+          backend_media_compose = Path("backend/docker-compose.yml").read_text()
+          assert "B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID: ${B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:-}" in backend_media_compose, "Backend-connected Data Centre media profile must pass the dedicated B2 identity key into the container"
+          assert "B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY: ${B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:-}" in backend_media_compose, "Backend-connected Data Centre media profile must pass the dedicated B2 identity secret into the container"
           assert "TestLiveIdentityEvidenceProviderCredentialIsolation" in media_acceptance, "live acceptance must prove cross-bucket credential denial"
           assert "TestLiveIdentityEvidenceLifecycle" in media_acceptance, "live acceptance must verify the full identity evidence lifecycle"
           assert "deleteAllB2ObjectVersions" in media_main and "identity_evidence_purged_at" in media_main, "identity deletion must permanently purge and record every B2 version"
