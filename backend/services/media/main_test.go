@@ -340,3 +340,25 @@ func TestIdentityEvidenceReadinessUsesReadOnlyBucketHead(t *testing.T) {
 		t.Fatalf("readiness performed unexpected object operations: methods=%v paths=%v",methods,paths)
 	}
 }
+
+
+func TestIdentityEvidenceB2StoreRequiresSeparateBucketAndApplicationKey(t *testing.T) {
+	media := s3Store{name:"backblaze_b2",endpoint:"https://s3.us-west-004.backblazeb2.com",region:"us-west-004",bucket:"ordinary-media-staging",access:"media-key-id",secret:"media-secret"}
+	identity := s3Store{name:"backblaze_b2_identity_evidence",endpoint:media.endpoint,region:media.region,bucket:"identity-evidence-staging",access:"identity-key-id",secret:"identity-secret"}
+	if err := validateIdentityStoreIsolation(media,identity); err != nil { t.Fatalf("separate identity store rejected: %v",err) }
+
+	cases := []struct{name string; mutate func(*s3Store)}{
+		{"shared bucket",func(s *s3Store){s.bucket=media.bucket}},
+		{"shared access key",func(s *s3Store){s.access=media.access}},
+		{"shared secret",func(s *s3Store){s.secret=media.secret}},
+		{"different endpoint",func(s *s3Store){s.endpoint="https://other.example.invalid"}},
+		{"different region",func(s *s3Store){s.region="us-east-1"}},
+	}
+	for _,tc:=range cases {
+		t.Run(tc.name,func(t *testing.T){
+			candidate:=identity
+			tc.mutate(&candidate)
+			if err:=validateIdentityStoreIsolation(media,candidate);err==nil{t.Fatalf("%s was accepted",tc.name)}
+		})
+	}
+}
