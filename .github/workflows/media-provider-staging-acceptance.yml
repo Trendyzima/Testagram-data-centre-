@@ -95,6 +95,7 @@ jobs:
           if grep -q "CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET" backend/docker-compose.yml; then echo "::error::Identity evidence must not have an R2 bucket configuration."; exit 1; fi
           grep -q "004_identity_evidence_b2_only.sql" .github/workflows/media-provider-staging-acceptance.yml || { echo "::error::B2-only identity migration is missing from staging."; exit 1; }
           grep -q "005_identity_evidence_permanent_purge.sql" .github/workflows/media-provider-staging-acceptance.yml || { echo "::error::Permanent identity purge migration is missing from staging."; exit 1; }
+          grep -q "006_identity_evidence_legacy_reverify.sql" .github/workflows/media-provider-staging-acceptance.yml || { echo "::error::Legacy identity B2 re-verification migration is missing from staging."; exit 1; }
           [[ "$MEDIA_SMOKE_R2_BUCKET" != "$MEDIA_SMOKE_R2_PUBLIC_BUCKET" ]] || { echo "::error::R2 private and public general-media buckets must be distinct"; exit 1; }
           [[ "$MEDIA_SMOKE_R2_METADATA_BUCKET" != "$MEDIA_SMOKE_R2_BUCKET" && "$MEDIA_SMOKE_R2_METADATA_BUCKET" != "$MEDIA_SMOKE_R2_PUBLIC_BUCKET" ]] || { echo "::error::R2 metadata sidecar bucket must be separate from general media"; exit 1; }
           echo "Validated dedicated staging-only B2/R2 buckets and distinct service credentials. Values are not printed."
