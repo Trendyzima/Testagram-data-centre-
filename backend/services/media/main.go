@@ -483,9 +483,6 @@ func (s *server) restorePrimary(ctx context.Context,owner,ns,key string)error{
 	if status!="restore_pending"{return fmt.Errorf("primary restore refused for lifecycle state %q",status)}
 	item:=reconcileItem{owner:owner,namespace:ns,key:key,contentType:typ,size:size,expectedSHA:want}
 	// Verify the source completely before overwriting the primary.
-	if ns == "identity-evidence-private" {
-		return errors.New("identity evidence is B2-only and cannot be restored from another provider")
-	}
 	primary, replica := s.storesForNamespace(ns)
 	ok,err:=s.originMatches(ctx,replica,item)
 	if err!=nil{return fmt.Errorf("verify replica before primary restore: %w",err)}
