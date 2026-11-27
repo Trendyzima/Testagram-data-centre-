@@ -79,6 +79,10 @@ jobs:
           [[ "${#MEDIA_INTERNAL_TOKEN}" -ge 32 && "${#IDENTITY_EVIDENCE_INTERNAL_TOKEN}" -ge 32 ]] || { echo "::error::Dedicated media service tokens must be at least 32 characters"; exit 1; }
           [[ "$MEDIA_INTERNAL_TOKEN" != "$IDENTITY_EVIDENCE_INTERNAL_TOKEN" ]] || { echo "::error::Media and identity-evidence service tokens must be distinct"; exit 1; }
           [[ "$MEDIA_SMOKE_B2_ENDPOINT" == https://* && "$MEDIA_SMOKE_R2_ENDPOINT" == https://* ]] || { echo "::error::B2 and R2 endpoints must use HTTPS"; exit 1; }
+
+          b2_host="$(printf '%s' "$MEDIA_SMOKE_B2_ENDPOINT" | sed -E 's#^https://([^/:]+).*$#\1#' | tr '[:upper:]' '[:lower:]' | sed 's/\.$//')"
+          r2_host="$(printf '%s' "$MEDIA_SMOKE_R2_ENDPOINT" | sed -E 's#^https://([^/:]+).*$#\1#' | tr '[:upper:]' '[:lower:]' | sed 's/\.$//')"
+          [[ -n "$b2_host" && -n "$r2_host" && "$b2_host" != "$r2_host" ]] || { echo "::error::B2 and R2 staging endpoints must resolve to distinct hostnames"; exit 1; }
           for bucket in "$MEDIA_SMOKE_B2_BUCKET" "$MEDIA_SMOKE_B2_IDENTITY_BUCKET" "$MEDIA_SMOKE_R2_BUCKET" "$MEDIA_SMOKE_R2_PUBLIC_BUCKET" "$MEDIA_SMOKE_R2_IDENTITY_BUCKET" "$MEDIA_SMOKE_R2_METADATA_BUCKET"; do
             [[ "$bucket" =~ (^|[-_])(ci|staging|smoke)([-_]|$) ]] || { echo "::error::Every provider bucket must explicitly identify isolated staging/smoke data"; exit 1; }
             [[ ! "$bucket" =~ (^|[-_])(prod|production)([-_]|$) ]] || { echo "::error::Production bucket rejected"; exit 1; }
