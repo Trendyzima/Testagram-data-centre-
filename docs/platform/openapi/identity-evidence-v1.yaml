@@ -66,12 +66,12 @@ paths:
             schema: { $ref: '#/components/schemas/IdentityEvidenceVerifyRequest' }
       responses:
         '202':
-          description: Verification is durably queued; evidence remains unavailable until both copies pass verification.
+          description: Verification is durably queued; evidence remains unavailable until the dedicated Backblaze B2 object passes full size, content-type and SHA-256 verification.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Verification' }
         '200':
-          description: Evidence already meets the configured protection policy.
+          description: Evidence already passed dedicated Backblaze B2 size, content-type and SHA-256 verification.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Verification' }
@@ -83,7 +83,7 @@ paths:
   /internal/v1/identity-evidence/status:
     get:
       operationId: getIdentityEvidenceStatus
-      summary: Read authoritative evidence object and replica state
+      summary: Read authoritative identity evidence lifecycle state
       parameters:
         - in: query
           name: owner_id
@@ -99,7 +99,7 @@ paths:
           schema: { $ref: '#/components/schemas/IdentityEvidenceObjectKey' }
       responses:
         '200':
-          description: Current evidence lifecycle state.
+          description: Current evidence lifecycle state. Identity evidence is stored only in the dedicated Backblaze B2 bucket; replica_verified_at is always null.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MediaStatus' }
