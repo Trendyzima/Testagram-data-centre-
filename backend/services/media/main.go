@@ -246,9 +246,13 @@ func (s *server) uploadURL(w http.ResponseWriter, r *http.Request) {
 	if !s.namespaceAllowedForRoute(w, r, in.Namespace) { return }
 	id, err := randomID()
 	if err != nil { writeErr(w, 503, "secure upload grant generation failed"); return }
-	exp := time.Now().UTC().Add(s.cfg.uploadTTL)
+	uploadTTL := s.cfg.uploadTTL
+	// Identity evidence upload grants are deliberately short-lived. Permanent
+	// deletion waits until the signed PUT URL and a short in-flight grace expire.
+	if in.Namespace == "identity-evidence-private" && uploadTTL > 5*time.Minute { uploadTTL = 5*time.Minute }
+	exp := time.Now().UTC().Add(uploadTTL)
 	primary, _ := s.storesForNamespace(in.Namespace)
-	u, err := presign(primary, http.MethodPut, in.Key, s.cfg.uploadTTL, in.ContentType)
+	u, err := presign(primary, http.MethodPut, in.Key, uploadTTL, in.ContentType)
 	if err != nil { writeErr(w, 503, "primary storage signing failed"); return }
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second); defer cancel()
 	tx, err := s.db.Begin(ctx)
@@ -416,7 +420,12 @@ func (s *server) processOne(parent context.Context)error{
 	if err!=nil{
 		var objectStatus string
 		stateErr:=s.db.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&objectStatus)
-		if stateErr==nil&&(objectStatus=="delete_pending"||objectStatus=="deleted") { _,cancelErr:=s.db.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete',updated_at=now() where id=$1 and status='processing'`,id);return cancelErr }
+		if stateErr==nil&&(objectStatus=="deleted"||(objectStatus=="delete_pending"&&op!="delete")) { _,cancelErr:=s.db.Exec(ctx,`update media_outbox set status='cancelled',locked_until=null,last_error='superseded by delete',updated_at=now() where id=$1 and status='processing'`,id);return cancelErr }
+		var grantWait uploadGrantActiveError
+		if errors.As(err,&grantWait) {
+			tag,updateErr:=s.db.Exec(ctx,`update media_outbox set status='retry',available_at=$3,locked_until=null,last_error=left($2,1000),updated_at=now() where id=$1 and status='processing'`,id,err.Error(),grantWait.retryAt)
+			if updateErr!=nil{return updateErr};if tag.RowsAffected()==0{return nil};return err
+		}
 		delaySeconds:=mediaRetryDelaySeconds(attempts)
 		tag,updateErr:=s.db.Exec(ctx,`update media_outbox set status=case when attempts>=12 then 'dead' else 'retry' end,available_at=now()+make_interval(secs=>$3),locked_until=null,last_error=left($2,1000),updated_at=now() where id=$1 and status='processing'`,id,err.Error(),delaySeconds)
 		if updateErr!=nil{return updateErr};if tag.RowsAffected()==0{return nil}
@@ -515,6 +524,30 @@ func (s *server) restorePrimary(ctx context.Context,owner,ns,key string)error{
 }
 
 func (s *server) deleteOrigins(ctx context.Context, owner, namespace, key string) error {
+	// A presigned PUT remains valid at B2 even after its database grant is
+	// consumed or the object is hidden. Wait until every issued URL has expired
+	// plus a bounded in-flight upload grace before enumerating versions.
+	var uploadURLStillValid bool
+	if err := s.db.QueryRow(ctx, `
+		select exists(
+			select 1 from media_upload_grants
+			where owner_id=$1 and namespace=$2 and object_key=$3
+			  and expires_at + interval '60 seconds' > now()
+		)
+	`, owner, namespace, key).Scan(&uploadURLStillValid); err != nil {
+		return fmt.Errorf("check outstanding presigned upload grants: %w", err)
+	}
+	if uploadURLStillValid {
+		var retryAt time.Time
+		if err := s.db.QueryRow(ctx, `
+			select max(expires_at + interval '60 seconds')
+			from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3
+			  and expires_at + interval '60 seconds' > now()
+		`, owner, namespace, key).Scan(&retryAt); err != nil {
+			return fmt.Errorf("read presigned upload grant expiry: %w", err)
+		}
+		return uploadGrantActiveError{retryAt: retryAt}
+	}
 	primary, replica := s.storesForNamespace(namespace)
 	if namespace == "identity-evidence-private" {
 		if primary.bucket == "" { return errors.New("dedicated B2 identity evidence bucket is not configured") }
@@ -533,9 +566,24 @@ func (s *server) deleteOrigins(ctx context.Context, owner, namespace, key string
 		}
 	}
 	if err := s.deleteMetadataSidecars(ctx, namespace, key); err != nil { return err }
-	_, err := s.db.Exec(ctx, `update media_objects set status='deleted',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`, owner, namespace, key)
-	return err
+	tx, err := s.db.Begin(ctx)
+	if err != nil { return fmt.Errorf("begin media deletion finalization: %w", err) }
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `delete from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3`, owner, namespace, key); err != nil {
+		return fmt.Errorf("remove expired media upload grants: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `update media_objects set status='deleted',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`, owner, namespace, key); err != nil {
+		return fmt.Errorf("persist deleted media state: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil { return fmt.Errorf("commit media deletion finalization: %w", err) }
+	return nil
 }
+
+type uploadGrantActiveError struct { retryAt time.Time }
+func (e uploadGrantActiveError) Error() string {
+	return "presigned upload URL remains valid; deletion deferred until " + e.retryAt.UTC().Format(time.RFC3339)
+}
+
 
 func (s *server) signedRequest(ctx context.Context, store s3Store, method, key string, body io.Reader, contentType string) (*http.Response, error) {
 	u, err := objectURL(store, key)
