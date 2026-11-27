@@ -8,9 +8,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 	"time"
 )
 
@@ -412,4 +415,62 @@ func TestDeleteAllB2ObjectVersionsPermanentlyRemovesVersionsAndDeleteMarkers(t *
 	if !remaining["neighbor"] { t.Fatal("version deletion crossed the exact object-key boundary") }
 	if plainDeletes!=0 { t.Fatalf("permanent deletion issued %d unversioned DELETE requests",plainDeletes) }
 	if deleted[0]!="v3"||deleted[1]!="d2"||deleted[2]!="v1" { t.Fatalf("unexpected version deletion order: %v",deleted) }
+}
+
+
+func TestEnqueueLegacyIdentityEvidencePurgesPostgresIntegration(t *testing.T) {
+	databaseURL := strings.TrimSpace(os.Getenv("MEDIA_DATABASE_URL"))
+	if databaseURL == "" { t.Skip("requires MEDIA_DATABASE_URL and media migrations 001-005") }
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	db, err := pgxpool.New(ctx, databaseURL)
+	if err != nil { t.Fatalf("open media integration database: %v", err) }
+	defer db.Close()
+	if err := db.Ping(ctx); err != nil { t.Fatalf("media integration database unavailable: %v", err) }
+
+	id, err := randomID()
+	if err != nil { t.Fatal(err) }
+	owner := id[:8] + "-" + id[8:12] + "-4" + id[13:16] + "-8" + id[17:20] + "-" + id[20:]
+	identityKey := "identity/" + owner + "/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000002.jpg"
+	ordinaryOwner := "30000000-0000-4000-8000-000000000003"
+	ordinaryKey := "users/" + ordinaryOwner + "/legacy-media.jpg"
+	defer func() {
+		_, _ = db.Exec(context.Background(), `delete from media_outbox where owner_id=$1 and object_key=$2`, owner, identityKey)
+		_, _ = db.Exec(context.Background(), `delete from media_objects where owner_id=$1 and object_key=$2`, owner, identityKey)
+		_, _ = db.Exec(context.Background(), `delete from media_outbox where owner_id=$1 and object_key=$2`, ordinaryOwner, ordinaryKey)
+		_, _ = db.Exec(context.Background(), `delete from media_objects where owner_id=$1 and object_key=$2`, ordinaryOwner, ordinaryKey)
+	}()
+	if _, err := db.Exec(ctx, `insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status,identity_evidence_purged_at) values($1,'identity-evidence-private',$2,'image/jpeg',10,'deleted',null)`, owner, identityKey); err != nil { t.Fatalf("insert legacy deleted identity evidence: %v", err) }
+	if _, err := db.Exec(ctx, `insert into media_outbox(owner_id,namespace,object_key,operation,status,attempts,available_at) values($1,'identity-evidence-private',$2,'delete','done',9,now()-interval '1 minute')`, owner, identityKey); err != nil { t.Fatalf("insert prior delete-marker-only outbox row: %v", err) }
+	if _, err := db.Exec(ctx, `insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status) values($1,'media-public',$2,'image/jpeg',10,'deleted')`, ordinaryOwner, ordinaryKey); err != nil { t.Fatalf("insert ordinary deleted media: %v", err) }
+	if _, err := db.Exec(ctx, `insert into media_outbox(owner_id,namespace,object_key,operation,status,attempts) values($1,'media-public',$2,'delete','done',3)`, ordinaryOwner, ordinaryKey); err != nil { t.Fatalf("insert ordinary media outbox row: %v", err) }
+
+	s := &server{db:db}
+	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("enqueue legacy identity purge: %v", err) }
+	var mediaStatus, outboxStatus string
+	var attempts int
+	if err := db.QueryRow(ctx, `select status from media_objects where owner_id=$1 and object_key=$2`, owner, identityKey).Scan(&mediaStatus); err != nil { t.Fatal(err) }
+	if err := db.QueryRow(ctx, `select status,attempts from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus,&attempts); err != nil { t.Fatal(err) }
+	if mediaStatus!="delete_pending" || outboxStatus!="pending" || attempts!=0 { t.Fatalf("legacy identity purge not requeued: media=%q outbox=%q attempts=%d",mediaStatus,outboxStatus,attempts) }
+
+	if _, err := db.Exec(ctx, `update media_outbox set status='retry',attempts=7,available_at=now()+interval '10 minutes' where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey); err != nil { t.Fatal(err) }
+	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("preserve scheduled retry: %v", err) }
+	var retryAvailable time.Time
+	if err := db.QueryRow(ctx, `select status,attempts,available_at from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus,&attempts,&retryAvailable); err != nil { t.Fatal(err) }
+	if outboxStatus!="retry" || attempts!=7 || !retryAvailable.After(time.Now().Add(5*time.Minute)) { t.Fatalf("legacy sweep reset an active retry schedule: status=%q attempts=%d available=%s",outboxStatus,attempts,retryAvailable) }
+
+	if _, err := db.Exec(ctx, `update media_outbox set status='done' where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey); err != nil { t.Fatal(err) }
+	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("requeue stale completed purge: %v", err) }
+	if err := db.QueryRow(ctx, `select status,attempts from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus,&attempts); err != nil { t.Fatal(err) }
+	if outboxStatus!="pending" || attempts!=0 { t.Fatalf("stale completed identity purge was not requeued: status=%q attempts=%d",outboxStatus,attempts) }
+
+	if err := db.QueryRow(ctx, `select status from media_objects where owner_id=$1 and object_key=$2`, ordinaryOwner, ordinaryKey).Scan(&mediaStatus); err != nil { t.Fatal(err) }
+	if mediaStatus!="deleted" { t.Fatalf("legacy sweep modified ordinary media status: %q",mediaStatus) }
+	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, ordinaryOwner, ordinaryKey).Scan(&outboxStatus); err != nil { t.Fatal(err) }
+	if outboxStatus!="done" { t.Fatalf("legacy sweep modified ordinary media outbox: %q",outboxStatus) }
+
+	if _, err := db.Exec(ctx, `update media_objects set status='deleted',identity_evidence_purged_at=now() where owner_id=$1 and object_key=$2`, owner, identityKey); err != nil { t.Fatal(err) }
+	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("skip already-purged identity evidence: %v", err) }
+	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus); err != nil { t.Fatal(err) }
+	if outboxStatus!="done" { t.Fatalf("verified permanent purge was incorrectly requeued: %q",outboxStatus) }
 }
