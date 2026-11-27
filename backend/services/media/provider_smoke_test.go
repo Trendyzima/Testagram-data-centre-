@@ -650,5 +650,22 @@ func TestLiveIdentityEvidenceProviderCredentialIsolation(t *testing.T) {
 		if err != nil { t.Fatalf("%s PUT request failed: %v",denied.label,err) }
 		io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close()
 		if resp.StatusCode != http.StatusForbidden { t.Fatalf("%s PUT returned HTTP %d, want 403 AccessDenied",denied.label,resp.StatusCode) }
+
+		// Prove the correct bucket key can enumerate its own versions, then
+		// prove the opposite bucket's key cannot list or delete those versions.
+		versions, err := s.collectB2ObjectVersions(ctx,denied.target,denied.key)
+		if err != nil || len(versions) == 0 { t.Fatalf("%s correct key could not list its own test-object versions: versions=%d err=%v",denied.label,len(versions),err) }
+		if _, err := s.collectB2ObjectVersions(ctx,wrongCredentialOnTargetBucket,denied.key); err == nil || !strings.Contains(err.Error(),"status 403") {
+			t.Fatalf("%s wrong key version listing error=%v, want 403 AccessDenied",denied.label,err)
+		}
+		versionURL, err := objectURL(wrongCredentialOnTargetBucket,denied.key)
+		if err != nil { t.Fatal(err) }
+		versionQuery := url.Values{}
+		versionQuery.Set("versionId",versions[0].VersionID)
+		versionURL.RawQuery = versionQuery.Encode()
+		resp, err = s.signedRequestURL(ctx,wrongCredentialOnTargetBucket,http.MethodDelete,versionURL,nil,"")
+		if err != nil { t.Fatalf("%s wrong-key permanent version delete request failed: %v",denied.label,err) }
+		io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden { t.Fatalf("%s wrong-key permanent version DELETE returned HTTP %d, want 403 AccessDenied",denied.label,resp.StatusCode) }
 	}
 }
