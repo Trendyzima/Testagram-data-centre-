@@ -517,7 +517,7 @@ func (s *server) enqueueLegacyIdentityEvidencePurges(ctx context.Context) error 
 		ON CONFLICT(owner_id,namespace,object_key,operation) DO UPDATE
 		SET status='pending', attempts=0, available_at=now(), locked_until=NULL,
 		    last_error='requeued for permanent B2 version purge', updated_at=now()
-		WHERE media_outbox.status <> 'processing'
+		WHERE media_outbox.status IN ('done','cancelled','dead')
 	`)
 	return err
 }
