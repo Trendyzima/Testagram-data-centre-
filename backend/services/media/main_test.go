@@ -476,6 +476,15 @@ func TestEnqueueLegacyIdentityEvidencePurgesPostgresIntegration(t *testing.T) {
 	if err := db.QueryRow(ctx, `select status,attempts from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus,&attempts); err != nil { t.Fatal(err) }
 	if outboxStatus!="pending" || attempts!=0 { t.Fatalf("stale completed identity purge was not requeued: status=%q attempts=%d",outboxStatus,attempts) }
 
+	if _, err := db.Exec(ctx, `update media_outbox set status='dead',attempts=12 where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey); err != nil { t.Fatal(err) }
+	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("preserve permanent-purge dead letter: %v", err) }
+	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus); err != nil { t.Fatal(err) }
+	if outboxStatus!="dead" { t.Fatalf("legacy sweep silently retried a permanent-purge dead letter: %q",outboxStatus) }
+	if _, err := db.Exec(ctx, `update media_objects set status='deleted' where owner_id=$1 and object_key=$2`, owner, identityKey); err != nil { t.Fatal(err) }
+	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("requeue pre-existing legacy deleted record: %v", err) }
+	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus); err != nil { t.Fatal(err) }
+	if outboxStatus!="pending" { t.Fatalf("legacy deleted row with a prior dead job was not requeued once: %q",outboxStatus) }
+
 	if err := db.QueryRow(ctx, `select status from media_objects where owner_id=$1 and object_key=$2`, ordinaryOwner, ordinaryKey).Scan(&mediaStatus); err != nil { t.Fatal(err) }
 	if mediaStatus!="deleted" { t.Fatalf("legacy sweep modified ordinary media status: %q",mediaStatus) }
 	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, ordinaryOwner, ordinaryKey).Scan(&outboxStatus); err != nil { t.Fatal(err) }
