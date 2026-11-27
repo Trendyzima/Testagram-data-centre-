@@ -13,9 +13,15 @@ BEGIN
     RAISE EXCEPTION 'B2-only identity migration left a replica/restore lifecycle state';
   END IF;
   IF EXISTS (
+    SELECT 1 FROM media_objects
+    WHERE namespace='identity-evidence-private' AND status='uploaded' AND primary_verified_at IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'B2-only identity migration left stale primary verification on a recheck-required object';
+  END IF;
+  IF EXISTS (
     SELECT 1 FROM media_outbox
     WHERE namespace='identity-evidence-private'
-      AND operation='restore_primary'
+      AND operation IN ('replicate','restore_primary')
       AND status IN ('pending','processing','retry')
   ) THEN
     RAISE EXCEPTION 'B2-only identity migration left a legacy replica restore queued';
