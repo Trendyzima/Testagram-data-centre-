@@ -605,17 +605,23 @@ func TestLiveIdentityEvidenceProviderCredentialIsolation(t *testing.T) {
 	id, err := randomID()
 	if err != nil { t.Fatal(err) }
 	ordinaryKey := "ci-smoke/credential-isolation-media-" + id
-	identityKey := "ci-smoke/credential-isolation-identity-" + id
+	ordinaryProbeKey := ordinaryKey + ".cross-access-probe"
+	identityKey := "identity/ci-smoke/credential-isolation-" + id
+	identityProbeKey := identityKey + ".cross-access-probe"
 	payload := []byte("Testagram B2 bucket-scoped credential isolation " + id)
 	s := &server{http:&http.Client{Timeout:30*time.Second, CheckRedirect:func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	defer func() {
-		for _, target := range []struct{store s3Store; key string}{{ordinary,ordinaryKey},{identity,identityKey}} {
-			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
-			resp, cleanupErr := s.signedRequest(cleanupCtx,target.store,http.MethodDelete,target.key,nil,"")
-			if cleanupErr == nil { io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close() }
-			cleanupCancel()
+		for _, target := range []struct{store s3Store; keys []string}{{ordinary,[]string{ordinaryKey,ordinaryProbeKey}},{identity,[]string{identityKey,identityProbeKey}}} {
+			for _, objectKey := range target.keys {
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+				if cleanupErr := s.deleteAllB2ObjectVersions(cleanupCtx,target.store,objectKey); cleanupErr != nil {
+					resp, fallbackErr := s.signedRequest(cleanupCtx,target.store,http.MethodDelete,objectKey,nil,"")
+					if fallbackErr == nil { io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close() } else { t.Errorf("%s cleanup failed: purge=%v fallback=%v",objectKey,cleanupErr,fallbackErr) }
+				}
+				cleanupCancel()
+			}
 		}
 	}()
 
@@ -625,10 +631,24 @@ func TestLiveIdentityEvidenceProviderCredentialIsolation(t *testing.T) {
 		io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 { t.Fatalf("%s test object upload returned HTTP %d",target.store.name,resp.StatusCode) }
 	}
-	for _, denied := range []struct{store s3Store; key string; label string}{{identity,ordinaryKey,"identity key reading ordinary-media bucket"},{ordinary,identityKey,"ordinary-media key reading identity bucket"}} {
-		resp, err := s.signedRequest(ctx,denied.store,http.MethodHead,denied.key,nil,"")
-		if err != nil { t.Fatalf("%s request failed: %v",denied.label,err) }
+	// Sign requests for the *other bucket* with the wrong bucket's credentials.
+	// Using the target bucket's object name against the caller's own bucket
+	// would only prove that the names differ, not that bucket restrictions work.
+	for _, denied := range []struct{target s3Store; wrongAccess,wrongSecret,key,probe,label string}{
+		{ordinary,identity.access,identity.secret,ordinaryKey,ordinaryProbeKey,"identity key against ordinary-media bucket"},
+		{identity,ordinary.access,ordinary.secret,identityKey,identityProbeKey,"ordinary-media key against identity-evidence bucket"},
+	} {
+		wrongCredentialOnTargetBucket := denied.target
+		wrongCredentialOnTargetBucket.access = denied.wrongAccess
+		wrongCredentialOnTargetBucket.secret = denied.wrongSecret
+		resp, err := s.signedRequest(ctx,wrongCredentialOnTargetBucket,http.MethodHead,denied.key,nil,"")
+		if err != nil { t.Fatalf("%s HEAD request failed: %v",denied.label,err) }
 		io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden { t.Fatalf("%s returned HTTP %d, want 403 AccessDenied",denied.label,resp.StatusCode) }
+		if resp.StatusCode != http.StatusForbidden { t.Fatalf("%s HEAD returned HTTP %d, want 403 AccessDenied",denied.label,resp.StatusCode) }
+
+		resp, err = s.signedRequest(ctx,wrongCredentialOnTargetBucket,http.MethodPut,denied.probe,&lengthReader{Reader:bytes.NewReader(payload),n:int64(len(payload))},"application/octet-stream")
+		if err != nil { t.Fatalf("%s PUT request failed: %v",denied.label,err) }
+		io.Copy(io.Discard,io.LimitReader(resp.Body,4096)); resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden { t.Fatalf("%s PUT returned HTTP %d, want 403 AccessDenied",denied.label,resp.StatusCode) }
 	}
 }
