@@ -151,6 +151,706 @@ jobs:
           assert 'required("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY")' in media_main, "identity evidence must use a dedicated B2 application secret"
           assert "B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID:" in media_compose and "B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY:" in media_compose, "private media container must receive the dedicated identity key only"
           assert "TestLiveIdentityEvidenceProviderCredentialIsolation" in media_acceptance, "live acceptance must prove cross-bucket credential denial"
+          assert "TestLiveIdentityEvidenceProviderCredentialIsolation)
+          assert "B2 and R2 staging endpoints must resolve to distinct hostnames" in media_acceptance, "provider acceptance must reject a shared B2/R2 endpoint"
+          assert 'entrypoint: ["/bin/sh", "/scripts/provision-media-database.sh"]' in compose, "deployment media-migrate must execute the mounted database provisioner"
+          assert "../scripts/provision-media-database.sh:/scripts/provision-media-database.sh:ro" in compose, "deployment media-migrate must mount the provisioner read-only"
+          assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql' in provisioner, "media provisioner must apply the lifecycle migration"
+          assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/002_primary_origin_restore.sql' in provisioner, "media provisioner must apply the primary restoration migration"
+          assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/003_identity_evidence_namespace.sql' in provisioner, "media provisioner must apply the isolated identity evidence namespace migration"
+          assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/004_identity_evidence_b2_only.sql' in provisioner, "media provisioner must retire identity replica state and legacy R2 restores"
+          PY
+      - run: go build ./control-plane ./node-agent ./backend/services/video ./backend/services/video-worker ./backend/services/platform ./backend/services/media
+
+      - name: Exercise isolated media database bootstrap and least-privilege role
+        shell: bash
+        run: |
+          set -euo pipefail
+          network="${TESTAGRAM_PLATFORM_NETWORK:-testagram-platform}"
+          docker network create "$network"
+          cleanup() {
+            docker rm -f testagram-media-migrate-db >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run -d --name testagram-media-migrate-db --network "$network" \
+            --network-alias db --network-alias postgres --network-alias federation-db \
+            -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=testagram -e POSTGRES_DB=postgres \
+            postgres:17-alpine
+          for attempt in $(seq 1 40); do
+            if docker exec testagram-media-migrate-db pg_isready -U postgres -d postgres >/dev/null 2>&1; then break; fi
+            if [ "$attempt" -eq 40 ]; then echo "::error::CI PostgreSQL did not become healthy"; exit 1; fi
+            sleep 2
+          done
+          docker compose -p testagram-media-migrate-ci -f backend/docker-compose.yml --profile media run --rm --no-deps media-migrate
+          role_attrs="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT (rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls)::text FROM pg_roles WHERE rolname = 'testagram_media_ci'")"
+          [[ "$role_attrs" == "true" ]] || { echo "::error::Media database role must be login-capable without superuser, database-creation, role-creation, replication or bypass-RLS privileges: $role_attrs"; exit 1; }
+          db_owner="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'media'")"
+          [[ "$db_owner" == "testagram_media_ci" ]] || { echo "::error::Media database owner mismatch: $db_owner"; exit 1; }
+          docker run --rm --network "$network" -e PGPASSWORD="$MEDIA_DATABASE_PASSWORD" postgres:17-alpine \
+            psql -h db -U "$MEDIA_DATABASE_USER" -d media -v ON_ERROR_STOP=1 -Atqc "SELECT current_user || ':' || current_database()" | grep -qx 'testagram_media_ci:media'
+          docker exec testagram-media-migrate-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS public.admin_only_media_probe(secret text); INSERT INTO public.admin_only_media_probe VALUES ('private'); REVOKE ALL ON public.admin_only_media_probe FROM PUBLIC" >/dev/null
+          if docker run --rm --network "$network" -e PGPASSWORD="$MEDIA_DATABASE_PASSWORD" postgres:17-alpine \
+            psql -h db -U "$MEDIA_DATABASE_USER" -d postgres -v ON_ERROR_STOP=1 -c "SELECT * FROM public.admin_only_media_probe" >/dev/null 2>&1; then
+            echo "::error::Media database role unexpectedly read Backend administrative database"
+            exit 1
+          fi
+          echo "Media migration creates a dedicated non-superuser database owner; runtime credentials cannot read the Backend administrative database."
+          docker run --rm --network "$network" \
+            -e DATABASE_URL="postgresql://postgres:testagram@db:5432/postgres?sslmode=disable" \
+            -e FEDERATION_DATABASE_NAME=testagram_federation \
+            -e FEDERATION_DATABASE_USER=testagram_federation_ci \
+            -e FEDERATION_DATABASE_PASSWORD=ci-federation-db-password-only \
+            -v "$PWD/scripts/provision-federation-database.sh:/scripts/provision-federation-database.sh:ro" \
+            postgres:17-alpine /bin/sh /scripts/provision-federation-database.sh
+          federation_role_attrs="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT (rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls)::text FROM pg_roles WHERE rolname = 'testagram_federation_ci'")"
+          [[ "$federation_role_attrs" == "true" ]] || { echo "::error::Federation database role must be login-capable without superuser, database-creation, role-creation, replication or bypass-RLS privileges: $federation_role_attrs"; exit 1; }
+          federation_db_owner="$(docker exec testagram-media-migrate-db psql -U postgres -d postgres -Atqc "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'testagram_federation'")"
+          [[ "$federation_db_owner" == "testagram_federation_ci" ]] || { echo "::error::Federation database owner mismatch: $federation_db_owner"; exit 1; }
+          docker run --rm --network "$network" -e PGPASSWORD=ci-federation-db-password-only postgres:17-alpine \
+            psql -h federation-db -U testagram_federation_ci -d testagram_federation -v ON_ERROR_STOP=1 -Atqc "SELECT current_user || ':' || current_database()" | grep -qx 'testagram_federation_ci:testagram_federation'
+          if docker run --rm --network "$network" -e PGPASSWORD=ci-federation-db-password-only postgres:17-alpine \
+            psql -h federation-db -U testagram_federation_ci -d postgres -v ON_ERROR_STOP=1 -c "SELECT * FROM public.admin_only_media_probe" >/dev/null 2>&1; then
+            echo "::error::Federation database role unexpectedly read Backend administrative database"
+            exit 1
+          fi
+          echo "Federation protocol state uses a dedicated non-superuser database owner, isolated from Backend product tables."
+          # Reproduce the production failure: a pre-existing local_actors table
+          # owned by the old Backend migration role must be transferred before
+          # the Federation runtime's ALTER TABLE schema initialization.
+          docker exec testagram-media-migrate-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE federation_legacy_migration LOGIN PASSWORD 'ci-legacy-owner-password'" >/dev/null
+          docker exec testagram-media-migrate-db psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE testagram_federation_legacy OWNER federation_legacy_migration" >/dev/null
+          docker run --rm --network "$network" -e PGPASSWORD=ci-legacy-owner-password postgres:17-alpine \
+            psql -h federation-db -U federation_legacy_migration -d testagram_federation_legacy -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE public.local_actors(id text PRIMARY KEY, actor_uri text NOT NULL); INSERT INTO public.local_actors VALUES ('ci-actor','https://testagram.site/users/ci')" >/dev/null
+          # The Backend administrator also owns objects outside the Federation
+          # schema (including shared/system objects). The provisioner must not
+          # use REASSIGN OWNED against that role to move one public table.
+          docker exec testagram-media-migrate-db psql -U postgres -d testagram_federation_legacy -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE public.backend_admin_owned_probe(id integer PRIMARY KEY)" >/dev/null
+          docker run --rm --network "$network" \
+            -e DATABASE_URL="postgresql://postgres:testagram@db:5432/postgres?sslmode=disable" \
+            -e FEDERATION_DATABASE_NAME=testagram_federation_legacy \
+            -e FEDERATION_DATABASE_USER=testagram_federation_legacy_ci \
+            -e FEDERATION_DATABASE_PASSWORD=ci-federation-legacy-db-password \
+            -v "$PWD/scripts/provision-federation-database.sh:/scripts/provision-federation-database.sh:ro" \
+            postgres:17-alpine /bin/sh /scripts/provision-federation-database.sh
+          legacy_owner="$(docker run --rm --network "$network" -e PGPASSWORD=ci-federation-legacy-db-password postgres:17-alpine \
+            psql -h federation-db -U testagram_federation_legacy_ci -d testagram_federation_legacy -Atqc "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.local_actors'::regclass")"
+          [[ "$legacy_owner" == "testagram_federation_legacy_ci" ]] || { echo "::error::Legacy local_actors ownership was not transferred: $legacy_owner"; exit 1; }
+          admin_owned_table_owner="$(docker run --rm --network "$network" -e PGPASSWORD=ci-federation-legacy-db-password postgres:17-alpine \
+            psql -h federation-db -U testagram_federation_legacy_ci -d testagram_federation_legacy -Atqc "SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid='public.backend_admin_owned_probe'::regclass")"
+          [[ "$admin_owned_table_owner" == "testagram_federation_legacy_ci" ]] || { echo "::error::Backend-admin-owned public table was not transferred: $admin_owned_table_owner"; exit 1; }
+          docker run --rm --network "$network" -e PGPASSWORD=ci-federation-legacy-db-password postgres:17-alpine \
+            psql -h federation-db -U testagram_federation_legacy_ci -d testagram_federation_legacy -v ON_ERROR_STOP=1 \
+            -c "ALTER TABLE public.local_actors ADD COLUMN schema_repair_verified boolean NOT NULL DEFAULT true; ALTER TABLE public.backend_admin_owned_probe ADD COLUMN schema_repair_verified boolean NOT NULL DEFAULT true" >/dev/null
+          echo "Legacy and Backend-admin-owned public object transfer plus Federation runtime ALTER TABLE permission: PASS."
+      - name: Validate canonical Backend platform boundary
+        run: |
+          set -euo pipefail
+          bash -n vps/backup.sh
+          bash -n vps/restore-drill.sh
+          python3 scripts/test-backup-scope-contract.py
+          bash scripts/validate-testagram-platform-contracts.sh
+          python -m pip install --disable-pip-version-check PyYAML
+          python scripts/validate-testagram-runtime-integration.py
+          python scripts/validate-platform-openapi.py
+          python3 - <<'PY'
+          from pathlib import Path
+          compose = Path("backend/docker-compose.yml").read_text()
+          worker = compose.split("  video-worker:", 1)[1].split("\n  notification:", 1)[0]
+          assert "healthcheck:" in worker
+          assert '"/usr/local/bin/testagram-video-worker", "--healthcheck"' in worker
+          source = Path("backend/services/video-worker/main.go").read_text()
+          assert 'os.Args[1] == "--healthcheck"' in source
+          assert "db.Ping(ctx)" in source
+          assert "os.CreateTemp(root" in source
+          PY
+          bash -n vps/install.sh
+          bash -n scripts/install-local-docker.sh
+          sh -n scripts/migrate-data-centre.sh
+          sh -n scripts/provision-federation-database.sh
+          bash -n android-node/install-apk.sh
+          test -f vps/docker-compose.yml
+          test -f backend/docker-compose.yml
+          test -f vps/fresh/Caddyfile
+          grep -q "B2_S3_ENDPOINT" vps/docker-compose.yml
+          grep -q "CLOUDFLARE_R2_ENDPOINT" vps/docker-compose.yml
+          grep -q 'FRESH_MEDIA_ENABLED: ${FRESH_MEDIA_ENABLED:-false}' vps/docker-compose.yml
+          grep -q "TESTAGRAM_RETENTION_ENABLED=false" vps/fresh.env.example
+          grep -q "TESTAGRAM_RETENTION_DRY_RUN=true" vps/fresh.env.example
+          grep -q 'reverse_proxy api:8080' vps/fresh/Caddyfile
+          ! grep -Eqi 'TESTAGRAM_FRESH_BACKEND_IMAGE|FRESH_API_ALLOWED_ORIGINS' vps/docker-compose.yml vps/fresh.env.example vps/.env.example vps/install.sh vps/DEPLOYMENT.md
+          grep -q 'TESTAGRAM_BACKEND_IMAGE' vps/docker-compose.yml
+          grep -q 'INTERNAL_LISTEN_ADDR: :8082' vps/docker-compose.yml
+          grep -Fq 'psql "$MEDIA_DATABASE_URL"' vps/docker-compose.yml
+          grep -q '002_primary_origin_restore.sql' vps/docker-compose.yml
+          grep -q '003_identity_evidence_namespace.sql' vps/docker-compose.yml
+          grep -q '004_identity_evidence_b2_only.sql' vps/docker-compose.yml
+          grep -q 'GET /internal/tv/catalog' backend-source/cmd/api/main.go
+          grep -q 'POST /internal/tv/health' backend-source/cmd/api/main.go
+          grep -q 'verifyTVGitHubOIDCToken' backend-source/cmd/api/tv_health.go
+          grep -q 'githubOIDCAudience = "testagram-tv-health"' backend-source/cmd/api/tv_health.go
+          python - <<'PY'
+          from pathlib import Path
+          compose = Path("backend/docker-compose.yml").read_text()
+          env_example = Path("backend/.env.example").read_text()
+          federation = compose.split("  federation-api:", 1)[1].split("\n  platform:", 1)[0]
+          assert "PUBLIC_BASE_URL: ${FEDERATION_PUBLIC_BASE_URL:-https://testagram.site}" in federation, "Federation must advertise the canonical apex origin"
+          assert "edge:" in federation and "aliases: [federation]" in federation, "Federation must join the Caddy edge network with the stable federation upstream alias"
+          assert "expose: [\"8081\"]" in federation, "Federation must remain private; do not publish a host port"
+          assert "FEDERATION_PUBLIC_BASE_URL=https://testagram.site" in env_example, "runtime example must use the canonical apex"
+          assert "name: ${TESTAGRAM_EDGE_NETWORK:-testagram-self-hosted_edge}" in compose, "Federation edge network must default to the Backend Caddy network"
+          print("Canonical apex Federation overlay and private-edge contract: PASS")
+          PY
+          echo "Canonical Backend runtime, B2/R2 storage contract and disabled-retention gates: PASS"
+
+      - name: Validate database migrations
+        run: |
+          docker run --rm --network host \
+            -e PGPASSWORD=testagram \
+            -v "$PWD:/workspace:ro" \
+            postgres:17-alpine \
+            sh -c 'for f in /workspace/migrations/*.sql; do psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"; done'
+          docker run --rm --network host \
+            -e PGPASSWORD=testagram \
+            -v "$PWD:/workspace:ro" \
+            postgres:17-alpine \
+            sh -ec 'createdb -h 127.0.0.1 -U postgres testagram_media_ci; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/001_media_lifecycle.sql; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/002_primary_origin_restore.sql; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/003_identity_evidence_namespace.sql; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -c "INSERT INTO public.media_objects(owner_id,namespace,object_key,content_type,size_bytes,sha256,status,primary_verified_at,replica_verified_at) VALUES (\$\$legacy-owner-1\$\$ ,\$\$identity-evidence-private\$\$,\$\$identity/legacy-replication\$\$,\$\$image/jpeg\$\$,4,repeat(\$\$a\$\$,64),\$\$replication_pending\$\$,now(),now()),(\$\$legacy-owner-2\$\$,\$\$identity-evidence-private\$\$,\$\$identity/legacy-restore\$\$,\$\$image/jpeg\$\$,4,repeat(\$\$b\$\$,64),\$\$restore_pending\$\$,NULL,now()); INSERT INTO public.media_outbox(owner_id,namespace,object_key,operation,status) VALUES (\$\$legacy-owner-1\$\$,\$\$identity-evidence-private\$\$,\$\$identity/legacy-replication\$\$,\$\$replicate\$\$,\$\$retry\$\$),(\$\$legacy-owner-2\$\$,\$\$identity-evidence-private\$\$,\$\$identity/legacy-restore\$\$,\$\$restore_primary\$\$,\$\$retry\$\$);"; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/004_identity_evidence_b2_only.sql; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/test_identity_evidence_b2_only.sql; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/test_media_lifecycle.sql; psql -h 127.0.0.1 -U postgres -d testagram_media_ci -Atqc "SELECT to_regclass(\$\$public.media_objects\$\$) IS NOT NULL AND to_regclass(\$\$public.media_outbox\$\$) IS NOT NULL AND to_regclass(\$\$public.media_operations\$\$) IS NOT NULL AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgname=\$\$media_outbox_operation_journal\$\$ AND NOT tgisinternal)" | grep -qx t'
+      - name: Validate Compose syntax
+        run: |
+          set -euo pipefail
+          grep -Fq 'TESTAGRAM_AUTH_JWT_SECRET: ${TESTAGRAM_AUTH_JWT_SECRET:?Set TESTAGRAM_AUTH_JWT_SECRET in backend/.env}' backend/docker-compose.yml
+          docker compose -f backend/docker-compose.yml config
+          # Optional media profile must not make the default stack require media-only credentials.
+          env -u MEDIA_DATABASE_URL -u MEDIA_DATABASE_NAME docker compose -f backend/docker-compose.yml config --quiet
+          docker compose --profile media -f backend/docker-compose.yml config --quiet
+          grep -Fq 'MEDIA_DATABASE_URL: ${MEDIA_DATABASE_URL:-}' backend/docker-compose.yml
+          docker compose -f vps/docker-compose.yml config
+          # The VPS stack has one canonical API Compose model; Backend self-hosted services are validated separately.
+          ! grep -Eqi "supabase|SUPABASE" vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml
+          # Verify the two Federation trust directions use their own matching credentials.
+          docker compose --profile federation -f vps/docker-compose.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; fed=c["services"]["federation-api"]["environment"]; backend=api.get("FEDERATION_BACKEND_INTERNAL_TOKEN",""); fed_backend=fed.get("BACKEND_INTERNAL_TOKEN",""); ingress=api.get("FEDERATION_INTERNAL_TOKEN",""); fed_ingress=fed.get("FEDERATION_INGRESS_TOKEN",""); assert backend and backend == fed_backend, "Federation-to-Backend credential mismatch"; assert ingress and ingress == fed_ingress and ingress != backend, "Backend-to-Federation ingress token must be distinct"; assert api["LISTEN_ADDR"]==":8080" and api["INTERNAL_LISTEN_ADDR"]==":8082", "canonical Backend listener contract mismatch"; assert "testagram-backend-api" in c["services"]["api"]["networks"]["platform"]["aliases"], "private Backend alias missing"'
+          IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN=ci-identity-evidence-service-token-0123456789 docker compose --profile media -f vps/docker-compose.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; media=c["services"]["media"]["environment"]; migrate=c["services"]["media-migrate"]["environment"]; token=api.get("FRESH_DATA_CENTRE_INTERNAL_TOKEN",""); identity=api.get("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN",""); assert token and len(token)>=32 and media.get("MEDIA_INTERNAL_TOKEN")==token, "Backend/Data Centre media token mismatch"; assert identity and len(identity)>=32 and identity != token and media.get("IDENTITY_EVIDENCE_INTERNAL_TOKEN")==identity, "identity evidence must use a distinct Backend/Data Centre trust token"; assert media.get("MEDIA_DATABASE_URL")==migrate.get("MEDIA_DATABASE_URL") and media.get("MEDIA_DATABASE_URL"), "dedicated media DB mismatch"; assert all(media.get(k) for k in ("B2_S3_ENDPOINT","B2_S3_BUCKET","B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET","B2_S3_ACCESS_KEY_ID","B2_S3_SECRET_ACCESS_KEY","CLOUDFLARE_R2_ENDPOINT","CLOUDFLARE_R2_BUCKET","CLOUDFLARE_R2_ACCESS_KEY_ID","CLOUDFLARE_R2_SECRET_ACCESS_KEY","VPS_MINIO_ENDPOINT","VPS_MINIO_METADATA_BUCKET","VPS_MINIO_METADATA_ACCESS_KEY_ID","VPS_MINIO_METADATA_SECRET_ACCESS_KEY","CLOUDFLARE_R2_METADATA_BUCKET")), "provider and metadata credentials must be wired only to media"; assert not any(k in api for k in ("B2_S3_ACCESS_KEY_ID","B2_S3_SECRET_ACCESS_KEY","CLOUDFLARE_R2_ACCESS_KEY_ID","CLOUDFLARE_R2_SECRET_ACCESS_KEY")), "Backend must not receive object-store credentials"; assert "ports" not in c["services"]["media"], "media API must remain private-only"'
+          ! grep -qi 'supabase' vps/docker-compose.yml
+          ! grep -Eq '/migrations/(002_video_platform|003_production_hardening|004_storage_buckets|005_platform|006_video_upload_safety|007_video_upload_safety)\.sql' vps/docker-compose.yml
+          docker run --rm -e TLS_ADMIN_EMAIL=ci@example.invalid -v "$PWD/vps/fresh/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
+      - name: Validate VPS control plane runtime
+        run: |
+          set -euo pipefail
+          docker network create testagram-control-plane-ci
+          docker run -d --name testagram-control-plane-db --network testagram-control-plane-ci --network-alias db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
+          trap 'docker rm -f testagram-control-plane >/dev/null 2>&1 || true; docker rm -f testagram-control-plane-db >/dev/null 2>&1 || true; docker network rm testagram-control-plane-ci >/dev/null 2>&1 || true' EXIT
+          trap 'status=$?; echo "Control-plane runtime failed; container state and logs follow"; docker inspect testagram-control-plane --format "{{json .State}}" 2>/dev/null || true; docker logs testagram-control-plane 2>&1 || true; exit "$status"' ERR
+          for i in $(seq 1 30); do docker exec testagram-control-plane-db pg_isready -U postgres -d postgres >/dev/null 2>&1 && break; sleep 2; done
+          docker exec testagram-control-plane-db pg_isready -U postgres -d postgres
+          docker run --rm --network testagram-control-plane-ci -e PGPASSWORD=testagram -v "$PWD/migrations:/migrations:ro" postgres:17-alpine sh -c 'psql -h db -U postgres -d postgres -v ON_ERROR_STOP=1 -f /migrations/001_vps.sql && psql -h db -U postgres -d postgres -v ON_ERROR_STOP=1 -f /migrations/006_hosting_control_plane.sql'
+          docker build -f control-plane/Dockerfile -t testagram-control-plane-ci .
+          docker run -d --name testagram-control-plane --network testagram-control-plane-ci -p 127.0.0.1:8787:8787 \
+            -e DATABASE_URL=postgresql://postgres:testagram@db:5432/postgres?sslmode=disable \
+            -e VPS_INTERNAL_TOKEN=ci-internal-token-for-ci-tests-32chars -e VPS_NODE_BOOTSTRAP_TOKEN=ci-bootstrap-token-for-ci-tests-32chars \
+            -e TESTAGRAM_BASE_DOMAIN=example.testagram.invalid \
+            -e TESTAGRAM_DOMAIN_TARGETS=web=http://web:3000 \
+            -e TESTAGRAM_PUBLIC_DNS_TARGET=edge.testagram.invalid \
+            -e TESTAGRAM_PUBLIC_ORIGIN_IP=203.0.113.10 \
+            -e VPS_CONTROL_PLANE_ADDR=:8787 testagram-control-plane-ci
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/readyz >/dev/null 2>&1 && break; sleep 2; done
+          curl -fsS http://127.0.0.1:8787/healthz
+          # Storage-only Android nodes must never receive compute workloads.
+          curl -fsS -o /tmp/android-node-registration.json \
+            -H "Authorization: Bearer ci-bootstrap-token-for-ci-tests-32chars" -H "Content-Type: application/json" \
+            -d '{"name":"android-storage-only","platform":"android","arch":"arm64","cpuCores":8,"memoryBytes":8589934592,"storageBytes":1000000000000,"freeBytes":1000000000000,"endpoint":"android-storage-only","capabilities":{"storageOnly":true,"storageNode":true,"computeNode":false,"workloadExecution":false,"mediaStorageBytes":1000000000000,"mediaStorageFreeBytes":1000000000000,"microSD":true}}' \
+            http://127.0.0.1:8787/v1/nodes/register
+          curl -fsS -o /tmp/linux-node-registration.json \
+            -H "Authorization: Bearer ci-bootstrap-token-for-ci-tests-32chars" -H "Content-Type: application/json" \
+            -d '{"name":"linux-compute","platform":"linux","arch":"amd64","cpuCores":2,"memoryBytes":8589934592,"storageBytes":10000000000,"freeBytes":5000000000,"endpoint":"linux-compute","capabilities":{"computeNode":true,"storageNode":false,"workloadExecution":true,"mediaStorageBytes":0,"mediaStorageFreeBytes":0}}' \
+            http://127.0.0.1:8787/v1/nodes/register
+          curl -fsS -o /tmp/scheduled-workload.json \
+            -H "Authorization: Bearer ci-internal-token-for-ci-tests-32chars" -H "Content-Type: application/json" \
+            -d '{"image":"ghcr.io/example/test","imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","command":["true"],"cpuMillis":100,"memoryBytes":67108864}' \
+            http://127.0.0.1:8787/v1/workloads
+          grep -q '"endpoint":"linux-compute"' /tmp/scheduled-workload.json
+          auth_header="Authorization: Bearer ci-internal-token-for-ci-tests-32chars"
+          curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/health | grep -q '"status":"ok"'
+          domain_code="$(curl -sS -o /tmp/testagram-domain.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d '{"slug":"demo-app","targetService":"web"}' http://127.0.0.1:8787/v1/hosting/domains)"
+          test "$domain_code" = "201"
+          grep -q 'demo-app.example.testagram.invalid' /tmp/testagram-domain.json
+          curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/dns/records | grep -q 'demo-app.example.testagram.invalid'
+          curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/nodes >/dev/null
+          curl -fsS -H "$auth_header" http://127.0.0.1:8787/v1/hosting/usage >/dev/null
+          register_code="$(curl -sS -o /tmp/testagram-node.json -w '%{http_code}' -H 'Authorization: Bearer ci-bootstrap-token-for-ci-tests-32chars' -H 'Content-Type: application/json' -d '{"name":"ci-node","platform":"linux","arch":"amd64","cpuCores":2,"memoryBytes":2147483648,"storageBytes":10737418240,"freeBytes":8589934592,"endpoint":"ci-node","capabilities":{}}' http://127.0.0.1:8787/v1/nodes/register)"
+          test "$register_code" = "201"
+          deploy_code="$(curl -sS -o /tmp/testagram-deployment.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d '{"appName":"ci-demo","image":"registry.example/testagram-demo","imageDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","arch":"amd64","cpuMillis":100,"memoryBytes":134217728,"storageBytes":134217728,"publicEnv":{"APP_MODE":"ci"},"command":["/bin/true"],"volume":"ci-volume"}' http://127.0.0.1:8787/v1/hosting/deployments)"
+          test "$deploy_code" = "201"
+          grep -q '"status":"assigned"' /tmp/testagram-deployment.json
+          overcommit_code="$(curl -sS -o /tmp/testagram-overcommit.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d '{"appName":"ci-heavy","image":"registry.example/testagram-heavy","imageDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","arch":"amd64","cpuMillis":1950,"memoryBytes":134217728,"storageBytes":134217728,"command":["/bin/true"]}' http://127.0.0.1:8787/v1/hosting/deployments)"
+          test "$overcommit_code" = "503"
+          grep -q 'no healthy node has sufficient unreserved CPU' /tmp/testagram-overcommit.json
+          backup_hash="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          curl -fsS -H "$auth_header" -H 'Content-Type: application/json' -d "{\"kind\":\"full\",\"storageUri\":\"s3://ci-backups/test/full.tar\",\"sha256\":\"$backup_hash\",\"sizeBytes\":123,\"sourceHost\":\"ci\"}" http://127.0.0.1:8787/v1/hosting/backups > /tmp/testagram-backup.json
+          backup_id="$(python -c 'import json; print(json.load(open("/tmp/testagram-backup.json"))["id"])')"
+          curl -fsS -H "$auth_header" -H 'Content-Type: application/json' -d "{\"observedSha256\":\"$backup_hash\",\"observedBytes\":123}" "http://127.0.0.1:8787/v1/hosting/backups/$backup_id/verify" | grep -q '"status":"verified"'
+          drill_code="$(curl -sS -o /tmp/testagram-drill.json -w '%{http_code}' -H "$auth_header" -H 'Content-Type: application/json' -d "{\"backupId\":\"$backup_id\",\"targetId\":\"ci-isolated-target\",\"restoredSha256\":\"$backup_hash\",\"success\":false,\"notes\":\"Contract test: deliberately reported failure; no restore was attempted.\",\"startedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"completedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" http://127.0.0.1:8787/v1/hosting/recovery/drills)"
+          test "$drill_code" = "422"
+          grep -q '"success":false' /tmp/testagram-drill.json
+
+      - name: Validate Caddy syntax
+        run: |
+          if grep -Eq '^[[:space:]]*federation[.]testagram[.]site[[:space:]]*[{]' vps/fresh/Caddyfile; then
+            echo "Public Federation routing is blocked until inbox/outbox workers and end-to-end gates are complete."
+            exit 1
+          fi
+          docker run --rm \
+            -e TESTAGRAM_DOMAIN=video.testagram.local \
+            -e TESTAGRAM_ORIGIN=http://control-plane:8787 \
+            -e TLS_ADMIN_EMAIL=admin@testagram.local \
+            -e TESTAGRAM_API_DOMAIN=api.testagram.local \
+            -v "$PWD/vps/fresh/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.10 caddy validate --config /etc/caddy/Caddyfile
+      - name: Build Data Centre runtime containers
+        run: |
+          docker compose -f backend/docker-compose.yml build platform notification worker
+          docker build -f backend/services/video/Dockerfile -t testagram-video-ci:ci .
+          docker build -f backend/services/video-worker/Dockerfile -t testagram-video-worker-ci:ci .
+          docker build -f backend/services/media/Dockerfile -t testagram-media-ci:ci .
+      - name: Dedicated media service runtime smoke test
+        run: |
+          set -euo pipefail
+          token=ci-media-internal-token-at-least-32-chars
+          identity_token=ci-identity-evidence-service-token-at-least-32-chars
+          trap 'status=$?; echo "Dedicated media runtime failed; container state and logs follow"; docker inspect testagram-media-runtime-ci --format "{{json .State}}" 2>/dev/null || true; docker logs testagram-media-runtime-ci 2>&1 || true; exit "$status"' ERR
+          trap 'docker rm -f testagram-media-runtime-ci >/dev/null 2>&1 || true' EXIT
+          docker run -d --name testagram-media-runtime-ci --network host \
+            -e MEDIA_ADDR=:8096 \
+            -e MEDIA_INTERNAL_TOKEN="$token" \
+            -e IDENTITY_EVIDENCE_INTERNAL_TOKEN="$identity_token" \
+            -e MEDIA_DATABASE_URL=postgresql://postgres:testagram@127.0.0.1:5432/testagram_media_ci?sslmode=disable \
+            -e B2_S3_ENDPOINT=https://b2.invalid \
+            -e B2_S3_REGION=us-west-004 -e B2_S3_BUCKET=ci-media-primary \
+            -e B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET=ci-identity-evidence-b2 \
+            -e B2_S3_ACCESS_KEY_ID=ci-b2-access -e B2_S3_SECRET_ACCESS_KEY=ci-b2-secret \
+            -e B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID=ci-b2-identity-access -e B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY=ci-b2-identity-secret \
+            -e CLOUDFLARE_R2_ENDPOINT=https://r2.invalid \
+            -e CLOUDFLARE_R2_REGION=auto -e CLOUDFLARE_R2_BUCKET=ci-media-replica \
+            -e CLOUDFLARE_R2_ACCESS_KEY_ID=ci-r2-access -e CLOUDFLARE_R2_SECRET_ACCESS_KEY=ci-r2-secret \
+            -e VPS_MINIO_ENDPOINT=http://object-storage:9000 \
+            -e VPS_MINIO_REGION=us-east-1 -e VPS_MINIO_METADATA_BUCKET=ci-media-metadata \
+            -e VPS_MINIO_METADATA_ACCESS_KEY_ID=ci-minio-metadata-access \
+            -e VPS_MINIO_METADATA_SECRET_ACCESS_KEY=ci-minio-metadata-secret \
+            -e CLOUDFLARE_R2_METADATA_BUCKET=ci-media-metadata-replica \
+            testagram-media-ci:ci
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8096/readyz >/dev/null; then ready=1; break; fi
+            sleep 2
+          done
+          test "$ready" = 1
+          unauthorized="$(curl -sS -o /tmp/media-unauthorized.json -w '%{http_code}' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2F0123456789abcdef0123456789abcdef')"
+          test "$unauthorized" = 401
+          ordinary_on_identity="$(curl -sS -o /tmp/media-ordinary-on-identity.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/identity-evidence/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"identity-evidence-private","key":"identity/owner-1/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001.jpg-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","content_type":"image/jpeg","size_bytes":123}')"
+          test "$ordinary_on_identity" = 401
+          identity_on_ordinary="$(curl -sS -o /tmp/media-identity-on-ordinary.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $identity_token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123}')"
+          test "$identity_on_ordinary" = 401
+          identity_created="$(curl -sS -o /tmp/identity-upload-grant.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/identity-evidence/upload-url -H "Authorization: Bearer $identity_token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"identity-evidence-private","key":"identity/owner-1/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001.jpg-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","content_type":"image/jpeg","size_bytes":123}')"
+          test "$identity_created" = 201
+          python -c 'import json,urllib.parse; d=json.load(open("/tmp/identity-upload-grant.json")); path=urllib.parse.urlparse(d["upload_url"]).path; assert d["primary"]=="backblaze_b2" and "/ci-identity-evidence-b2/" in path'
+          created="$(curl -sS -o /tmp/media-upload-grant.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123}')"
+          test "$created" = 201
+          python -c 'import json; d=json.load(open("/tmp/media-upload-grant.json")); assert d["primary"]=="backblaze_b2" and d["max_bytes"]==123 and d["upload_url"].startswith("https://")'
+          duplicate="$(curl -sS -o /tmp/media-duplicate.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123}')"
+          test "$duplicate" = 409
+          unsafe="$(curl -sS -o /tmp/media-unsafe.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/../secret","content_type":"video/mp4","size_bytes":123}')"
+          test "$unsafe" = 400
+          state="$(curl -sS -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2F0123456789abcdef0123456789abcdef')"
+          python -c 'import json,sys; assert json.loads(sys.argv[1])["status"]=="upload_pending"' "$state"
+          verified="$(curl -sS -o /tmp/media-verify.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/verify -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123,"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}')"
+          test "$verified" = 202
+          python -c 'import json; assert json.load(open("/tmp/media-verify.json"))["status"]=="replication_pending"'
+          state="$(curl -sS -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2F0123456789abcdef0123456789abcdef')"
+          python -c 'import json,sys; assert json.loads(sys.argv[1])["status"] in ("uploaded","replication_pending","replication_failed")' "$state"
+          unprotected="$(curl -sS -o /tmp/media-unprotected.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/download-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"requester_id":"owner-1","owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef"}')"
+          test "$unprotected" = 404
+          deleted="$(curl -sS -o /tmp/media-delete.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/delete -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"requester_id":"owner-1","owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef"}')"
+          test "$deleted" = 202
+          python -c 'import json; assert json.load(open("/tmp/media-delete.json"))["status"]=="delete_pending"'
+          echo "Dedicated media/identity service-token isolation, B2 identity route selection, grant idempotency, path validation, verify queue and durable deletion: PASS"
+      - name: Backend runtime smoke test
+        run: |
+          set -euo pipefail
+          docker network create testagram-platform 2>/dev/null || true
+          docker network create --internal testagram-video-private 2>/dev/null || true
+          docker network create testagram-egress 2>/dev/null || true
+          docker network create testagram-self-hosted_edge 2>/dev/null || true
+          trap 'docker rm -f testagram-api testagram-postgres >/dev/null 2>&1 || true; docker compose -f backend/docker-compose.yml down -v >/dev/null 2>&1 || true; docker network rm testagram-self-hosted_edge testagram-egress testagram-platform testagram-video-private >/dev/null 2>&1 || true' EXIT
+          docker run -d --name testagram-postgres --network testagram-platform --network-alias federation-db -e POSTGRES_PASSWORD=testagram postgres:17-alpine
+          # The video service is deliberately absent from the shared platform
+          # network. Give it database reachability only through video-private.
+          docker network connect testagram-video-private testagram-postgres
+          trap 'status=$?; echo "Backend runtime smoke failed at: $BASH_COMMAND"; docker compose -f backend/docker-compose.yml logs --no-color platform algorithm federation-api video notification worker 2>&1 || true; docker logs testagram-api 2>&1 || true; exit "$status"' ERR
+          for i in $(seq 1 30); do
+            docker exec testagram-postgres pg_isready -U postgres -d postgres >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker exec testagram-postgres pg_isready -U postgres -d postgres
+          docker exec testagram-postgres createdb -U postgres testagram
+          # Backend migrations grant privileges to the application role. Provision it in the
+          # clean CI database before applying the canonical Backend migrations.
+          docker exec testagram-postgres psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "DO \$role\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'testagram_app') THEN CREATE ROLE testagram_app NOLOGIN; END IF; IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN; END IF; END \$role\$;"
+          for migration in backend-source/migrations/*.sql; do
+            # Thread interaction tables depend on the canonical threads table. Apply its
+            # prerequisite immediately before the interaction migration, not by filename glob order.
+            if [ "$migration" = "backend-source/migrations/20261109_thread_interactions.sql" ]; then
+              docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/20261109_threads_browsing_history.sql
+            fi
+            if [ "$migration" = "backend-source/migrations/20261109_threads_browsing_history.sql" ]; then
+              continue
+            fi
+            # The identity evidence migration references verification_sessions.
+            # Apply its canonical prerequisite at this point and skip its earlier
+            # lexical position so the dependency is explicit and visible in CI.
+            if [ "$migration" = "backend-source/migrations/20261114_native_identity_evidence.sql" ]; then
+              test -f backend-source/migrations/20261113_native_identity_verification.sql
+              docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/20261113_native_identity_verification.sql
+            fi
+            if [ "$migration" = "backend-source/migrations/20261113_native_identity_verification.sql" ]; then
+              continue
+            fi
+            # The historical attribution archive comments on and preserves the
+            # new native decider UUID. Its same-day decider migration sorts
+            # after the archive by filename, so apply the prerequisite first.
+            if [ "$migration" = "backend-source/migrations/20261120_native_identity_historical_attribution_archive.sql" ]; then
+              echo "Applying canonical Backend migration prerequisite: backend-source/migrations/20261120_native_verification_decider.sql"
+              docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/20261120_native_verification_decider.sql
+            fi
+            if [ "$migration" = "backend-source/migrations/20261120_native_verification_decider.sql" ]; then
+              continue
+            fi
+            # The immutable sensitive-action migration depends on the native
+            # auth schema, admin approval ledger and WebAuthn credentials,
+            # which sort after its historical numeric filename. Defer it until
+            # every canonical Backend migration has been applied.
+            if [ "$migration" = "backend-source/migrations/061_native_sensitive_action_integrity.sql" ]; then
+              continue
+            fi
+            # Knowledge migrations use testagram_local.accounts and topics,
+            # which are provisioned by later timestamped native-product
+            # migrations. Defer both until the canonical account schema exists.
+            if [ "$migration" = "backend-source/migrations/062_testagram_knowledge_engine.sql" ]; then
+              continue
+            fi
+            if [ "$migration" = "backend-source/migrations/064_knowledge_topic_seed_catalog.sql" ]; then
+              continue
+            fi
+            echo "Applying canonical Backend migration: $migration"
+            docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < "$migration"
+          done
+          # Apply the append-only sensitive-action hardening only after all
+          # native identity, staff-console and WebAuthn prerequisites exist.
+          echo "Applying deferred canonical Backend migration: backend-source/migrations/061_native_sensitive_action_integrity.sql"
+          docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/061_native_sensitive_action_integrity.sql
+          echo "Applying deferred canonical Backend migration: backend-source/migrations/062_testagram_knowledge_engine.sql"
+          docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/062_testagram_knowledge_engine.sql
+          echo "Applying deferred canonical Backend migration: backend-source/migrations/064_knowledge_topic_seed_catalog.sql"
+          docker exec -i testagram-postgres psql -U postgres -d testagram -v ON_ERROR_STOP=1 < backend-source/migrations/064_knowledge_topic_seed_catalog.sql
+          docker exec testagram-postgres psql -U postgres -d testagram -Atqc "SELECT to_regclass('testagram_local.federation_outbox') IS NOT NULL AND to_regclass('testagram_local.communication_outbox') IS NOT NULL" | grep -qx t
+          docker build -f backend-source/Dockerfile -t testagram-backend-ci backend-source
+          export DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram
+          export TESTAGRAM_AUTH_JWT_SECRET=ci-testagram-native-auth-secret-at-least-32-bytes
+          export VIDEO_SIGNING_SECRET=ci-test-signing-secret-at-least-32-bytes
+          export NOTIFICATION_INTERNAL_TOKEN=ci-test-internal-token
+          export PLATFORM_INTERNAL_TOKEN=ci-platform-internal-token-2026-strong
+          export TESTAGRAM_NETWORK=testagram-platform
+          export TESTAGRAM_VIDEO_NETWORK=testagram-video-private
+          docker run -d --name testagram-api --network testagram-platform --network-alias api \
+            -e LISTEN_ADDR=:8080 -e INTERNAL_LISTEN_ADDR=:8082 \
+            -e DATABASE_URL=postgresql://postgres:testagram@testagram-postgres:5432/testagram?sslmode=disable \
+            -e TESTAGRAM_AUTH_JWT_SECRET=ci-testagram-native-auth-secret-at-least-32-bytes \
+            -e DATA_CENTRE_VIDEO_API_URL=http://video:8790 \
+            -e ALGORITHM_URL=http://algorithm:8092 -e ALGORITHM_INTERNAL_TOKEN=ci-algorithm-internal-token-long-enough \
+            -e FEDERATION_INTERNAL_URL=http://federation:8081 -e FEDERATION_INTERNAL_TOKEN=ci-federation-ingress-token-long-enough \
+            -e FEDERATION_BACKEND_INTERNAL_TOKEN=ci-federation-backend-read-token-long-enough \
+            testagram-backend-ci
+          docker network connect testagram-video-private testagram-api
+          for i in $(seq 1 30); do
+            docker exec testagram-api wget -q -O - http://127.0.0.1:8082/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker exec testagram-api wget -q -O - http://127.0.0.1:8082/readyz
+          docker exec testagram-api wget -q -O - http://127.0.0.1:8080/health | grep -q '"ok":true'
+          catalog_response="$(docker exec testagram-api sh -c 'wget -S -O /dev/null http://127.0.0.1:8080/internal/tv/catalog 2>&1 || true')"
+          grep -q '401 Unauthorized' <<<"$catalog_response"
+          health_response="$(docker exec testagram-api sh -c 'wget -S -O /dev/null --post-data="{}" http://127.0.0.1:8080/internal/tv/health 2>&1 || true')"
+          grep -q '401 Unauthorized' <<<"$health_response"
+          if docker exec testagram-api wget -q -O - http://127.0.0.1:8080/readyz >/dev/null 2>&1; then echo 'public Backend listener exposed readiness'; exit 1; fi
+          docker compose -f backend/docker-compose.yml pull algorithm federation-api
+          # Docker bind mounts hide image-layer ownership. Mirror the VPS
+          # media-volume provisioning so the non-root worker is tested with
+          # the same writable UID/GID (65532) it receives in production.
+          export TESTAGRAM_STORAGE_ROOT="${RUNNER_TEMP:-/tmp}/testagram-video-worker-storage"
+          mkdir -p "$TESTAGRAM_STORAGE_ROOT/media"
+          sudo chown -R 65532:65532 "$TESTAGRAM_STORAGE_ROOT/media"
+          sudo chmod 0770 "$TESTAGRAM_STORAGE_ROOT/media"
+          docker compose -f backend/docker-compose.yml up -d platform video video-worker notification worker algorithm federation-api
+          video_worker_id="$(docker compose -f backend/docker-compose.yml ps -q video-worker)"
+          test -n "$video_worker_id" || { echo "::error::Video worker container was not created"; exit 1; }
+          video_worker_health=""
+          for i in $(seq 1 30); do
+            video_worker_health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$video_worker_id")"
+            [[ "$video_worker_health" == healthy ]] && break
+            sleep 2
+          done
+          [[ "$video_worker_health" == healthy ]] || { docker inspect --format '{{json .State.Health}}' "$video_worker_id" || true; docker compose -f backend/docker-compose.yml logs --no-color video-worker; echo "::error::Video worker did not pass its PostgreSQL and writable-media readiness check"; exit 1; }
+          # Exercise the actual poster + HLS transcode queue, not only readiness.
+          smoke_video_id="$(cat /proc/sys/kernel/random/uuid)"
+          smoke_channel_id="$(cat /proc/sys/kernel/random/uuid)"
+          smoke_owner_id="00000000-0000-4000-8000-000000000001"
+          smoke_source="/media/videos/originals/$smoke_video_id/source.mp4"
+          docker exec "$video_worker_id" mkdir -p "/media/videos/originals/$smoke_video_id"
+          docker exec "$video_worker_id" ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=size=640x360:rate=24 -f lavfi -i sine=frequency=1000:sample_rate=44100 -t 6 -c:v mpeg4 -c:a aac -shortest -y "$smoke_source"
+          docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine psql -v ON_ERROR_STOP=1 -h testagram-postgres -U postgres -d testagram -c "INSERT INTO testagram_video.channels(id,owner_id,handle,name) VALUES ('$smoke_channel_id','$smoke_owner_id','ci-video-$smoke_video_id','CI video smoke'); INSERT INTO testagram_video.videos(id,channel_id,owner_id,title,visibility,status,original_object_key,original_size_bytes) VALUES ('$smoke_video_id','$smoke_channel_id','$smoke_owner_id','CI transcode smoke','public','queued','videos/originals/$smoke_video_id/source.mp4',1); INSERT INTO testagram_video.video_jobs(video_id,kind) VALUES ('$smoke_video_id','transcode'),('$smoke_video_id','poster');"
+          smoke_video_status=""
+          for i in $(seq 1 90); do
+            smoke_video_status="$(docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine psql -At -h testagram-postgres -U postgres -d testagram -c "SELECT status FROM testagram_video.videos WHERE id='$smoke_video_id'")"
+            [[ "$smoke_video_status" == ready ]] && break
+            sleep 2
+          done
+          [[ "$smoke_video_status" == ready ]] || { docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine psql -h testagram-postgres -U postgres -d testagram -c "SELECT kind,status,attempts,last_error FROM testagram_video.video_jobs WHERE video_id='$smoke_video_id'"; docker compose -f backend/docker-compose.yml logs --no-color video-worker; echo "::error::Video worker did not finish the poster and HLS transcode jobs"; exit 1; }
+          docker exec "$video_worker_id" test -s "/media/videos/posters/$smoke_video_id/poster.jpg"
+          docker exec "$video_worker_id" test -s "/media/videos/hls/$smoke_video_id/master.m3u8"
+          docker exec "$video_worker_id" sh -c "find '/media/videos/hls/$smoke_video_id' -type f -name '*.ts' -size +0c | grep -q ."
+          # Simulate a worker crash after it claimed the durable cleanup job:
+          # an expired lease must be reclaimed, media removed, and the outbox
+          # retained as done after the product row and dependent jobs disappear.
+          docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine psql -v ON_ERROR_STOP=1 -h testagram-postgres -U postgres -d testagram -c "BEGIN; INSERT INTO testagram_video.video_media_cleanup_jobs(video_id,status,attempts,lease_until) VALUES ('$smoke_video_id','running',1,now()-interval '1 second'); DELETE FROM testagram_video.videos WHERE id='$smoke_video_id'; DELETE FROM testagram_video.channels WHERE id='$smoke_channel_id'; COMMIT;"
+          cleanup_status=""
+          for i in $(seq 1 30); do
+            cleanup_status="$(docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine psql -At -h testagram-postgres -U postgres -d testagram -c "SELECT status || ':' || attempts FROM testagram_video.video_media_cleanup_jobs WHERE video_id='$smoke_video_id'")"
+            [[ "$cleanup_status" == "done:2" ]] && break
+            sleep 2
+          done
+          [[ "$cleanup_status" == "done:2" ]] || { docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine psql -h testagram-postgres -U postgres -d testagram -c "SELECT video_id,status,attempts,lease_until,last_error FROM testagram_video.video_media_cleanup_jobs WHERE video_id='$smoke_video_id'"; docker compose -f backend/docker-compose.yml logs --no-color video-worker; echo "::error::Durable video media cleanup did not reclaim the expired lease and finish"; exit 1; }
+          docker exec "$video_worker_id" sh -c "test ! -e '/media/videos/originals/$smoke_video_id' && test ! -e '/media/videos/posters/$smoke_video_id' && test ! -e '/media/videos/hls/$smoke_video_id'"
+          docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine sh -c 'applied="$(psql -h testagram-postgres -U postgres -d testagram -Atqc "SELECT count(*) FROM public.testagram_data_centre_schema_migrations WHERE version = '\''008_video_media_cleanup_outbox.sql'\''")"; test "$applied" = "1"'
+          docker run --rm --network testagram-platform -e PGPASSWORD=testagram postgres:17-alpine sh -c "psql -h testagram-postgres -U postgres -d postgres -Atqc \"SELECT 1 FROM pg_database WHERE datname = 'testagram_federation'\" | grep -qx 1"
+          for i in $(seq 1 30); do
+            docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
+          for i in $(seq 1 30); do
+            docker compose -f backend/docker-compose.yml exec -T algorithm wget -q -O - http://127.0.0.1:8092/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker compose -f backend/docker-compose.yml exec -T algorithm wget -q -O - http://127.0.0.1:8092/readyz
+          docker compose -f backend/docker-compose.yml exec -T algorithm wget -q -O - --header="Authorization: Bearer ci-algorithm-internal-token-long-enough" --header="X-Testagram-API-Version: 1" --header="X-Request-ID: ci-ranker-smoke" --header="Content-Type: application/json" --post-data='{"now":"2026-11-10T10:00:00Z","candidates":[{"id":"post-ci","authorId":"user-ci","createdAt":"2026-11-10T09:00:00Z","visible":true,"features":{"quality":0.8}}],"limit":10}' http://127.0.0.1:8092/v1/feed/rank | grep -q 'post-ci'
+          docker compose -f backend/docker-compose.yml exec -T federation-api /federation-api --healthcheck
+          docker run --rm --network testagram-platform postgres:17-alpine wget -q -O - --header="Accept: application/jrd+json" "http://federation:8081/.well-known/webfinger?resource=acct:testagram@testagram.site" | grep -q 'acct:testagram@testagram.site'
+          for i in $(seq 1 30); do
+            docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - http://127.0.0.1:8095/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - http://127.0.0.1:8095/readyz
+          docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token-2026-strong" --header="Content-Type: application/json" --post-data='{"key":"ci.flag","enabled":true,"public":true,"value":{"mode":"green"}}' http://127.0.0.1:8095/v1/config/set || { echo "feature-flag write failed; platform logs follow"; docker compose -f backend/docker-compose.yml logs --no-color platform; exit 1; }
+          docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - http://127.0.0.1:8095/v1/config/ci.flag | grep -Eq '"mode"[[:space:]]*:[[:space:]]*"green"'
+          docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token-2026-strong" --header="Content-Type: application/json" --post-data='{"event_name":"ci.smoke","properties":{"status":"green"}}' http://127.0.0.1:8095/v1/events
+          docker compose -f backend/docker-compose.yml exec -T platform wget -q -O - --header="Authorization: Bearer ci-platform-internal-token-2026-strong" --header="Content-Type: application/json" --post-data='{"action":"ci.smoke","resource_type":"workflow","resource_id":"platform","metadata":{"status":"green"}}' http://127.0.0.1:8095/v1/audit
+          docker compose -f backend/docker-compose.yml exec -T video wget -q -O - http://127.0.0.1:8790/readyz
+          for i in $(seq 1 30); do
+            docker exec testagram-api wget -q -O - http://video:8790/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker exec testagram-api wget -q -O - http://video:8790/readyz
+          for i in $(seq 1 30); do
+            docker compose -f backend/docker-compose.yml exec -T notification wget -q -O - http://127.0.0.1:8090/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker compose -f backend/docker-compose.yml exec -T notification wget -q -O - http://127.0.0.1:8090/readyz
+          for i in $(seq 1 30); do
+            docker compose -f backend/docker-compose.yml exec -T worker wget -q -O - http://127.0.0.1:8091/readyz >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker compose -f backend/docker-compose.yml exec -T worker wget -q -O - http://127.0.0.1:8091/readyz
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Validate Android VPS runtime sources
+        run: |
+          test -f android-node/app/src/main/java/com/testagram/node/LocalMediaServer.kt
+          test -f android-node/app/src/main/java/com/testagram/node/LocalMediaService.kt
+          grep -q 'android:name=".LocalMediaService"' android-node/app/src/main/AndroidManifest.xml
+          grep -q 'foregroundServiceType="specialUse"' android-node/app/src/main/AndroidManifest.xml
+          grep -q 'android:usesCleartextTraffic="false"' android-node/app/src/main/AndroidManifest.xml
+
+      - name: Build Android debug node
+        run: gradle -p android-node assembleDebug
+
+      - name: Package Android installers
+        run: |
+          set -euo pipefail
+          mkdir -p android-node/dist
+          cp android-node/app/build/outputs/apk/debug/app-debug.apk android-node/dist/TestagramNode-debug.apk
+          cp android-node/install-apk.sh android-node/dist/install-apk.sh
+          sha256sum android-node/dist/TestagramNode-debug.apk > android-node/dist/TestagramNode-debug.apk.sha256
+
+      - name: Check release signing configuration
+        id: release-signing
+        env:
+          KEYSTORE: '${{ secrets.ANDROID_KEYSTORE_BASE64 }}'
+          STORE_PASSWORD: '${{ secrets.ANDROID_KEYSTORE_PASSWORD }}'
+          KEY_ALIAS: '${{ secrets.ANDROID_KEY_ALIAS }}'
+          KEY_PASSWORD: '${{ secrets.ANDROID_KEY_PASSWORD }}'
+        run: |
+          if [[ -n "$KEYSTORE" && -n "$STORE_PASSWORD" && -n "$KEY_ALIAS" && -n "$KEY_PASSWORD" ]]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Release signing is not configured. The debug APK remains available; configure ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD for the signed release APK."
+          fi
+
+      - name: Build signed Android release
+        if: steps.release-signing.outputs.configured == 'true'
+        env:
+          ANDROID_KEYSTORE_BASE64: '${{ secrets.ANDROID_KEYSTORE_BASE64 }}'
+          ANDROID_KEYSTORE_PASSWORD: '${{ secrets.ANDROID_KEYSTORE_PASSWORD }}'
+          ANDROID_KEY_ALIAS: '${{ secrets.ANDROID_KEY_ALIAS }}'
+          ANDROID_KEY_PASSWORD: '${{ secrets.ANDROID_KEY_PASSWORD }}'
+        run: |
+          set -euo pipefail
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android-node/ci-release.keystore
+          export ANDROID_KEYSTORE_FILE="$GITHUB_WORKSPACE/android-node/ci-release.keystore"
+          gradle -p android-node assembleRelease
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          "$APKSIGNER" verify --verbose android-node/app/build/outputs/apk/release/app-release.apk
+          cp android-node/app/build/outputs/apk/release/app-release.apk android-node/dist/TestagramNode-release.apk
+          sha256sum android-node/dist/TestagramNode-release.apk > android-node/dist/TestagramNode-release.apk.sha256
+          rm -f android-node/ci-release.keystore
+
+      - name: Upload Android packages
+        uses: actions/upload-artifact@v6
+        with:
+          name: testagram-android-node
+          path: android-node/dist/
+          retention-days: 90
+
+  isolated-restore-drill:
+    name: Encrypted database restore drill (isolated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.3"
+          cache: true
+
+      - name: Install age CLI
+        run: |
+          go install filippo.io/age/cmd/age@v1.2.1
+          go install filippo.io/age/cmd/age-keygen@v1.2.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Create disposable source databases and encrypted backup fixture
+        id: fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull postgres:17-alpine
+          restore_image="$(docker image inspect postgres:17-alpine --format '{{index .RepoDigests 0}}')"
+          [[ "$restore_image" == postgres@sha256:* ]]
+          echo "restore_image=$restore_image" >> "$GITHUB_OUTPUT"
+
+          stage="$(mktemp -d)"
+          echo "stage=$stage" >> "$GITHUB_OUTPUT"
+          docker run --detach --name testagram-restore-source \
+            --publish 127.0.0.1:54329:5432 \
+            --env POSTGRES_PASSWORD=ci-only-password \
+            postgres:17-alpine >/dev/null
+          for attempt in $(seq 1 45); do
+            if docker exec testagram-restore-source pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          docker exec testagram-restore-source pg_isready -U postgres -d postgres
+
+          docker exec testagram-restore-source createdb -U postgres data_centre
+          docker exec testagram-restore-source psql -U postgres -d data_centre -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE restore_probe(id integer PRIMARY KEY, value text NOT NULL); INSERT INTO restore_probe VALUES (1, 'data-centre-ok');"
+
+          docker exec testagram-restore-source createdb -U postgres media
+          docker exec testagram-restore-source psql -U postgres -d media -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE media_objects(id integer PRIMARY KEY); CREATE TABLE media_outbox(id integer PRIMARY KEY); INSERT INTO media_objects VALUES (1); INSERT INTO media_outbox VALUES (1);"
+
+          docker exec testagram-restore-source createdb -U postgres federation
+          docker exec testagram-restore-source psql -U postgres -d federation -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE federation_actors(id integer PRIMARY KEY); INSERT INTO federation_actors VALUES (1);"
+
+          for entry in data_centre:data-centre media:media federation:federation; do
+            database="${entry%%:*}"
+            dump_name="${entry#*:}"
+            docker exec testagram-restore-source pg_dump -U postgres -Fc "$database" > "$stage/$dump_name.dump"
+            test -s "$stage/$dump_name.dump"
+          done
+
+          # Match the production multi-database archive contract.
+          (cd "$stage" && sha256sum ./*.dump > components.sha256)
+          cat > "$stage/metadata.txt" <<'EOF'
+          backup_scope=data_centre_and_service_metadata
+          neon_database_required=false
+          cross_database_atomic=not_atomic; coordinated_restore_requires_maintenance_window
+          media_bytes_included=false
+          external_identity_documents_included=false
+          media_database_included=true
+          federation_database_included=true
+          EOF
+          tar -czf "$stage/testagram-ci-backup.tar.gz" -C "$stage" data-centre.dump media.dump federation.dump components.sha256 metadata.txt
+          age-keygen -o "$stage/restore-identity.txt"
+          chmod 600 "$stage/restore-identity.txt"
+          recipient="$(age-keygen -y "$stage/restore-identity.txt")"
+          age -r "$recipient" -o "$stage/testagram-ci-backup.tar.gz.age" "$stage/testagram-ci-backup.tar.gz"
+          (cd "$stage" && sha256sum testagram-ci-backup.tar.gz.age > testagram-ci-backup.tar.gz.age.sha256)
+          test -s "$stage/testagram-ci-backup.tar.gz.age"
+
+      - name: Restore encrypted Data Centre archive in network-isolated PostgreSQL
+        env:
+          STAGE: ${{ steps.fixture.outputs.stage }}
+          RESTORE_IMAGE: ${{ steps.fixture.outputs.restore_image }}
+        run: |
+          set -euo pipefail
+          TESTAGRAM_BACKUP_AGE_IDENTITY_FILE="$STAGE/restore-identity.txt" \
+          TESTAGRAM_RESTORE_POSTGRES_IMAGE="$RESTORE_IMAGE" \
+            bash vps/restore-drill.sh "$STAGE/testagram-ci-backup.tar.gz.age"
+
+      - name: Verify the restore drill left no test containers
+        if: always()
+        run: |
+          if docker ps -a --format '{{.Names}}' | grep -Eq '^testagram-restore-drill-'; then
+            echo "A restore-drill container was not cleaned up" >&2
+            exit 1
+          fi
+          docker rm -f testagram-restore-source >/dev/null 2>&1 || true
+
+      - name: Remove encrypted fixture and temporary identity
+        if: always()
+        env:
+          STAGE: ${{ steps.fixture.outputs.stage }}
+        run: |
+          if [[ -n "${STAGE:-}" && -d "$STAGE" ]]; then
+            rm -rf -- "$STAGE"
+          fi
+ -v ./backend/services/media" in media_acceptance, "live acceptance must actually execute the cross-bucket credential denial test"
+          assert media_acceptance.count("- name: Stop isolated MinIO metadata store") == 1, "media staging workflow must have exactly one MinIO cleanup step"
+          assert media_acceptance.count("- name: Record staging acceptance scope") == 1, "media staging workflow must have exactly one acceptance summary step"
           assert "B2 and R2 staging endpoints must resolve to distinct hostnames" in media_acceptance, "provider acceptance must reject a shared B2/R2 endpoint"
           assert 'entrypoint: ["/bin/sh", "/scripts/provision-media-database.sh"]' in compose, "deployment media-migrate must execute the mounted database provisioner"
           assert "../scripts/provision-media-database.sh:/scripts/provision-media-database.sh:ro" in compose, "deployment media-migrate must mount the provisioner read-only"
