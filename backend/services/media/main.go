@@ -754,7 +754,7 @@ func (s *server) listB2ObjectVersionsPage(ctx context.Context, store s3Store, pr
 	if err != nil { return page, err }
 	base.Path = "/" + store.bucket + "/"
 	query := url.Values{}
-	query.Set("versions", "")
+	query.Set("versions", "null")
 	query.Set("prefix", prefix)
 	query.Set("max-keys", "1000")
 	if keyMarker != "" { query.Set("key-marker", keyMarker) }
