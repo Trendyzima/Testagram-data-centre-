@@ -102,6 +102,12 @@ func main() {
 	mux.HandleFunc("/internal/v1/identity-evidence/status",s.status)
 	mux.HandleFunc("/internal/v1/identity-evidence/download-url",s.downloadURL)
 	mux.HandleFunc("/internal/v1/identity-evidence/delete",s.delete)
+	purgeStartupCtx, purgeStartupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := s.enqueueLegacyIdentityEvidencePurges(purgeStartupCtx); err != nil {
+		purgeStartupCancel()
+		log.Fatalf("cannot initialize legacy identity evidence permanent-purge queue: %v", err)
+	}
+	purgeStartupCancel()
 	go s.worker(context.Background())
 	go s.reconcileWorker(context.Background())
 	srv:=&http.Server{Addr:cfg.addr,Handler:logging(mux),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:30*time.Second,IdleTimeout:60*time.Second}
