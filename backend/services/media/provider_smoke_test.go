@@ -328,7 +328,7 @@ func TestLiveMediaReplicationRestoreDelete(t *testing.T) {
 }
 
 // TestLiveIdentityEvidenceLifecycle proves the separately authenticated private
-// evidence routes against real staging B2/R2 buckets and an isolated PostgreSQL DB.
+// evidence routes against a dedicated staging B2 identity bucket and an isolated PostgreSQL DB.
 func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if os.Getenv("TESTAGRAM_LIVE_MEDIA_SMOKE") != "true" {
 		t.Skip("set TESTAGRAM_LIVE_MEDIA_SMOKE=true only for an operator-approved isolated non-production provider run")
@@ -430,7 +430,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	ready := call(http.MethodGet, "/internal/v1/identity-evidence/readyz", identityToken, nil)
 	var readyState map[string]any
 	decode(ready, &readyState, http.StatusOK)
-	if readyState["status"] != "ready" || readyState["namespace"] != "identity-evidence-private" {
+	if readyState["status"] != "ready" || readyState["namespace"] != "identity-evidence-private" || readyState["provider"] != "backblaze_b2" {
 		t.Fatalf("authenticated identity evidence readiness returned unexpected response: %+v", readyState)
 	}
 
