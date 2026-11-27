@@ -107,12 +107,31 @@ func (s *server) reconcileProtectedBatch(parent context.Context, limit int) erro
 
 
 func (s *server) reconcileOne(ctx context.Context, item reconcileItem) error {
-	primaryOK, primaryErr := s.originMatches(ctx, s.cfg.primary, item)
+	primary, replica := s.storesForNamespace(item.namespace)
+	if item.namespace == "identity-evidence-private" {
+		primaryOK, err := s.originMatches(ctx, primary, item)
+		if err != nil {
+			_, _ = s.db.Exec(ctx, `update media_objects set reconciliation_claimed_at=null where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
+			return fmt.Errorf("B2 identity evidence reconciliation failed: %w", err)
+		}
+		if !primaryOK {
+			_, err := s.db.Exec(ctx, `update media_objects set status='replication_failed',reconciled_at=now(),reconciliation_claimed_at=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
+			if err == nil { log.Printf("identity evidence quarantined after B2 integrity failure owner=%s key=%s", item.owner, item.key) }
+			return err
+		}
+		if err := s.writeMetadataSidecars(ctx, item); err != nil {
+			_, _ = s.db.Exec(ctx, `update media_objects set reconciliation_claimed_at=null where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
+			return err
+		}
+		_, err = s.db.Exec(ctx, `update media_objects set reconciled_at=now(),reconciliation_claimed_at=null where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
+		return err
+	}
+	primaryOK, primaryErr := s.originMatches(ctx, primary, item)
 	if primaryErr != nil {
 		_, _ = s.db.Exec(ctx, `update media_objects set reconciliation_claimed_at=null where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
 		return fmt.Errorf("primary origin reconciliation failed: %w", primaryErr)
 	}
-	replicaOK, replicaErr := s.originMatches(ctx, s.cfg.replica, item)
+	replicaOK, replicaErr := s.originMatches(ctx, replica, item)
 	if replicaErr != nil {
 		_, _ = s.db.Exec(ctx, `update media_objects set reconciliation_claimed_at=null where owner_id=$1 and namespace=$2 and object_key=$3 and status='protected'`, item.owner, item.namespace, item.key)
 		return fmt.Errorf("replica origin reconciliation failed: %w", replicaErr)
