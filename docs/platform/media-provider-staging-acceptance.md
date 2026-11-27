@@ -4,7 +4,7 @@ This manual workflow exercises the Data Centre media service against dedicated n
 
 ## GitHub Actions environment
 
-Create or reuse the protected `media-staging` environment. Use dedicated S3-compatible keys restricted to the four staging buckets listed below. Never copy production credentials into this environment.
+Create or reuse the protected `media-staging` environment. Use dedicated S3-compatible keys restricted to the six staging buckets listed below. Never copy production credentials into this environment.
 
 Environment variables:
 - `MEDIA_STAGING_B2_ENDPOINT`
