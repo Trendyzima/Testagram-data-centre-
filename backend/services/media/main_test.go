@@ -466,7 +466,7 @@ func TestEnqueueLegacyIdentityEvidencePurgesPostgresIntegration(t *testing.T) {
 	orphanID, err := randomID()
 	if err != nil { t.Fatal(err) }
 	orphanOwner := orphanID[:8] + "-" + orphanID[8:12] + "-4" + orphanID[13:16] + "-8" + orphanID[17:20] + "-" + orphanID[20:]
-	orphanKey := "identity/" + orphanOwner + "/40000000-0000-4000-8000-000000000004/50000000-0000-4000-8000-000000000005.jpg"
+	orphanKey := "identity/" + orphanOwner + "/40000000-0000-4000-8000-000000000004/50000000-0000-4000-8000-000000000005.jpg-" + strings.Repeat("a", 43)
 	defer func() {
 		_, _ = db.Exec(context.Background(), `delete from media_operations where owner_id=$1 and object_key=$2`, orphanOwner, orphanKey)
 		_, _ = db.Exec(context.Background(), `delete from media_outbox where owner_id=$1 and object_key=$2`, orphanOwner, orphanKey)
