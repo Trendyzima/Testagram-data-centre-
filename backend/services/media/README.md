@@ -29,7 +29,7 @@ Implements the five routes in `docs/platform/openapi/media-lifecycle-v1.yaml`. E
 - Worker uses leased `FOR UPDATE SKIP LOCKED` jobs, bounded exponential retries and a dead state.
 - R2 writes are independently read back and hashed before state becomes `protected`.
 - Ordinary-media deletion is idempotently queued and removes its configured B2 and R2 copies.
-- Identity-evidence upload grants expire after at most five minutes. Deletion waits until every issued presigned PUT URL has expired plus a 60-second in-flight grace; consumed database grants do not revoke an already-issued B2 URL.
+- Identity-evidence upload grants expire after at most five minutes. Deletion waits until every issued presigned PUT URL has expired plus a five-minute in-flight grace; consumed database grants do not revoke an already-issued B2 URL.
 - Identity-evidence deletion lists every B2 object version and delete marker, permanently deletes each exact version ID for both the evidence object and its metadata sidecar, then lists again and refuses to mark the record deleted unless no versions remain.
 - The identity-evidence purge marker is set only after the physical version purge is verified. Legacy records previously marked deleted by a delete marker are requeued until that marker is set; an unpurged identity key cannot be reused.
 - The identity-only B2 key is bucket-scoped and requires `readFiles`, `writeFiles`, `listFiles` and `deleteFiles`; the last two capabilities are required to enumerate and permanently delete versions.
