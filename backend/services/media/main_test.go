@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -318,30 +319,41 @@ func TestMediaAuthRejectsAmbiguousAuthorizationHeaders(t *testing.T) {
  }
 }
 
-func TestIdentityEvidenceReadinessUsesReadOnlyBucketHead(t *testing.T) {
+func TestIdentityEvidenceReadinessUsesReadOnlyVersionListing(t *testing.T) {
 	methods := make([]string, 0, 2)
 	paths := make([]string, 0, 2)
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var queryValues []url.Values
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		methods = append(methods, r.Method)
 		paths = append(paths, r.URL.Path)
-		if r.Method != http.MethodHead || r.URL.Path != "/identity-evidence-private" {
-			t.Errorf("identity readiness must issue only HEAD Bucket, got %s %s", r.Method, r.URL.Path)
+		queryValues = append(queryValues, r.URL.Query())
+		if r.Method != http.MethodGet || r.URL.Path != "/identity-evidence-private/" {
+			t.Errorf("identity readiness must issue only read-only ListObjectVersions, got %s %s", r.Method, r.URL.Path)
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
 		}
+		if _, ok := r.URL.Query()["versions"]; !ok || r.URL.Query().Get("prefix") != "__testagram_identity_readiness_probe__/" {
+			t.Errorf("identity readiness must list only the reserved read-only probe prefix: %v", r.URL.Query())
+			http.Error(w, "invalid list prefix", http.StatusBadRequest)
+			return
+		}
 		if r.Header.Get("Authorization") == "" || r.Header.Get("X-Amz-Date") == "" {
-			t.Errorf("HEAD Bucket request must be SigV4 authenticated")
+			t.Errorf("ListObjectVersions request must be SigV4 authenticated")
 			http.Error(w, "missing signature", http.StatusForbidden)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><IsTruncated>false</IsTruncated></ListVersionsResult>`))
 	}))
-	defer ts.Close()
-	store := s3Store{name:"backblaze_b2_identity_evidence", endpoint:ts.URL, region:"us-west-004", bucket:"identity-evidence-private", access:"test-access", secret:strings.Repeat("s",40)}
-	s := &server{cfg:config{identityPrimary:store},http:ts.Client()}
+	defer httpServer.Close()
+	store := s3Store{name:"backblaze_b2_identity_evidence", endpoint:httpServer.URL, region:"us-west-004", bucket:"identity-evidence-private", access:"test-access", secret:strings.Repeat("s",40)}
+	s := &server{cfg:config{identityPrimary:store},http:httpServer.Client()}
 	if err := s.probeIdentityEvidenceStore(context.Background(), store); err != nil { t.Fatalf("read-only B2 readiness failed: %v",err) }
-	if len(methods)!=1 || methods[0]!=http.MethodHead || len(paths)!=1 || paths[0]!="/identity-evidence-private" {
-		t.Fatalf("readiness performed unexpected object operations: methods=%v paths=%v",methods,paths)
+	if len(methods)!=1 || methods[0]!=http.MethodGet || len(paths)!=1 || paths[0]!="/identity-evidence-private/" {
+		t.Fatalf("readiness performed unexpected provider operations: methods=%v paths=%v",methods,paths)
+	}
+	if len(queryValues)!=1 || queryValues[0].Get("max-keys")!="1000" {
+		t.Fatalf("readiness did not use bounded version listing: %v",queryValues)
 	}
 }
 
