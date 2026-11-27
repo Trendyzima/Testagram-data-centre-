@@ -94,8 +94,7 @@ docker compose --env-file backend/.env -f backend/docker-compose.yml --profile m
 docker compose --env-file backend/.env -f backend/docker-compose.yml --profile media ps media media-migrate
 ```
 
-This service's media-byte path is **B2 primary + R2 replica**. MinIO and R2
-metadata sidecars are not a third copy of the media bytes. The Backend's
+This service's ordinary media-byte path is **B2 primary + R2 replica**. Identity evidence is separate: set `B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET` to a dedicated private B2 bucket distinct from `B2_S3_BUCKET`. Identity evidence has no R2, InstaBox or CDN byte replica; the service rejects replication and cross-provider restore for that namespace. MinIO and R2 metadata sidecars are not a third copy of ordinary media bytes. The Backend's
 separate virtual-storage path is the one configured for three independently
 verified media-byte copies (InstaBox MinIO + R2 + B2). Passing one lifecycle
 does not pass the other. Keep both production feature paths disabled until
