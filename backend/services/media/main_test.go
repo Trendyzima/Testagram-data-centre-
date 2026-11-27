@@ -336,3 +336,30 @@ func TestMediaAuthRejectsAmbiguousAuthorizationHeaders(t *testing.T) {
   if w.Code != http.StatusUnauthorized { t.Fatalf("status=%d, want 401", w.Code) }
  }
 }
+
+func TestIdentityEvidenceReadinessUsesReadOnlyBucketHead(t *testing.T) {
+	methods := make([]string, 0, 2)
+	paths := make([]string, 0, 2)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		paths = append(paths, r.URL.Path)
+		if r.Method != http.MethodHead || r.URL.Path != "/identity-evidence-private" {
+			t.Errorf("identity readiness must issue only HEAD Bucket, got %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		if r.Header.Get("Authorization") == "" || r.Header.Get("X-Amz-Date") == "" {
+			t.Errorf("HEAD Bucket request must be SigV4 authenticated")
+			http.Error(w, "missing signature", http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	store := s3Store{name:"backblaze_b2_identity_evidence", endpoint:ts.URL, region:"us-west-004", bucket:"identity-evidence-private", access:"test-access", secret:strings.Repeat("s",40)}
+	s := &server{cfg:config{identityPrimary:store},http:ts.Client()}
+	if err := s.probeIdentityEvidenceStore(context.Background(), store); err != nil { t.Fatalf("read-only B2 readiness failed: %v",err) }
+	if len(methods)!=1 || methods[0]!=http.MethodHead || len(paths)!=1 || paths[0]!="/identity-evidence-private" {
+		t.Fatalf("readiness performed unexpected object operations: methods=%v paths=%v",methods,paths)
+	}
+}
