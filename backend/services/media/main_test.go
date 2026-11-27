@@ -218,6 +218,24 @@ func TestIdentityEvidenceReadinessRequiresDedicatedCredential(t *testing.T) {
 	}
 }
 
+func TestMediaReadinessRequiresDedicatedMediaCredential(t *testing.T) {
+	s := &server{cfg: config{token: strings.Repeat("m", 40), identityToken: strings.Repeat("i", 40)}}
+	request := func(token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, "/internal/v1/media/readyz", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("X-Testagram-API-Version", apiVersion)
+		w := httptest.NewRecorder()
+		s.mediaReady(w, r)
+		return w
+	}
+	if got := request(s.cfg.identityToken).Code; got != http.StatusUnauthorized {
+		t.Fatalf("identity evidence token media readiness status=%d, want 401", got)
+	}
+	if got := request(s.cfg.token).Code; got != http.StatusServiceUnavailable {
+		t.Fatalf("media token should pass auth then fail closed on missing DB: status=%d, want 503", got)
+	}
+}
+
 func TestIdentityEvidenceUsesDedicatedB2AndR2Buckets(t *testing.T) {
  s := &server{cfg: config{
   primary:s3Store{name:"b2-media",bucket:"media-b2"},
