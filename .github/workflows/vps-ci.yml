@@ -3,8 +3,7 @@ on:
   push:
     paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-testagram-runtime-integration.py","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh","scripts/provision-media-database.sh",".github/workflows/vps-ci.yml",".github/workflows/media-provider-smoke.yml",".github/workflows/media-provider-staging-acceptance.yml",".github/workflows/media-provider-staging-acceptance.yml",".github/workflows/publish-runtime-images.yml"]
   pull_request:
-    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-testagram-runtime-integration.py","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh",
-      - "scripts/provision-media-database.sh",".github/workflows/vps-ci.yml",".github/workflows/media-provider-smoke.yml"]
+    paths: ["go.mod","go.sum","control-plane/**","node-agent/**","internal/**","migrations/**","android-node/**","backend/**","vps/**","docs/platform/**","scripts/validate-testagram-platform-contracts.sh","scripts/validate-testagram-runtime-integration.py","scripts/validate-platform-openapi.py","scripts/migrate-data-centre.sh","scripts/provision-media-database.sh",".github/workflows/vps-ci.yml",".github/workflows/media-provider-smoke.yml"]
   workflow_dispatch:
 jobs:
   go:
