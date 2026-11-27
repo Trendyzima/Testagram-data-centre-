@@ -668,7 +668,7 @@ func (s *server) deleteOrigins(ctx context.Context, owner, namespace, key string
 	if uploadURLStillValid {
 		var retryAt time.Time
 		if err := s.db.QueryRow(ctx, `
-			select max(expires_at + interval '60 seconds')
+			select max(expires_at + interval '5 minutes')
 			from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3
 			  and expires_at + interval '60 seconds' > now()
 		`, owner, namespace, key).Scan(&retryAt); err != nil {
