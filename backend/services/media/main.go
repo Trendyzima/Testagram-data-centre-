@@ -35,7 +35,6 @@ type config struct {
 	primary s3Store
 	replica s3Store
 	identityPrimary s3Store
-	identityReplica s3Store
 	metadataPrimary s3Store
 	metadataReplica s3Store
 	uploadTTL time.Duration
@@ -55,7 +54,6 @@ func main() {
 		primary: s3Store{name:"backblaze_b2", endpoint:required("B2_S3_ENDPOINT"), region:required("B2_S3_REGION"), bucket:required("B2_S3_BUCKET"), access:required("B2_S3_ACCESS_KEY_ID"), secret:required("B2_S3_SECRET_ACCESS_KEY")},
 		replica: s3Store{name:"cloudflare_r2", endpoint:required("CLOUDFLARE_R2_ENDPOINT"), region:env("CLOUDFLARE_R2_REGION","auto"), bucket:required("CLOUDFLARE_R2_BUCKET"), access:required("CLOUDFLARE_R2_ACCESS_KEY_ID"), secret:required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")},
 		identityPrimary: s3Store{name:"backblaze_b2_identity_evidence", endpoint:required("B2_S3_ENDPOINT"), region:required("B2_S3_REGION"), bucket:required("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"), access:required("B2_S3_ACCESS_KEY_ID"), secret:required("B2_S3_SECRET_ACCESS_KEY")},
-		identityReplica: s3Store{name:"cloudflare_r2_identity_evidence", endpoint:required("CLOUDFLARE_R2_ENDPOINT"), region:env("CLOUDFLARE_R2_REGION","auto"), bucket:required("CLOUDFLARE_R2_IDENTITY_EVIDENCE_PRIVATE_BUCKET"), access:required("CLOUDFLARE_R2_ACCESS_KEY_ID"), secret:required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")},
 		metadataPrimary: s3Store{name:"instabox_vps_metadata", endpoint:required("VPS_MINIO_ENDPOINT"), region:env("VPS_MINIO_REGION","us-east-1"), bucket:required("VPS_MINIO_METADATA_BUCKET"), access:required("VPS_MINIO_METADATA_ACCESS_KEY_ID"), secret:required("VPS_MINIO_METADATA_SECRET_ACCESS_KEY")},
 		metadataReplica: s3Store{name:"cloudflare_r2_metadata", endpoint:required("CLOUDFLARE_R2_ENDPOINT"), region:env("CLOUDFLARE_R2_REGION","auto"), bucket:required("CLOUDFLARE_R2_METADATA_BUCKET"), access:required("CLOUDFLARE_R2_ACCESS_KEY_ID"), secret:required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")},
 		uploadTTL: duration("MEDIA_UPLOAD_TTL", 45*time.Minute), downloadTTL: duration("MEDIA_DOWNLOAD_TTL", 5*time.Minute),
@@ -68,9 +66,7 @@ func main() {
 	if err:=validateStore(cfg.primary);err!=nil{log.Fatalf("invalid B2 primary configuration: %v",err)}
 	if err:=validateStore(cfg.replica);err!=nil{log.Fatalf("invalid R2 replica configuration: %v",err)}
 	if err:=validateStore(cfg.identityPrimary);err!=nil{log.Fatalf("invalid B2 identity evidence configuration: %v",err)}
-	if err:=validateStore(cfg.identityReplica);err!=nil{log.Fatalf("invalid R2 identity evidence configuration: %v",err)}
 	if cfg.identityPrimary.bucket==cfg.primary.bucket { log.Fatal("B2 identity evidence bucket must be distinct from the media bucket") }
-	if cfg.identityReplica.bucket==cfg.replica.bucket { log.Fatal("R2 identity evidence bucket must be distinct from the media bucket") }
 	if err:=validateStore(cfg.metadataPrimary);err!=nil{log.Fatalf("invalid VPS metadata store configuration: %v",err)}
 	if err:=validateStore(cfg.metadataReplica);err!=nil{log.Fatalf("invalid R2 metadata store configuration: %v",err)}
 	db,err:=pgxpool.New(context.Background(),required("MEDIA_DATABASE_URL")); if err!=nil { log.Fatal(err) }; defer db.Close()
@@ -115,6 +111,7 @@ func (s *server) writeMetadataSidecars(ctx context.Context, item reconcileItem) 
 	key := item.key + ".metadata.json"
 	metadataPrimary, metadataReplica := s.metadataStoresForNamespace(item.namespace)
 	for _, store := range []s3Store{metadataPrimary, metadataReplica} {
+		if store.bucket == "" { continue }
 		reader := &lengthReader{Reader:bytes.NewReader(body), n:int64(len(body))}
 		resp, err := s.signedRequest(ctx, store, http.MethodPut, key, reader, "application/json")
 		if err != nil { return fmt.Errorf("%s metadata PUT: %w", store.name, err) }
@@ -137,6 +134,7 @@ func (s *server) deleteMetadataSidecars(ctx context.Context, namespace, key stri
 	metadataKey := key + ".metadata.json"
 	metadataPrimary, metadataReplica := s.metadataStoresForNamespace(namespace)
 	for _, store := range []s3Store{metadataPrimary, metadataReplica} {
+		if store.bucket == "" { continue }
 		resp, err := s.signedRequest(ctx, store, http.MethodDelete, metadataKey, nil, "")
 		if err != nil { return fmt.Errorf("%s metadata delete: %w", store.name, err) }
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
@@ -146,11 +144,11 @@ func (s *server) deleteMetadataSidecars(ctx context.Context, namespace, key stri
 }
 
 func (s *server) storesForNamespace(namespace string) (s3Store, s3Store) {
-	if namespace == "identity-evidence-private" { return s.cfg.identityPrimary, s.cfg.identityReplica }
+	if namespace == "identity-evidence-private" { return s.cfg.identityPrimary, s3Store{} }
 	return s.cfg.primary, s.cfg.replica
 }
 func (s *server) metadataStoresForNamespace(namespace string) (s3Store, s3Store) {
-	if namespace == "identity-evidence-private" { return s.cfg.identityPrimary, s.cfg.identityReplica }
+	if namespace == "identity-evidence-private" { return s.cfg.identityPrimary, s3Store{} }
 	return s.cfg.metadataPrimary, s.cfg.metadataReplica
 }
 func (s *server) health(w http.ResponseWriter,r *http.Request){w.WriteHeader(200);_,_=w.Write([]byte("ok\n"))}
@@ -190,47 +188,45 @@ func (s *server) identityReady(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "identity evidence database is unavailable")
 		return
 	}
-	for _, store := range []s3Store{s.cfg.identityPrimary, s.cfg.identityReplica} {
+	for _, store := range []s3Store{s.cfg.identityPrimary} {
 		if err := s.probeIdentityEvidenceStore(ctx, store); err != nil {
 			log.Printf("identity evidence storage readiness failed for %s: %v", store.name, err)
 			writeErr(w, http.StatusServiceUnavailable, "identity evidence storage is unavailable")
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "namespace": "identity-evidence-private", "primary": "verified", "replica": "verified"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "namespace": "identity-evidence-private", "provider": "backblaze_b2", "primary": "verified"})
 }
 
 func (s *server) probeIdentityEvidenceStore(ctx context.Context, store s3Store) error {
-	id, err := randomID()
+	// A readiness probe must never write synthetic objects into the identity
+	// bucket. HEAD Bucket verifies the configured B2 endpoint, bucket and
+	// credentials without creating non-identity content.
+	if err := validateStore(store); err != nil { return err }
+	base, err := url.Parse(strings.TrimRight(store.endpoint, "/"))
 	if err != nil { return err }
-	key := "system/readiness/" + id
-	payload := []byte("testagram-identity-evidence-private-readiness-v1")
-	put, err := s.signedRequest(ctx, store, http.MethodPut, key, &lengthReader{Reader: bytes.NewReader(payload), n: int64(len(payload))}, "application/octet-stream")
-	if err != nil { return fmt.Errorf("%s readiness PUT: %w", store.name, err) }
-	io.Copy(io.Discard, io.LimitReader(put.Body, 4096)); put.Body.Close()
-	if put.StatusCode < 200 || put.StatusCode >= 300 { return fmt.Errorf("%s readiness PUT status %d", store.name, put.StatusCode) }
-	cleaned := false
-	defer func() {
-		if cleaned { return }
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, key, nil, "")
-		if cleanupErr == nil { io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close() }
-	}()
-	got, err := s.signedRequest(ctx, store, http.MethodGet, key, nil, "")
-	if err != nil { return fmt.Errorf("%s readiness GET: %w", store.name, err) }
-	if got.StatusCode != http.StatusOK { got.Body.Close(); return fmt.Errorf("%s readiness GET status %d", store.name, got.StatusCode) }
-	actual, readErr := io.ReadAll(io.LimitReader(got.Body, int64(len(payload))+1))
-	got.Body.Close()
-	if readErr != nil || !bytes.Equal(actual, payload) { return fmt.Errorf("%s readiness read-back mismatch", store.name) }
-	remove, err := s.signedRequest(ctx, store, http.MethodDelete, key, nil, "")
-	if err != nil { return fmt.Errorf("%s readiness DELETE: %w", store.name, err) }
-	io.Copy(io.Discard, io.LimitReader(remove.Body, 4096))
-	remove.Body.Close()
-	if remove.StatusCode != http.StatusOK && remove.StatusCode != http.StatusNoContent && remove.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("%s readiness DELETE status %d", store.name, remove.StatusCode)
+	base.Path = "/" + store.bucket
+	date := time.Now().UTC().Format("20060102T150405Z")
+	day := date[:8]
+	payload := "UNSIGNED-PAYLOAD"
+	canonicalHeaders := "host:" + base.Host + "\nx-amz-content-sha256:" + payload + "\nx-amz-date:" + date + "\n"
+	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
+	canonical := http.MethodHead + "\n" + base.EscapedPath() + "\n\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + payload
+	scope := day + "/" + store.region + "/s3/aws4_request"
+	toSign := "AWS4-HMAC-SHA256\n" + date + "\n" + scope + "\n" + hashHex([]byte(canonical))
+	signature := hex.EncodeToString(hmacSHA(signingKey(store.secret, day, store.region), toSign))
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, base.String(), nil)
+	if err != nil { return err }
+	req.Header.Set("X-Amz-Date", date)
+	req.Header.Set("X-Amz-Content-Sha256", payload)
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+store.access+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+signature)
+	resp, err := s.http.Do(req)
+	if err != nil { return fmt.Errorf("%s bucket HEAD: %w", store.name, err) }
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s bucket HEAD status %d", store.name, resp.StatusCode)
 	}
-	cleaned = true
 	return nil
 }
 func (s *server) namespaceAllowedForRoute(w http.ResponseWriter,r *http.Request,namespace string)bool{
@@ -293,6 +289,11 @@ func (s *server) verify(w http.ResponseWriter,r *http.Request){
 			if currentStatus=="uploaded"||currentStatus=="replication_pending"||currentStatus=="replication_failed"||currentStatus=="restore_pending" {
 				if currentStatus=="replication_failed" {
 					op:="verify";nextStatus:="uploaded"
+					if in.Namespace == "identity-evidence-private" {
+						primaryVerified = nil
+						replicaVerified = nil
+						_, _ = s.db.Exec(ctx, `update media_objects set primary_verified_at=null,replica_verified_at=null where owner_id=$1 and namespace=$2 and object_key=$3`, in.OwnerID, in.Namespace, in.Key)
+					}
 					if primaryVerified!=nil { op="replicate";nextStatus="replication_pending" }
 					if primaryVerified!=nil && replicaVerified!=nil { op="restore_primary";nextStatus="restore_pending" }
 					_,_=s.db.Exec(ctx,`update media_objects set status=$4,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status='replication_failed'`,in.OwnerID,in.Namespace,in.Key,nextStatus)
@@ -338,6 +339,7 @@ func (s *server) downloadURL(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second); defer cancel()
 	primary, replica := s.storesForNamespace(in.Namespace)
 	for _, store := range []s3Store{replica, primary} {
+		if store.bucket == "" { continue }
 		resp, headErr := s.signedRequest(ctx, store, http.MethodHead, in.Key, nil, "")
 		if headErr != nil { continue }
 		gotType := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
@@ -391,7 +393,23 @@ func (s *server) processOne(parent context.Context)error{
 	err=tx.QueryRow(ctx,`select o.id,o.attempts,o.owner_id,o.namespace,o.object_key,o.operation from media_outbox o where o.status in ('pending','retry','processing') and o.available_at<=now() and (o.locked_until is null or o.locked_until<now()) and not exists (select 1 from media_outbox active where active.owner_id=o.owner_id and active.namespace=o.namespace and active.object_key=o.object_key and active.status='processing' and active.id<>o.id) order by o.id for update of o skip locked limit 1`).Scan(&id,&attempts,&owner,&ns,&key,&op)
 	if errors.Is(err,pgx.ErrNoRows){return nil};if err!=nil{return err}
 	_,err=tx.Exec(ctx,`update media_outbox set status='processing',locked_until=now()+interval '35 minutes',attempts=attempts+1 where id=$1`,id);if err!=nil{return err};if err=tx.Commit(ctx);err!=nil{return err};attempts++
-	switch op{case "verify":err=s.verifyPrimary(ctx,owner,ns,key);case "replicate":err=s.replicate(ctx,owner,ns,key);case "restore_primary":err=s.restorePrimary(ctx,owner,ns,key);case "delete":err=s.deleteOrigins(ctx,owner,ns,key);default:err=fmt.Errorf("unknown outbox operation %q",op)}
+	switch op {
+	case "verify":
+		err = s.verifyPrimary(ctx, owner, ns, key)
+	case "replicate":
+		if ns == "identity-evidence-private" {
+			_, _ = s.db.Exec(ctx, `update media_objects set primary_verified_at=null,replica_verified_at=null,status='uploaded' where owner_id=$1 and namespace=$2 and object_key=$3 and status not in ('delete_pending','deleted')`, owner, ns, key)
+			err = s.verifyPrimary(ctx, owner, ns, key)
+		} else {
+			err = s.replicate(ctx, owner, ns, key)
+		}
+	case "restore_primary":
+		err = s.restorePrimary(ctx, owner, ns, key)
+	case "delete":
+		err = s.deleteOrigins(ctx, owner, ns, key)
+	default:
+		err = fmt.Errorf("unknown outbox operation %q", op)
+	}
 	if err!=nil{
 		var objectStatus string
 		stateErr:=s.db.QueryRow(ctx,`select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&objectStatus)
@@ -420,6 +438,14 @@ func (s *server) verifyPrimary(ctx context.Context,owner,ns,key string)error{
 	if resp.ContentLength>=0&&resp.ContentLength!=size{return errors.New("primary object size mismatch")}
 	if got:=strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"),";")[0]);got!=""&&got!=typ{return errors.New("primary object content type mismatch")}
 	h:=sha256.New();n,err:=io.Copy(h,io.LimitReader(resp.Body,size+1));if err!=nil{return err};if n!=size||hex.EncodeToString(h.Sum(nil))!=want{return errors.New("primary object size or SHA-256 mismatch")}
+	if ns == "identity-evidence-private" {
+		item := reconcileItem{owner:owner,namespace:ns,key:key,contentType:typ,size:size,expectedSHA:want}
+		if err := s.writeMetadataSidecars(ctx, item); err != nil { return err }
+		tag, err := s.db.Exec(ctx, `update media_objects set status='protected',primary_verified_at=now(),replica_verified_at=null,reconciled_at=now(),reconciliation_claimed_at=null,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('uploaded','replication_failed') and primary_verified_at is null`, owner, ns, key)
+		if err != nil { return err }
+		if tag.RowsAffected() != 1 { return errors.New("identity evidence lifecycle changed during B2 verification") }
+		return nil
+	}
 	tx,err:=s.db.Begin(ctx);if err!=nil{return err};defer tx.Rollback(ctx)
 	now:=time.Now().UTC()
 	tag,err:=tx.Exec(ctx,`update media_objects set status='replication_pending',primary_verified_at=$4,updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3 and status in ('uploaded','replication_failed') and primary_verified_at is null`,owner,ns,key,now)
@@ -429,6 +455,7 @@ func (s *server) verifyPrimary(ctx context.Context,owner,ns,key string)error{
 	if err==nil{err=tx.Commit(ctx)};return err
 }
 func (s *server) replicate(ctx context.Context,owner,ns,key string)error{
+	if ns == "identity-evidence-private" { return errors.New("identity evidence must never be replicated to another provider") }
 	var size int64;var typ,want string
 	if err:=s.db.QueryRow(ctx,`select size_bytes,content_type,sha256 from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&size,&typ,&want);err!=nil{return err}
 	primary, replica := s.storesForNamespace(ns)
@@ -446,6 +473,7 @@ func (s *server) replicate(ctx context.Context,owner,ns,key string)error{
 // (and therefore unavailable for download) until the restored primary passes a full read-back.
 // The outbox's per-object processing lease serializes this with deletion and other repairs.
 func (s *server) restorePrimary(ctx context.Context,owner,ns,key string)error{
+	if ns == "identity-evidence-private" { return errors.New("identity evidence is B2-only and cannot be restored from another provider") }
 	var size int64
 	var typ,want,status string
 	if err:=s.db.QueryRow(ctx,`select size_bytes,content_type,sha256,status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key).Scan(&size,&typ,&want,&status);err!=nil{return err}
@@ -485,7 +513,11 @@ func (s *server) restorePrimary(ctx context.Context,owner,ns,key string)error{
 
 func (s *server) deleteOrigins(ctx context.Context,owner,ns,key string)error{
 	primary, replica := s.storesForNamespace(ns)
-	for _,store:=range []s3Store{primary,replica}{resp,err:=s.signedRequest(ctx,store,http.MethodDelete,key,nil,"");if err!=nil{return err};io.Copy(io.Discard,io.LimitReader(resp.Body,4096));resp.Body.Close();if resp.StatusCode!=200&&resp.StatusCode!=204&&resp.StatusCode!=404{return fmt.Errorf("%s delete status %d",store.name,resp.StatusCode)}}
+	for _,store:=range []s3Store{primary,replica}{
+		if store.bucket == "" { continue }
+		resp,err:=s.signedRequest(ctx,store,http.MethodDelete,key,nil,"");if err!=nil{return err};io.Copy(io.Discard,io.LimitReader(resp.Body,4096));resp.Body.Close();if resp.StatusCode!=200&&resp.StatusCode!=204&&resp.StatusCode!=404{return fmt.Errorf("%s delete status %d",store.name,resp.StatusCode)
+		}
+	}
 	if err:=s.deleteMetadataSidecars(ctx,ns,key);err!=nil{return err}
 	_,err:=s.db.Exec(ctx,`update media_objects set status='deleted',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key);return err
 }

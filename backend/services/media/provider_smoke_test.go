@@ -328,7 +328,7 @@ func TestLiveMediaReplicationRestoreDelete(t *testing.T) {
 }
 
 // TestLiveIdentityEvidenceLifecycle proves the separately authenticated private
-// evidence routes against real staging B2/R2 buckets and an isolated PostgreSQL DB.
+// evidence routes against a dedicated staging B2 identity bucket and an isolated PostgreSQL DB.
 func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if os.Getenv("TESTAGRAM_LIVE_MEDIA_SMOKE") != "true" {
 		t.Skip("set TESTAGRAM_LIVE_MEDIA_SMOKE=true only for an operator-approved isolated non-production provider run")
@@ -350,12 +350,8 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	identityPrimary.name = "backblaze_b2_identity_evidence"
 	identityPrimary.bucket = os.Getenv("MEDIA_SMOKE_B2_IDENTITY_BUCKET")
 	if err := validateStore(identityPrimary); err != nil { t.Fatalf("B2 identity evidence smoke configuration invalid: %v", err) }
-	identityReplica := replica
-	identityReplica.name = "cloudflare_r2_identity_evidence"
-	identityReplica.bucket = os.Getenv("MEDIA_SMOKE_R2_IDENTITY_BUCKET")
-	if err := validateStore(identityReplica); err != nil { t.Fatalf("R2 identity evidence smoke configuration invalid: %v", err) }
-	if identityPrimary.bucket == primary.bucket || identityReplica.bucket == replica.bucket {
-		t.Fatal("identity evidence smoke buckets must be distinct from ordinary media smoke buckets")
+	if identityPrimary.bucket == primary.bucket {
+		t.Fatal("B2 identity evidence smoke bucket must be distinct from the ordinary media bucket")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -365,7 +361,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if err := db.Ping(ctx); err != nil { t.Fatalf("media smoke database unavailable: %v", err) }
 
 	s := &server{
-		cfg: config{token:mediaToken, identityToken:identityToken, primary:primary, replica:replica, identityPrimary:identityPrimary, identityReplica:identityReplica, uploadTTL:45*time.Minute, downloadTTL:5*time.Minute},
+		cfg: config{token:mediaToken, identityToken:identityToken, primary:primary, replica:replica, identityPrimary:identityPrimary, uploadTTL:45*time.Minute, downloadTTL:5*time.Minute},
 		db:db,
 		http:&http.Client{Timeout:60*time.Second, CheckRedirect:func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 	}
@@ -392,7 +388,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanupCancel()
-		for _, store := range []s3Store{identityPrimary, identityReplica} {
+		for _, store := range []s3Store{identityPrimary} {
 			for _, objectKey := range []string{key, key + ".metadata.json"} {
 				resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, objectKey, nil, "")
 				if cleanupErr == nil { io.Copy(io.Discard, io.LimitReader(resp.Body,4096)); resp.Body.Close() }
@@ -434,7 +430,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	ready := call(http.MethodGet, "/internal/v1/identity-evidence/readyz", identityToken, nil)
 	var readyState map[string]any
 	decode(ready, &readyState, http.StatusOK)
-	if readyState["status"] != "ready" || readyState["namespace"] != "identity-evidence-private" {
+	if readyState["status"] != "ready" || readyState["namespace"] != "identity-evidence-private" || readyState["provider"] != "backblaze_b2" {
 		t.Fatalf("authenticated identity evidence readiness returned unexpected response: %+v", readyState)
 	}
 
@@ -465,7 +461,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 		SHA256:item.expectedSHA,
 	})
 	decode(verifyResp, nil, http.StatusAccepted)
-	if err := s.processOne(ctx); err != nil { t.Fatalf("replicate identity evidence B2 -> R2: %v", err) }
+	if err := s.processOne(ctx); err != nil { t.Fatalf("verify identity evidence in its B2 bucket: %v", err) }
 
 	query := url.Values{"owner_id":[]string{owner}, "namespace":[]string{item.namespace}, "key":[]string{key}}
 	statusRoute := "/internal/v1/identity-evidence/status?" + query.Encode()
@@ -475,7 +471,13 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if state["status"] != "protected" || state["sha256"] != item.expectedSHA || state["size_bytes"] != float64(item.size) || state["content_type"] != item.contentType {
 		t.Fatalf("identity evidence did not reach protected state with matching metadata: %+v", state)
 	}
-	if ok, err := s.originMatches(ctx, identityReplica, item); err != nil || !ok { t.Fatalf("R2 identity evidence read-back failed: ok=%v err=%v", ok, err) }
+	identityStore, identityReplica := s.storesForNamespace("identity-evidence-private")
+	if identityStore.bucket != identityPrimary.bucket || identityStore.name != "backblaze_b2_identity_evidence" || identityReplica.bucket != "" {
+		t.Fatalf("identity evidence namespace must resolve to B2 only; primary=%q replica=%q", identityStore.name, identityReplica.name)
+	}
+	if state["replica_verified_at"] != nil {
+		t.Fatalf("B2-only identity evidence unexpectedly reports a verified replica: %+v", state)
+	}
 
 	denied := call(http.MethodPost, "/internal/v1/identity-evidence/download-url", identityToken, downloadRequest{
 		RequesterID:"00000000-0000-4000-8000-000000000099", OwnerID:owner, Namespace:item.namespace, Key:key,
@@ -495,14 +497,9 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if !digestMatches(getResp.Body, item.size, item.expectedSHA) { getResp.Body.Close(); t.Fatal("identity evidence download failed exact size/SHA-256 verification") }
 	getResp.Body.Close()
 
-	// Restore the primary from the independently verified replica.
-	lost, err := s.signedRequest(ctx, identityPrimary, http.MethodDelete, key, nil, "")
-	if err != nil { t.Fatalf("simulate identity evidence primary loss: %v", err) }
-	io.Copy(io.Discard, io.LimitReader(lost.Body,4096)); lost.Body.Close()
-	if lost.StatusCode != http.StatusOK && lost.StatusCode != http.StatusNoContent && lost.StatusCode != http.StatusNotFound { t.Fatalf("simulate B2 loss returned HTTP %d", lost.StatusCode) }
-	if err := s.reconcileOne(ctx, item); err != nil { t.Fatalf("reconcile missing identity evidence primary: %v", err) }
-	if err := s.processOne(ctx); err != nil { t.Fatalf("restore identity evidence B2 from R2: %v", err) }
-	if ok, err := s.originMatches(ctx, identityPrimary, item); err != nil || !ok { t.Fatalf("restored B2 identity evidence read-back failed: ok=%v err=%v", ok, err) }
+	// Identity evidence has no serving replica or cross-provider restore path.
+	if err := s.replicate(ctx, owner, item.namespace, key); err == nil { t.Fatal("identity evidence replication unexpectedly succeeded") }
+	if err := s.restorePrimary(ctx, owner, item.namespace, key); err == nil { t.Fatal("identity evidence cross-provider restore unexpectedly succeeded") }
 
 	deleteResp := call(http.MethodPost, "/internal/v1/identity-evidence/delete", identityToken, deleteRequest{
 		RequesterID:owner, OwnerID:owner, Namespace:item.namespace, Key:key,
@@ -512,13 +509,13 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	statusResp = call(http.MethodGet, statusRoute, identityToken, nil)
 	decode(statusResp, &state, http.StatusOK)
 	if state["status"] != "deleted" { t.Fatalf("identity evidence deletion state=%v, want deleted", state["status"]) }
-	for _, store := range []s3Store{identityPrimary, identityReplica} {
+	for _, store := range []s3Store{identityPrimary} {
 		head, err := s.signedRequest(ctx, store, http.MethodHead, key+".metadata.json", nil, "")
 		if err != nil { t.Fatalf("%s identity metadata HEAD after deletion: %v", store.name, err) }
 		io.Copy(io.Discard, io.LimitReader(head.Body,4096)); head.Body.Close()
 		if head.StatusCode != http.StatusNotFound { t.Fatalf("%s retained identity metadata sidecar after deletion (HTTP %d)", store.name, head.StatusCode) }
 	}
-	for _, store := range []s3Store{identityPrimary, identityReplica} {
+	for _, store := range []s3Store{identityPrimary} {
 		head, err := s.signedRequest(ctx, store, http.MethodHead, key, nil, "")
 		if err != nil { t.Fatalf("%s HEAD after identity evidence deletion: %v", store.name, err) }
 		io.Copy(io.Discard, io.LimitReader(head.Body,4096)); head.Body.Close()

@@ -6,7 +6,8 @@ info:
     Private Backend-to-Data-Centre API for identity evidence only. The Backend
     owns identity review, application ownership and authorization. This service
     stores and verifies evidence bytes using a dedicated credential, namespace,
-    primary and replica buckets. It is not a public client API.
+    and one dedicated private Backblaze B2 bucket. Identity evidence is never
+    replicated to Cloudflare R2 or InstaBox. It is not a public client API.
 description: |
   Every operation requires the dedicated identity-evidence service bearer and
   X-Testagram-API-Version: 1. The identity-evidence bearer must never be reused
@@ -18,21 +19,21 @@ paths:
   /internal/v1/identity-evidence/readyz:
     get:
       operationId: getIdentityEvidenceReadiness
-      summary: Verify identity-evidence database and primary/replica storage
+      summary: Verify identity-evidence database and dedicated Backblaze B2 storage
       responses:
         '200':
-          description: Database and both isolated evidence stores passed write/read/delete probes.
+          description: Database and the dedicated Backblaze B2 identity bucket passed write/read/delete probes.
           content:
             application/json:
               schema:
                 type: object
                 additionalProperties: false
-                required: [status, namespace, primary, replica]
+                required: [status, namespace, provider, primary]
                 properties:
                   status: { type: string, const: ready }
                   namespace: { type: string, const: identity-evidence-private }
+                  provider: { type: string, const: backblaze_b2 }
                   primary: { type: string, const: verified }
-                  replica: { type: string, const: verified }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/Unavailable' }
   /internal/v1/identity-evidence/upload-url:
@@ -57,7 +58,7 @@ paths:
   /internal/v1/identity-evidence/verify:
     post:
       operationId: verifyIdentityEvidenceObject
-      summary: Verify evidence bytes and queue independent replica protection
+      summary: Verify evidence bytes and queue primary-object verification in the dedicated Backblaze B2 identity bucket
       requestBody:
         required: true
         content:
@@ -65,12 +66,12 @@ paths:
             schema: { $ref: '#/components/schemas/IdentityEvidenceVerifyRequest' }
       responses:
         '202':
-          description: Verification is durably queued; evidence remains unavailable until both copies pass verification.
+          description: Verification is durably queued; evidence remains unavailable until the dedicated Backblaze B2 object passes full size, content-type and SHA-256 verification.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Verification' }
         '200':
-          description: Evidence already meets the configured protection policy.
+          description: Evidence already passed dedicated Backblaze B2 size, content-type and SHA-256 verification.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Verification' }
@@ -82,7 +83,7 @@ paths:
   /internal/v1/identity-evidence/status:
     get:
       operationId: getIdentityEvidenceStatus
-      summary: Read authoritative evidence object and replica state
+      summary: Read authoritative identity evidence lifecycle state
       parameters:
         - in: query
           name: owner_id
@@ -98,7 +99,7 @@ paths:
           schema: { $ref: '#/components/schemas/IdentityEvidenceObjectKey' }
       responses:
         '200':
-          description: Current evidence lifecycle state.
+          description: Current evidence lifecycle state. Identity evidence is stored only in the dedicated Backblaze B2 bucket; replica_verified_at is always null.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MediaStatus' }
@@ -109,7 +110,7 @@ paths:
   /internal/v1/identity-evidence/download-url:
     post:
       operationId: createIdentityEvidenceDownloadURL
-      summary: Create a short-lived evidence download URL after Backend authorization
+      summary: Create a short-lived Backblaze B2 evidence download URL after Backend authorization
       description: Data Centre validates evidence ownership namespace and protection state; the Backend remains responsible for staff identity, review permissions and application authorization.
       requestBody:
         required: true
@@ -129,7 +130,7 @@ paths:
   /internal/v1/identity-evidence/delete:
     post:
       operationId: deleteIdentityEvidenceObject
-      summary: Enqueue idempotent evidence deletion and isolated replica cleanup
+      summary: Enqueue idempotent deletion from the dedicated Backblaze B2 identity bucket
       requestBody:
         required: true
         content:
@@ -239,7 +240,7 @@ components:
       required: [url, provider]
       properties:
         url: { type: string, format: uri }
-        provider: { type: string, enum: [cloudflare_r2, backblaze_b2] }
+        provider: { type: string, const: backblaze_b2 }
     DeleteResult:
       type: object
       additionalProperties: false

@@ -236,48 +236,33 @@ func TestMediaReadinessRequiresDedicatedMediaCredential(t *testing.T) {
 	}
 }
 
-func TestIdentityEvidenceUsesDedicatedB2AndR2Buckets(t *testing.T) {
+func TestIdentityEvidenceUsesDedicatedB2OnlyBucket(t *testing.T) {
  s := &server{cfg: config{
   primary:s3Store{name:"b2-media",bucket:"media-b2"},
   replica:s3Store{name:"r2-media",bucket:"media-r2"},
-  identityPrimary:s3Store{name:"b2-identity",bucket:"identity-b2"},
-  identityReplica:s3Store{name:"r2-identity",bucket:"identity-r2"},
+  identityPrimary:s3Store{name:"backblaze_b2_identity_evidence",bucket:"identity-b2"},
   metadataPrimary:s3Store{name:"vps-metadata",bucket:"metadata-vps"},
   metadataReplica:s3Store{name:"r2-metadata",bucket:"metadata-r2"},
  }}
  p,r := s.storesForNamespace("identity-evidence-private")
- if p.bucket!="identity-b2" || r.bucket!="identity-r2" { t.Fatalf("identity evidence routed to %q/%q",p.bucket,r.bucket) }
+ if p.bucket!="identity-b2" || p.name!="backblaze_b2_identity_evidence" { t.Fatalf("identity evidence routed to %q/%q",p.name,p.bucket) }
+ if r.bucket!="" || r.name!="" { t.Fatalf("identity evidence unexpectedly has a replica: %#v",r) }
  p,r = s.storesForNamespace("media-private")
- if p.bucket!="media-b2" || r.bucket!="media-r2" { t.Fatalf("media routed to %q/%q",p.bucket,r.bucket) }
+ if p.bucket!="media-b2" || r.bucket!="media-r2" { t.Fatalf("general media routing changed: %q/%q",p.bucket,r.bucket) }
  mp,mr := s.metadataStoresForNamespace("identity-evidence-private")
- if mp.bucket!="identity-b2" || mr.bucket!="identity-r2" { t.Fatalf("identity sidecars not isolated: %q/%q",mp.bucket,mr.bucket) }
+ if mp.bucket!="identity-b2" || mr.bucket!="" { t.Fatalf("identity metadata escaped dedicated B2 bucket: %q/%q",mp.bucket,mr.bucket) }
  mp,mr = s.metadataStoresForNamespace("media-private")
  if mp.bucket!="metadata-vps" || mr.bucket!="metadata-r2" { t.Fatalf("media metadata routing changed: %q/%q",mp.bucket,mr.bucket) }
 }
-
-func TestIdentityEvidenceBucketProbeWritesReadsAndDeletes(t *testing.T) {
- objects := map[string][]byte{}
- methods := []string{}
- ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-  methods = append(methods, r.Method)
-  switch r.Method {
-  case http.MethodPut:
-   body, err := io.ReadAll(r.Body); if err != nil { http.Error(w, "read", 500); return }; objects[r.URL.Path] = body; w.WriteHeader(http.StatusOK)
-  case http.MethodGet:
-   body, ok := objects[r.URL.Path]; if !ok { http.NotFound(w, r); return }; _, _ = w.Write(body)
-  case http.MethodDelete:
-   delete(objects, r.URL.Path); w.WriteHeader(http.StatusNoContent)
-  default: http.Error(w, "method", 405)
-  }
- }))
- defer ts.Close()
- store := s3Store{name:"identity-test", endpoint:ts.URL, region:"us-east-1", bucket:"identity-evidence", access:"access", secret:strings.Repeat("s",40)}
- s := &server{http:ts.Client()}
- if err := s.probeIdentityEvidenceStore(context.Background(), store); err != nil { t.Fatal(err) }
- if len(objects) != 0 { t.Fatalf("readiness probe left objects behind: %#v", objects) }
- if strings.Join(methods, ",") != "PUT,GET,DELETE" { t.Fatalf("probe methods=%v", methods) }
+func TestIdentityEvidenceCannotReplicateOrRestoreFromAnotherProvider(t *testing.T) {
+ s := &server{}
+ if err := s.replicate(context.Background(), "owner", "identity-evidence-private", "identity/key"); err == nil || !strings.Contains(err.Error(), "must never be replicated") {
+  t.Fatalf("identity replication was not rejected: %v", err)
+ }
+ if err := s.restorePrimary(context.Background(), "owner", "identity-evidence-private", "identity/key"); err == nil || !strings.Contains(err.Error(), "B2-only") {
+  t.Fatalf("identity restore from another provider was not rejected: %v", err)
+ }
 }
-
 
 func TestMediaRetryDelaySecondsUsesBoundedExponentialJitter(t *testing.T) {
 	tests := []struct {
@@ -326,4 +311,31 @@ func TestMediaAuthRejectsAmbiguousAuthorizationHeaders(t *testing.T) {
   if s.auth(w, r) { t.Fatalf("ambiguous Authorization values accepted: %#v", values) }
   if w.Code != http.StatusUnauthorized { t.Fatalf("status=%d, want 401", w.Code) }
  }
+}
+
+func TestIdentityEvidenceReadinessUsesReadOnlyBucketHead(t *testing.T) {
+	methods := make([]string, 0, 2)
+	paths := make([]string, 0, 2)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		paths = append(paths, r.URL.Path)
+		if r.Method != http.MethodHead || r.URL.Path != "/identity-evidence-private" {
+			t.Errorf("identity readiness must issue only HEAD Bucket, got %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		if r.Header.Get("Authorization") == "" || r.Header.Get("X-Amz-Date") == "" {
+			t.Errorf("HEAD Bucket request must be SigV4 authenticated")
+			http.Error(w, "missing signature", http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	store := s3Store{name:"backblaze_b2_identity_evidence", endpoint:ts.URL, region:"us-west-004", bucket:"identity-evidence-private", access:"test-access", secret:strings.Repeat("s",40)}
+	s := &server{cfg:config{identityPrimary:store},http:ts.Client()}
+	if err := s.probeIdentityEvidenceStore(context.Background(), store); err != nil { t.Fatalf("read-only B2 readiness failed: %v",err) }
+	if len(methods)!=1 || methods[0]!=http.MethodHead || len(paths)!=1 || paths[0]!="/identity-evidence-private" {
+		t.Fatalf("readiness performed unexpected object operations: methods=%v paths=%v",methods,paths)
+	}
 }

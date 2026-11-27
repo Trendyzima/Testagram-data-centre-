@@ -18,7 +18,8 @@ The public application and authorization boundary remains the canonical Testagra
 |---|---|---|
 | Identity and session verification | Testagram Backend native authentication | Verify native credentials and live session state; no external identity-provider JWT is accepted as a native bearer token |
 | Product authority | Go Backend + Backend-owned PostgreSQL | Canonical users, posts, permissions, visibility, quotas and media-to-post association |
-| Primary durable bytes | Backblaze B2 | Authoritative upload origin and first verified object copy |
+| Primary durable bytes | Backblaze B2 | Authoritative upload origin and first verified object copy for general media |
+| Identity evidence bytes | Dedicated Backblaze B2 identity bucket only | Verification photos/documents; no R2 or InstaBox serving copy |
 | Durable replica | Cloudflare R2 | Independently verified copy; used for recovery if B2 is missing or corrupt |
 | Provider lifecycle | Data Centre media service | Private presigning, size/type/SHA-256 verification, replication, reconciliation, repair and deletion execution |
 | Operational media ledger | Data Centre PostgreSQL via `MEDIA_DATABASE_URL` | Upload grants, object lifecycle state, primary/replica verification timestamps and durable outbox jobs |
@@ -26,7 +27,7 @@ The public application and authorization boundary remains the canonical Testagra
 
 Keep B2 and R2 endpoints, regions, buckets and access keys independent. Use private buckets and least-privilege credentials. Provider credentials stay server-side; never place them in Flutter, browser configuration, node agents or public logs.
 
-The current media service configures one bucket per provider using `B2_S3_BUCKET` and `CLOUDFLARE_R2_BUCKET`. Do not assume that the service is using separate public/private/identity buckets merely because other deployment variables exist. Namespace, owner, object key and Backend authorization must be enforced consistently across upload, verification, download and delete.
+General media uses Backblaze B2 as its primary and Cloudflare R2 as its verified replica. Identity-verification photos and documents are a strict exception: they are stored only in the dedicated private Backblaze bucket configured by `B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET`. They are not copied to the general B2 media bucket, Cloudflare R2, InstaBox or the CDN. The identity service uses its distinct `IDENTITY_EVIDENCE_INTERNAL_TOKEN`, and the Backend remains the authorization boundary. The dedicated identity bucket is used for the evidence object and its identity-scoped metadata sidecar; no public URL or general-media route may address it. A separate encrypted, access-controlled disaster-recovery backup may protect recovery, but it is not a serving replica and must never be exposed to the application or reviewer path. The current general-media service configures B2 and R2 buckets independently; namespace, owner, object key and Backend authorization must be enforced consistently across upload, verification, download and delete.
 
 ## Upload and replication lifecycle
 
@@ -71,7 +72,8 @@ Before production media sign-off, add an independently encrypted off-host backup
 
 The private Data Centre media service requires:
 
-- B2 primary: `B2_S3_ENDPOINT`, `B2_S3_REGION`, `B2_S3_BUCKET`, `B2_S3_ACCESS_KEY_ID`, `B2_S3_SECRET_ACCESS_KEY`
+- B2 primary general media: `B2_S3_ENDPOINT`, `B2_S3_REGION`, `B2_S3_BUCKET`, `B2_S3_ACCESS_KEY_ID`, `B2_S3_SECRET_ACCESS_KEY`
+- B2-only identity evidence: `B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET` (uses the B2 credentials above; no R2 identity bucket is configured)
 - R2 replica: `CLOUDFLARE_R2_ENDPOINT`, `CLOUDFLARE_R2_REGION`, `CLOUDFLARE_R2_BUCKET`, `CLOUDFLARE_R2_ACCESS_KEY_ID`, `CLOUDFLARE_R2_SECRET_ACCESS_KEY`
 - Operational ledger: `MEDIA_DATABASE_URL`
 - Backend-to-Data-Centre private API: `DATA_CENTRE_MEDIA_API_URL` and a distinct internal service token
@@ -82,7 +84,8 @@ The repository currently has opt-in Go live-provider tests (`TESTAGRAM_LIVE_MEDI
 
 ## Release gates — not yet satisfied
 
-- [ ] Dedicated staging B2 primary and R2 replica credentials/buckets are configured with least privilege.
+- [ ] Dedicated staging B2 primary and R2 replica credentials/buckets for general media are configured with least privilege.
+- [ ] A separate private staging B2 identity-evidence bucket is configured with least privilege; no R2/InstaBox identity-evidence bucket is configured.
 - [ ] Authorized live staging upload, GET, HEAD, SHA-256 read-back and delete tests pass on both providers.
 - [ ] B2 outage, R2 outage, checksum corruption, missing-object repair and failed-delete retry tests pass.
 - [ ] The media operational ledger and provider buckets reconcile without unexplained objects or rows.
