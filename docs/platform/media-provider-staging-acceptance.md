@@ -30,7 +30,7 @@ The media and identity-evidence service tokens must be different and at least 32
 
 ## Run
 
-1. Confirm the five cloud buckets are dedicated staging resources and contain only disposable test data.
+1. Confirm the six cloud buckets are dedicated staging resources and contain only disposable test data.
 2. Open **Actions → Data Centre media provider staging acceptance → Run workflow**.
 3. Set `confirm_staging_provider_writes=true` only after verifying the selected environment and bucket names.
 4. Inspect the run summary and confirm all three tests passed:
