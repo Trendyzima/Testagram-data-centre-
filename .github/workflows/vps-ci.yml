@@ -143,6 +143,8 @@ jobs:
           assert not workflow_path.exists(), "obsolete staging-only live provider smoke workflow must remain removed"
           compose = Path("backend/docker-compose.yml").read_text()
           provisioner = Path("scripts/provision-media-database.sh").read_text()
+          media_acceptance = Path(".github/workflows/media-provider-staging-acceptance.yml").read_text()
+          assert "B2 and R2 staging endpoints must resolve to distinct hostnames" in media_acceptance, "provider acceptance must reject a shared B2/R2 endpoint"
           assert 'entrypoint: ["/bin/sh", "/scripts/provision-media-database.sh"]' in compose, "deployment media-migrate must execute the mounted database provisioner"
           assert "../scripts/provision-media-database.sh:/scripts/provision-media-database.sh:ro" in compose, "deployment media-migrate must mount the provisioner read-only"
           assert 'psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f /migrations/001_media_lifecycle.sql' in provisioner, "media provisioner must apply the lifecycle migration"
