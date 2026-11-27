@@ -393,8 +393,10 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanupCancel()
 		for _, store := range []s3Store{identityPrimary, identityReplica} {
-			resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, key, nil, "")
-			if cleanupErr == nil { io.Copy(io.Discard, io.LimitReader(resp.Body,4096)); resp.Body.Close() }
+			for _, objectKey := range []string{key, key + ".metadata.json"} {
+				resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, objectKey, nil, "")
+				if cleanupErr == nil { io.Copy(io.Discard, io.LimitReader(resp.Body,4096)); resp.Body.Close() }
+			}
 		}
 		_, _ = db.Exec(cleanupCtx, "delete from media_operations where owner_id=$1 and namespace=$2 and object_key=$3", owner, item.namespace, key)
 		_, _ = db.Exec(cleanupCtx, "delete from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3", owner, item.namespace, key)
@@ -510,6 +512,12 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	statusResp = call(http.MethodGet, statusRoute, identityToken, nil)
 	decode(statusResp, &state, http.StatusOK)
 	if state["status"] != "deleted" { t.Fatalf("identity evidence deletion state=%v, want deleted", state["status"]) }
+	for _, store := range []s3Store{identityPrimary, identityReplica} {
+		head, err := s.signedRequest(ctx, store, http.MethodHead, key+".metadata.json", nil, "")
+		if err != nil { t.Fatalf("%s identity metadata HEAD after deletion: %v", store.name, err) }
+		io.Copy(io.Discard, io.LimitReader(head.Body,4096)); head.Body.Close()
+		if head.StatusCode != http.StatusNotFound { t.Fatalf("%s retained identity metadata sidecar after deletion (HTTP %d)", store.name, head.StatusCode) }
+	}
 	for _, store := range []s3Store{identityPrimary, identityReplica} {
 		head, err := s.signedRequest(ctx, store, http.MethodHead, key, nil, "")
 		if err != nil { t.Fatalf("%s HEAD after identity evidence deletion: %v", store.name, err) }
