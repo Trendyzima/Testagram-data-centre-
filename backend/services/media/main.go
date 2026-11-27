@@ -387,7 +387,35 @@ func (s *server) delete(w http.ResponseWriter, r *http.Request) {
 	var purgedAt *time.Time
 	err = tx.QueryRow(ctx, `select status,identity_evidence_purged_at from media_objects where owner_id=$1 and namespace=$2 and object_key=$3 for update`, in.OwnerID, in.Namespace, in.Key).Scan(&old, &purgedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeJSON(w, 200, map[string]string{"status":"deleted"})
+		if in.Namespace != "identity-evidence-private" {
+			writeJSON(w, 200, map[string]string{"status":"deleted"})
+			return
+		}
+		// A missing database row does not prove that no historical B2 versions
+		// or metadata sidecar exist. Create a minimal tombstone and send it
+		// through the same version-aware permanent-purge worker.
+		if _, err = tx.Exec(ctx, `insert into media_objects(owner_id,namespace,object_key,content_type,size_bytes,status) values($1,$2,$3,'application/octet-stream',1,'delete_pending') on conflict(owner_id,namespace,object_key) do nothing`, in.OwnerID, in.Namespace, in.Key); err != nil {
+			writeErr(w, 503, "could not create identity evidence purge tombstone")
+			return
+		}
+		if _, err = tx.Exec(ctx, `insert into media_outbox(owner_id,namespace,object_key,operation,status,available_at) values($1,$2,$3,'delete','pending',now()) on conflict(owner_id,namespace,object_key,operation) do update set status='pending',attempts=0,available_at=now(),locked_until=null,last_error=null,updated_at=now() where media_outbox.status in ('done','cancelled','dead')`, in.OwnerID, in.Namespace, in.Key); err != nil {
+			writeErr(w, 503, "could not queue orphaned identity evidence permanent purge")
+			return
+		}
+		eventID, idErr := randomID()
+		if idErr != nil {
+			writeErr(w, 503, "could not record orphaned identity evidence purge")
+			return
+		}
+		if _, err = tx.Exec(ctx, `insert into media_operations(operation_id,owner_id,namespace,object_key,operation,outcome) values($1,$2,$3,$4,'delete','queued')`, eventID, in.OwnerID, in.Namespace, in.Key); err != nil {
+			writeErr(w, 503, "could not audit orphaned identity evidence purge")
+			return
+		}
+		if err = tx.Commit(ctx); err != nil {
+			writeErr(w, 503, "could not persist orphaned identity evidence purge")
+			return
+		}
+		writeJSON(w, 202, map[string]string{"status":"delete_pending"})
 		return
 	}
 	if err != nil { writeErr(w, 503, "media state unavailable"); return }
