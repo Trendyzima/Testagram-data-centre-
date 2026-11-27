@@ -101,7 +101,16 @@ jobs:
           [[ "$MEDIA_SMOKE_B2_BUCKET" != "$MEDIA_SMOKE_B2_IDENTITY_BUCKET" ]]
           [[ "$MEDIA_SMOKE_B2_ACCESS_KEY_ID" != "$MEDIA_SMOKE_B2_IDENTITY_ACCESS_KEY_ID" ]]
           [[ "$MEDIA_SMOKE_B2_SECRET_ACCESS_KEY" != "$MEDIA_SMOKE_B2_IDENTITY_SECRET_ACCESS_KEY" ]]
-          [[ "$MEDIA_SMOKE_B2_ENDPOINT" == "$MEDIA_SMOKE_R2_ENDPOINT" || "$MEDIA_SMOKE_B2_ENDPOINT" != "$MEDIA_SMOKE_R2_ENDPOINT" ]]
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          b2 = urlparse(os.environ["MEDIA_SMOKE_B2_ENDPOINT"])
+          r2 = urlparse(os.environ["MEDIA_SMOKE_R2_ENDPOINT"])
+          if b2.scheme != "https" or r2.scheme != "https" or not b2.hostname or not r2.hostname:
+              raise SystemExit("B2 and R2 staging endpoints must be valid HTTPS URLs")
+          if b2.hostname == r2.hostname:
+              raise SystemExit("B2 and R2 staging endpoints must resolve to distinct hostnames")
+          PY
           echo "Required credentials are present and distinct; values were not logged."
 
       - name: Provision isolated media database and apply migrations
