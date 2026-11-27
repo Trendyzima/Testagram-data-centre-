@@ -431,8 +431,11 @@ func TestDeleteAllB2ObjectVersionsPermanentlyRemovesVersionsAndDeleteMarkers(t *
 
 
 func TestEnqueueLegacyIdentityEvidencePurgesPostgresIntegration(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("MEDIA_PURGE_INTEGRATION")) != "true" {
+		t.Skip("set MEDIA_PURGE_INTEGRATION=true to run against an explicitly provisioned disposable media database")
+	}
 	databaseURL := strings.TrimSpace(os.Getenv("MEDIA_DATABASE_URL"))
-	if databaseURL == "" { t.Skip("requires MEDIA_DATABASE_URL and media migrations 001-005") }
+	if databaseURL == "" { t.Fatal("MEDIA_PURGE_INTEGRATION=true requires MEDIA_DATABASE_URL") }
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	db, err := pgxpool.New(ctx, databaseURL)
