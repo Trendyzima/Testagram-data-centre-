@@ -494,6 +494,17 @@ func (s *server) enqueueLegacyIdentityEvidencePurges(ctx context.Context) error 
 				  AND active.operation='delete'
 				  AND active.status IN ('pending','processing','retry')
 			  )
+			  AND NOT (
+				status='delete_pending'
+				AND EXISTS (
+					SELECT 1 FROM media_outbox dead
+					WHERE dead.owner_id=media_objects.owner_id
+					  AND dead.namespace=media_objects.namespace
+					  AND dead.object_key=media_objects.object_key
+					  AND dead.operation='delete'
+					  AND dead.status='dead'
+				)
+			  )
 			RETURNING owner_id, namespace, object_key
 		)
 		INSERT INTO media_outbox(owner_id,namespace,object_key,operation,status,attempts,available_at,locked_until,last_error)
