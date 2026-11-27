@@ -471,7 +471,13 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if state["status"] != "protected" || state["sha256"] != item.expectedSHA || state["size_bytes"] != float64(item.size) || state["content_type"] != item.contentType {
 		t.Fatalf("identity evidence did not reach protected state with matching metadata: %+v", state)
 	}
-	if replica.bucket != "" { t.Fatal("identity evidence smoke unexpectedly configured an R2 identity bucket") }
+	identityStore, identityReplica := s.storesForNamespace("identity-evidence-private")
+	if identityStore.bucket != identityPrimary.bucket || identityStore.name != "backblaze_b2_identity_evidence" || identityReplica.bucket != "" {
+		t.Fatalf("identity evidence namespace must resolve to B2 only; primary=%q replica=%q", identityStore.name, identityReplica.name)
+	}
+	if state["replica_verified_at"] != nil {
+		t.Fatalf("B2-only identity evidence unexpectedly reports a verified replica: %+v", state)
+	}
 
 	denied := call(http.MethodPost, "/internal/v1/identity-evidence/download-url", identityToken, downloadRequest{
 		RequesterID:"00000000-0000-4000-8000-000000000099", OwnerID:owner, Namespace:item.namespace, Key:key,
