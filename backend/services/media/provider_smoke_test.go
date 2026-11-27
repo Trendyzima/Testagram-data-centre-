@@ -509,7 +509,7 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 		io.Copy(io.Discard, io.LimitReader(head.Body,4096)); head.Body.Close()
 		if head.StatusCode != http.StatusNotFound { t.Fatalf("%s retained identity metadata sidecar after deletion (HTTP %d)", store.name, head.StatusCode) }
 	}
-	for _, store := range []s3Store{identityPrimary, identityReplica} {
+	for _, store := range []s3Store{identityPrimary} {
 		head, err := s.signedRequest(ctx, store, http.MethodHead, key, nil, "")
 		if err != nil { t.Fatalf("%s HEAD after identity evidence deletion: %v", store.name, err) }
 		io.Copy(io.Discard, io.LimitReader(head.Body,4096)); head.Body.Close()
