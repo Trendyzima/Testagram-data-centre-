@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -149,10 +150,18 @@ func (s *server) deleteMetadataSidecars(ctx context.Context, namespace, key stri
 	metadataPrimary, metadataReplica := s.metadataStoresForNamespace(namespace)
 	for _, store := range []s3Store{metadataPrimary, metadataReplica} {
 		if store.bucket == "" { continue }
+		if namespace == "identity-evidence-private" {
+			if err := s.deleteAllB2ObjectVersions(ctx, store, metadataKey); err != nil {
+				return fmt.Errorf("%s permanent identity metadata purge: %w", store.name, err)
+			}
+			continue
+		}
 		resp, err := s.signedRequest(ctx, store, http.MethodDelete, metadataKey, nil, "")
 		if err != nil { return fmt.Errorf("%s metadata delete: %w", store.name, err) }
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound { return fmt.Errorf("%s metadata delete status %d", store.name, resp.StatusCode) }
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+			return fmt.Errorf("%s metadata delete status %d", store.name, resp.StatusCode)
+		}
 	}
 	return nil
 }
@@ -213,36 +222,16 @@ func (s *server) identityReady(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) probeIdentityEvidenceStore(ctx context.Context, store s3Store) error {
-	// A readiness probe must never write synthetic objects into the identity
-	// bucket. HEAD Bucket verifies the configured B2 endpoint, bucket and
-	// credentials without creating non-identity content.
+	// ListObjectVersions is read-only and proves the dedicated key has the
+	// bucket-scoped list capability required for permanent deletion. Unlike
+	// HEAD Bucket, it does not require permission to enumerate bucket names.
 	if err := validateStore(store); err != nil { return err }
-	base, err := url.Parse(strings.TrimRight(store.endpoint, "/"))
-	if err != nil { return err }
-	base.Path = "/" + store.bucket
-	date := time.Now().UTC().Format("20060102T150405Z")
-	day := date[:8]
-	payload := "UNSIGNED-PAYLOAD"
-	canonicalHeaders := "host:" + base.Host + "\nx-amz-content-sha256:" + payload + "\nx-amz-date:" + date + "\n"
-	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
-	canonical := http.MethodHead + "\n" + base.EscapedPath() + "\n\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + payload
-	scope := day + "/" + store.region + "/s3/aws4_request"
-	toSign := "AWS4-HMAC-SHA256\n" + date + "\n" + scope + "\n" + hashHex([]byte(canonical))
-	signature := hex.EncodeToString(hmacSHA(signingKey(store.secret, day, store.region), toSign))
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, base.String(), nil)
-	if err != nil { return err }
-	req.Header.Set("X-Amz-Date", date)
-	req.Header.Set("X-Amz-Content-Sha256", payload)
-	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+store.access+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+signature)
-	resp, err := s.http.Do(req)
-	if err != nil { return fmt.Errorf("%s bucket HEAD: %w", store.name, err) }
-	defer resp.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s bucket HEAD status %d", store.name, resp.StatusCode)
+	if _, err := s.collectB2ObjectVersions(ctx, store, "__testagram_identity_readiness_probe__/"); err != nil {
+		return fmt.Errorf("%s identity evidence version-list readiness: %w", store.name, err)
 	}
 	return nil
 }
+
 func (s *server) namespaceAllowedForRoute(w http.ResponseWriter,r *http.Request,namespace string)bool{
 	identityRoute:=strings.HasPrefix(r.URL.Path,"/internal/v1/identity-evidence/")
 	identityNamespace:=namespace=="identity-evidence-private"
@@ -525,28 +514,154 @@ func (s *server) restorePrimary(ctx context.Context,owner,ns,key string)error{
 	return nil
 }
 
-func (s *server) deleteOrigins(ctx context.Context,owner,ns,key string)error{
-	primary, replica := s.storesForNamespace(ns)
-	for _,store:=range []s3Store{primary,replica}{
-		if store.bucket == "" { continue }
-		resp,err:=s.signedRequest(ctx,store,http.MethodDelete,key,nil,"");if err!=nil{return err};io.Copy(io.Discard,io.LimitReader(resp.Body,4096));resp.Body.Close();if resp.StatusCode!=200&&resp.StatusCode!=204&&resp.StatusCode!=404{return fmt.Errorf("%s delete status %d",store.name,resp.StatusCode)
+func (s *server) deleteOrigins(ctx context.Context, owner, namespace, key string) error {
+	primary, replica := s.storesForNamespace(namespace)
+	if namespace == "identity-evidence-private" {
+		if primary.bucket == "" { return errors.New("dedicated B2 identity evidence bucket is not configured") }
+		if err := s.deleteAllB2ObjectVersions(ctx, primary, key); err != nil {
+			return fmt.Errorf("permanent identity evidence purge: %w", err)
+		}
+	} else {
+		for _, store := range []s3Store{primary, replica} {
+			if store.bucket == "" { continue }
+			resp, err := s.signedRequest(ctx, store, http.MethodDelete, key, nil, "")
+			if err != nil { return err }
+			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
+			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+				return fmt.Errorf("%s delete status %d", store.name, resp.StatusCode)
+			}
 		}
 	}
-	if err:=s.deleteMetadataSidecars(ctx,ns,key);err!=nil{return err}
-	_,err:=s.db.Exec(ctx,`update media_objects set status='deleted',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`,owner,ns,key);return err
+	if err := s.deleteMetadataSidecars(ctx, namespace, key); err != nil { return err }
+	_, err := s.db.Exec(ctx, `update media_objects set status='deleted',updated_at=now() where owner_id=$1 and namespace=$2 and object_key=$3`, owner, namespace, key)
+	return err
 }
-func (s *server) signedRequest(ctx context.Context,store s3Store,method,key string,body io.Reader,contentType string)(*http.Response,error){
-	u,err:=objectURL(store,key);if err!=nil{return nil,err};payload:="UNSIGNED-PAYLOAD";date:=time.Now().UTC().Format("20060102T150405Z");day:=date[:8]
-	req,err:=http.NewRequestWithContext(ctx,method,u.String(),body);if err!=nil{return nil,err};if sized,ok:=body.(interface{Len64() int64});ok{req.ContentLength=sized.Len64()}
-	req.Header.Set("X-Amz-Date",date);req.Header.Set("X-Amz-Content-Sha256",payload);if contentType!=""{req.Header.Set("Content-Type",contentType)}
-	canonicalHeaders:="host:"+u.Host+"\nx-amz-content-sha256:"+payload+"\nx-amz-date:"+date+"\n";signed:="host;x-amz-content-sha256;x-amz-date"
-	if contentType!=""{canonicalHeaders="content-type:"+contentType+"\n"+canonicalHeaders;signed="content-type;"+signed}
-	canonical:=method+"\n"+u.EscapedPath()+"\n\n"+canonicalHeaders+"\n"+signed+"\n"+payload
-	scope:=day+"/"+store.region+"/s3/aws4_request";toSign:="AWS4-HMAC-SHA256\n"+date+"\n"+scope+"\n"+hashHex([]byte(canonical))
-	sig:=hex.EncodeToString(hmacSHA(signingKey(store.secret,day,store.region),toSign))
-	req.Header.Set("Authorization","AWS4-HMAC-SHA256 Credential="+store.access+"/"+scope+", SignedHeaders="+signed+", Signature="+sig)
+
+func (s *server) signedRequest(ctx context.Context, store s3Store, method, key string, body io.Reader, contentType string) (*http.Response, error) {
+	u, err := objectURL(store, key)
+	if err != nil { return nil, err }
+	return s.signedRequestURL(ctx, store, method, u, body, contentType)
+}
+
+func (s *server) signedRequestURL(ctx context.Context, store s3Store, method string, u *url.URL, body io.Reader, contentType string) (*http.Response, error) {
+	payload := "UNSIGNED-PAYLOAD"
+	date := time.Now().UTC().Format("20060102T150405Z")
+	day := date[:8]
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
+	if err != nil { return nil, err }
+	if sized, ok := body.(interface{ Len64() int64 }); ok { req.ContentLength = sized.Len64() }
+	req.Header.Set("X-Amz-Date", date)
+	req.Header.Set("X-Amz-Content-Sha256", payload)
+	if contentType != "" { req.Header.Set("Content-Type", contentType) }
+	canonicalHeaders := "host:" + u.Host + "\nx-amz-content-sha256:" + payload + "\nx-amz-date:" + date + "\n"
+	signedHeaders := "host;x-amz-content-sha256;x-amz-date"
+	if contentType != "" {
+		canonicalHeaders = "content-type:" + contentType + "\n" + canonicalHeaders
+		signedHeaders = "content-type;" + signedHeaders
+	}
+	canonicalQuery := u.Query().Encode()
+	canonical := method + "\n" + u.EscapedPath() + "\n" + canonicalQuery + "\n" + canonicalHeaders + "\n" + signedHeaders + "\n" + payload
+	scope := day + "/" + store.region + "/s3/aws4_request"
+	toSign := "AWS4-HMAC-SHA256\n" + date + "\n" + scope + "\n" + hashHex([]byte(canonical))
+	signature := hex.EncodeToString(hmacSHA(signingKey(store.secret, day, store.region), toSign))
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+store.access+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+signature)
 	return s.http.Do(req)
 }
+
+type b2ObjectVersion struct {
+	Key string `xml:"Key"`
+	VersionID string `xml:"VersionId"`
+	DeleteMarker bool
+}
+
+type b2VersionListPage struct {
+	Versions []b2ObjectVersion `xml:"Version"`
+	DeleteMarkers []b2ObjectVersion `xml:"DeleteMarker"`
+	IsTruncated bool `xml:"IsTruncated"`
+	NextKeyMarker string `xml:"NextKeyMarker"`
+	NextVersionIDMarker string `xml:"NextVersionIdMarker"`
+}
+
+func (s *server) listB2ObjectVersionsPage(ctx context.Context, store s3Store, prefix, keyMarker, versionIDMarker string) (b2VersionListPage, error) {
+	var page b2VersionListPage
+	if err := validateStore(store); err != nil { return page, err }
+	base, err := url.Parse(strings.TrimRight(store.endpoint, "/"))
+	if err != nil { return page, err }
+	base.Path = "/" + store.bucket + "/"
+	query := url.Values{}
+	query.Set("versions", "")
+	query.Set("prefix", prefix)
+	query.Set("max-keys", "1000")
+	if keyMarker != "" { query.Set("key-marker", keyMarker) }
+	if versionIDMarker != "" { query.Set("version-id-marker", versionIDMarker) }
+	base.RawQuery = query.Encode()
+	resp, err := s.signedRequestURL(ctx, store, http.MethodGet, base, nil, "")
+	if err != nil { return page, fmt.Errorf("%s list object versions: %w", store.name, err) }
+	defer resp.Body.Close()
+	const maxXMLBytes = 8 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxXMLBytes+1))
+	if err != nil { return page, fmt.Errorf("%s read object version listing: %w", store.name, err) }
+	if len(body) > maxXMLBytes { return page, fmt.Errorf("%s object version listing exceeded %d bytes", store.name, maxXMLBytes) }
+	if resp.StatusCode != http.StatusOK { return page, fmt.Errorf("%s list object versions status %d: %s", store.name, resp.StatusCode, strings.TrimSpace(string(body))) }
+	if err := xml.Unmarshal(body, &page); err != nil { return page, fmt.Errorf("%s parse object version listing: %w", store.name, err) }
+	for i := range page.DeleteMarkers { page.DeleteMarkers[i].DeleteMarker = true }
+	return page, nil
+}
+
+func (s *server) collectB2ObjectVersions(ctx context.Context, store s3Store, key string) ([]b2ObjectVersion, error) {
+	if key == "" || strings.ContainsAny(key, "\r\n") { return nil, errors.New("invalid object key for permanent B2 deletion") }
+	var versions []b2ObjectVersion
+	seenIDs := make(map[string]struct{})
+	seenMarkers := make(map[string]struct{})
+	keyMarker, versionIDMarker := "", ""
+	for pageNumber := 0; pageNumber < 100; pageNumber++ {
+		page, err := s.listB2ObjectVersionsPage(ctx, store, key, keyMarker, versionIDMarker)
+		if err != nil { return nil, err }
+		entries := append(append([]b2ObjectVersion{}, page.Versions...), page.DeleteMarkers...)
+		for _, entry := range entries {
+			if entry.Key != key { continue }
+			if entry.VersionID == "" { return nil, errors.New("B2 returned an object version without a version ID") }
+			if _, exists := seenIDs[entry.VersionID]; exists { continue }
+			seenIDs[entry.VersionID] = struct{}{}
+			versions = append(versions, entry)
+			if len(versions) > 10000 { return nil, errors.New("identity evidence object exceeds the 10000-version permanent deletion safety limit") }
+		}
+		if !page.IsTruncated { return versions, nil }
+		nextKey, nextVersion := page.NextKeyMarker, page.NextVersionIDMarker
+		marker := nextKey + "\x00" + nextVersion
+		if nextKey == "" && nextVersion == "" { return nil, errors.New("B2 truncated object version listing omitted pagination markers") }
+		if marker == keyMarker+"\x00"+versionIDMarker { return nil, errors.New("B2 object version pagination marker did not advance") }
+		if _, exists := seenMarkers[marker]; exists { return nil, errors.New("B2 object version pagination repeated a marker") }
+		seenMarkers[marker] = struct{}{}
+		keyMarker, versionIDMarker = nextKey, nextVersion
+	}
+	return nil, errors.New("B2 object version listing exceeded the 100-page safety limit")
+}
+
+func (s *server) deleteAllB2ObjectVersions(ctx context.Context, store s3Store, key string) error {
+	versions, err := s.collectB2ObjectVersions(ctx, store, key)
+	if err != nil { return err }
+	for _, version := range versions {
+		u, err := objectURL(store, key)
+		if err != nil { return err }
+		query := url.Values{}
+		query.Set("versionId", version.VersionID)
+		u.RawQuery = query.Encode()
+		resp, err := s.signedRequestURL(ctx, store, http.MethodDelete, u, nil, "")
+		if err != nil { return fmt.Errorf("%s permanently delete version %q: %w", store.name, version.VersionID, err) }
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); resp.Body.Close()
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+			return fmt.Errorf("%s permanently delete version %q status %d", store.name, version.VersionID, resp.StatusCode)
+		}
+	}
+	remaining, err := s.collectB2ObjectVersions(ctx, store, key)
+	if err != nil { return fmt.Errorf("%s verify permanent deletion: %w", store.name, err) }
+	if len(remaining) != 0 {
+		return fmt.Errorf("%s retained %d object versions or delete markers after permanent deletion", store.name, len(remaining))
+	}
+	return nil
+}
+
 func presign(store s3Store,method,key string,ttl time.Duration,contentType string)(string,error){
 	u,err:=objectURL(store,key);if err!=nil{return "",err};now:=time.Now().UTC();date:=now.Format("20060102T150405Z");day:=date[:8];scope:=day+"/"+store.region+"/s3/aws4_request";signed:="host";if contentType!=""{signed="content-type;host"}
 	q:=u.Query();q.Set("X-Amz-Algorithm","AWS4-HMAC-SHA256");q.Set("X-Amz-Credential",store.access+"/"+scope);q.Set("X-Amz-Date",date);q.Set("X-Amz-Expires",strconv.Itoa(int(ttl.Seconds())));q.Set("X-Amz-SignedHeaders",signed);u.RawQuery=q.Encode()
