@@ -1,6 +1,6 @@
 # Data Centre media provider staging acceptance
 
-This manual workflow exercises the Data Centre media service against dedicated non-production Backblaze B2 and Cloudflare R2 buckets plus an ephemeral PostgreSQL lifecycle database. It does not deploy the service or change the VPS.
+This manual workflow exercises the Data Centre media service against dedicated non-production Backblaze B2 and Cloudflare R2 buckets plus an ephemeral PostgreSQL lifecycle database. It does not deploy the service or change the VPS. The workflow and sidecar assertions are introduced by PR #133; merge that PR before dispatching the workflow from the default branch.
 
 ## GitHub Actions environment
 
