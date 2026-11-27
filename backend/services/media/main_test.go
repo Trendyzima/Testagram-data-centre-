@@ -319,6 +319,47 @@ func TestMediaAuthRejectsAmbiguousAuthorizationHeaders(t *testing.T) {
  }
 }
 
+func TestIdentityCredentialIsolationUsesSignedReadOnlyVersionListing(t *testing.T) {
+	requests := make([]string, 0, 2)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, hasVersions := r.URL.Query()["versions"]
+		if r.Method != http.MethodGet || !hasVersions ||
+			r.URL.Query().Get("prefix") != "__testagram_identity_credential_scope_probe__/" ||
+			r.URL.Query().Get("max-keys") != "1" {
+			t.Errorf("credential isolation must use bounded read-only ListObjectVersions, got %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		if r.Header.Get("Authorization") == "" || r.Header.Get("X-Amz-Date") == "" {
+			t.Error("credential isolation request omitted SigV4 authentication")
+		}
+		requests = append(requests, r.URL.Path+" "+r.Header.Get("Authorization"))
+		if (r.URL.Path == "/media-bucket/" && strings.Contains(r.Header.Get("Authorization"), "Credential=identity-access/")) ||
+			(r.URL.Path == "/identity-bucket/" && strings.Contains(r.Header.Get("Authorization"), "Credential=media-access/")) {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte("<ListVersionsResult><IsTruncated>false</IsTruncated></ListVersionsResult>"))
+	}))
+	defer ts.Close()
+	media := s3Store{name: "backblaze_b2", endpoint: ts.URL, region: "us-west-004", bucket: "media-bucket", access: "media-access", secret: strings.Repeat("m", 40)}
+	identity := s3Store{name: "backblaze_b2_identity_evidence", endpoint: ts.URL, region: "us-west-004", bucket: "identity-bucket", access: "identity-access", secret: strings.Repeat("i", 40)}
+	svc := &server{cfg: config{primary: media, identityPrimary: identity}, http: ts.Client()}
+	if err := svc.verifyIdentityCredentialIsolation(context.Background()); err != nil {
+		t.Fatalf("bucket-scoped credentials were rejected: %v", err)
+	}
+	if len(requests) != 2 || !strings.Contains(requests[0], "/media-bucket/") || !strings.Contains(requests[0], "Credential=identity-access/") ||
+		!strings.Contains(requests[1], "/identity-bucket/") || !strings.Contains(requests[1], "Credential=media-access/") {
+		t.Fatalf("unexpected cross-bucket credential probes: %v", requests)
+	}
+	identity.access = media.access
+	svc.cfg.identityPrimary = identity
+	if err := svc.verifyIdentityCredentialIsolation(context.Background()); err == nil {
+		t.Fatal("shared B2 access key accepted for identity evidence")
+	}
+}
+
 func TestIdentityEvidenceReadinessUsesReadOnlyVersionListing(t *testing.T) {
 	methods := make([]string, 0, 2)
 	paths := make([]string, 0, 2)

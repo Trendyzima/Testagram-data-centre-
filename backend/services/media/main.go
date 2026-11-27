@@ -217,6 +217,11 @@ func (s *server) identityReady(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "identity evidence database is unavailable")
 		return
 	}
+	if err := s.verifyIdentityCredentialIsolation(ctx); err != nil {
+		log.Printf("identity evidence credential isolation readiness failed: %v", err)
+		writeErr(w, http.StatusServiceUnavailable, "identity evidence storage is unavailable")
+		return
+	}
 	for _, store := range []s3Store{s.cfg.identityPrimary} {
 		if err := s.probeIdentityEvidenceStore(ctx, store); err != nil {
 			log.Printf("identity evidence storage readiness failed for %s: %v", store.name, err)
@@ -225,6 +230,57 @@ func (s *server) identityReady(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "namespace": "identity-evidence-private", "provider": "backblaze_b2", "primary": "verified"})
+}
+
+// verifyIdentityCredentialIsolation proves both Backblaze application keys are
+// bucket-scoped. It uses the service's existing SigV4 signer and a read-only
+// ListObjectVersions request, preserving the permission required by permanent purge.
+func (s *server) verifyIdentityCredentialIsolation(ctx context.Context) error {
+	if err := validateIdentityStoreIsolation(s.cfg.primary, s.cfg.identityPrimary); err != nil {
+		return err
+	}
+	checks := []struct {
+		store s3Store
+		label string
+	}{
+		{store: s3Store{name: s.cfg.identityPrimary.name, endpoint: s.cfg.identityPrimary.endpoint, region: s.cfg.identityPrimary.region, bucket: s.cfg.primary.bucket, access: s.cfg.identityPrimary.access, secret: s.cfg.identityPrimary.secret}, label: "identity-only key against ordinary-media bucket"},
+		{store: s3Store{name: s.cfg.primary.name, endpoint: s.cfg.primary.endpoint, region: s.cfg.primary.region, bucket: s.cfg.identityPrimary.bucket, access: s.cfg.primary.access, secret: s.cfg.primary.secret}, label: "ordinary-media key against identity-evidence bucket"},
+	}
+	for _, check := range checks {
+		status, err := s.bucketVersionListStatus(ctx, check.store)
+		if err != nil {
+			return fmt.Errorf("%s: %w", check.label, err)
+		}
+		if status != http.StatusForbidden {
+			return fmt.Errorf("%s must be denied with HTTP 403 (got %d)", check.label, status)
+		}
+	}
+	return nil
+}
+
+func (s *server) bucketVersionListStatus(ctx context.Context, store s3Store) (int, error) {
+	if err := validateStore(store); err != nil {
+		return 0, err
+	}
+	base, err := url.Parse(strings.TrimRight(store.endpoint, "/"))
+	if err != nil {
+		return 0, err
+	}
+	base.Path = "/" + store.bucket + "/"
+	query := url.Values{}
+	query.Set("versions", "")
+	query.Set("prefix", "__testagram_identity_credential_scope_probe__/")
+	query.Set("max-keys", "1")
+	base.RawQuery = query.Encode()
+	resp, err := s.signedRequestURL(ctx, store, http.MethodGet, base, nil, "")
+	if err != nil {
+		return 0, fmt.Errorf("%s bucket-scoped version-list request: %w", store.name, err)
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); err != nil {
+		return 0, fmt.Errorf("%s bucket-scoped version-list response: %w", store.name, err)
+	}
+	return resp.StatusCode, nil
 }
 
 func (s *server) probeIdentityEvidenceStore(ctx context.Context, store s3Store) error {
