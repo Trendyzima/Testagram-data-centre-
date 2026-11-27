@@ -395,8 +395,9 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 		defer cleanupCancel()
 		for _, store := range []s3Store{identityPrimary} {
 			for _, objectKey := range []string{key, key + ".metadata.json"} {
-				resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, objectKey, nil, "")
-				if cleanupErr == nil { io.Copy(io.Discard, io.LimitReader(resp.Body,4096)); resp.Body.Close() }
+				if cleanupErr := s.deleteAllB2ObjectVersions(cleanupCtx, store, objectKey); cleanupErr != nil {
+					t.Errorf("%s cleanup could not permanently purge all B2 versions: %v", objectKey, cleanupErr)
+				}
 			}
 		}
 		_, _ = db.Exec(cleanupCtx, "delete from media_operations where owner_id=$1 and namespace=$2 and object_key=$3", owner, item.namespace, key)
@@ -453,13 +454,17 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	uploadURL, ok := upload["upload_url"].(string)
 	if !ok || !strings.HasPrefix(uploadURL, "https://") { t.Fatal("Data Centre returned a non-HTTPS identity evidence upload grant") }
 
-	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(payload))
-	if err != nil { t.Fatal(err) }
-	putReq.Header.Set("Content-Type", item.contentType)
-	putResp, err := apiClient.Do(putReq)
-	if err != nil { t.Fatalf("upload identity evidence to B2: %v", err) }
-	io.Copy(io.Discard, io.LimitReader(putResp.Body,4096)); putResp.Body.Close()
-	if putResp.StatusCode < 200 || putResp.StatusCode >= 300 { t.Fatalf("B2 identity evidence PUT returned HTTP %d", putResp.StatusCode) }
+	// Reuse the same short-lived upload grant twice to create two B2 object
+	// versions. The retention test must erase every version, not only the head.
+	for version := 0; version < 2; version++ {
+		putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(payload))
+		if err != nil { t.Fatal(err) }
+		putReq.Header.Set("Content-Type", item.contentType)
+		putResp, err := apiClient.Do(putReq)
+		if err != nil { t.Fatalf("upload identity evidence version %d to B2: %v", version+1, err) }
+		io.Copy(io.Discard, io.LimitReader(putResp.Body,4096)); putResp.Body.Close()
+		if putResp.StatusCode < 200 || putResp.StatusCode >= 300 { t.Fatalf("B2 identity evidence version %d PUT returned HTTP %d", version+1, putResp.StatusCode) }
+	}
 
 	verifyResp := call(http.MethodPost, "/internal/v1/identity-evidence/verify", identityToken, verifyRequest{
 		uploadRequest:uploadRequest{OwnerID:owner, Namespace:item.namespace, Key:key, ContentType:item.contentType, SizeBytes:item.size},
@@ -506,6 +511,22 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	if err := s.replicate(ctx, owner, item.namespace, key); err == nil { t.Fatal("identity evidence replication unexpectedly succeeded") }
 	if err := s.restorePrimary(ctx, owner, item.namespace, key); err == nil { t.Fatal("identity evidence cross-provider restore unexpectedly succeeded") }
 
+	versionsBeforeDelete, err := s.collectB2ObjectVersions(ctx, identityPrimary, key)
+	if err != nil { t.Fatalf("list identity evidence versions before deletion: %v", err) }
+	if len(versionsBeforeDelete) < 2 { t.Fatalf("B2 identity evidence has %d versions before deletion, want at least two", len(versionsBeforeDelete)) }
+	// Create a B2 delete marker deliberately. A normal S3 DELETE hides the
+	// current version but leaves older versions intact; the retention executor
+	// must permanently remove both the marker and every data version.
+	markerResp, err := s.signedRequest(ctx, identityPrimary, http.MethodDelete, key, nil, "")
+	if err != nil { t.Fatalf("create B2 delete marker for purge acceptance: %v", err) }
+	io.Copy(io.Discard, io.LimitReader(markerResp.Body,4096)); markerResp.Body.Close()
+	if markerResp.StatusCode != http.StatusNoContent && markerResp.StatusCode != http.StatusOK { t.Fatalf("B2 delete-marker setup returned HTTP %d", markerResp.StatusCode) }
+	versionsWithMarker, err := s.collectB2ObjectVersions(ctx, identityPrimary, key)
+	if err != nil { t.Fatalf("list identity evidence versions and delete marker: %v", err) }
+	markerCount := 0
+	for _, version := range versionsWithMarker { if version.DeleteMarker { markerCount++ } }
+	if len(versionsWithMarker) < 3 || markerCount < 1 { t.Fatalf("B2 purge fixture has %d versions and %d delete markers; want >=3 versions and >=1 marker", len(versionsWithMarker), markerCount) }
+
 	deleteResp := call(http.MethodPost, "/internal/v1/identity-evidence/delete", identityToken, deleteRequest{
 		RequesterID:owner, OwnerID:owner, Namespace:item.namespace, Key:key,
 	})
@@ -519,6 +540,11 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 		t.Fatalf("read identity evidence deletion audit: %v", err)
 	}
 	if deletionAuditCount != 1 { t.Fatalf("identity evidence physical deletion audit events=%d, want exactly one durable success event", deletionAuditCount) }
+	for _, objectKey := range []string{key, key + ".metadata.json"} {
+		remaining, err := s.collectB2ObjectVersions(ctx, identityPrimary, objectKey)
+		if err != nil { t.Fatalf("list B2 versions after permanent deletion of %s: %v", objectKey, err) }
+		if len(remaining) != 0 { t.Fatalf("B2 retained %d versions or delete markers for %s after physical deletion", len(remaining), objectKey) }
+	}
 	for _, store := range []s3Store{identityPrimary} {
 		head, err := s.signedRequest(ctx, store, http.MethodHead, key+".metadata.json", nil, "")
 		if err != nil { t.Fatalf("%s identity metadata HEAD after deletion: %v", store.name, err) }
