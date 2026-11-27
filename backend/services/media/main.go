@@ -79,6 +79,7 @@ func main() {
 	s:=&server{cfg:cfg,db:db,http:&http.Client{Timeout:30*time.Minute,CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}}}
 	mux:=http.NewServeMux()
 	mux.HandleFunc("/healthz",s.health); mux.HandleFunc("/readyz",s.ready)
+	mux.HandleFunc("/internal/v1/media/readyz",s.mediaReady)
 	mux.HandleFunc("/internal/v1/media/upload-url",s.uploadURL)
 	mux.HandleFunc("/internal/v1/media/verify",s.verify)
 	mux.HandleFunc("/internal/v1/media/status",s.status)
@@ -154,6 +155,18 @@ func (s *server) metadataStoresForNamespace(namespace string) (s3Store, s3Store)
 }
 func (s *server) health(w http.ResponseWriter,r *http.Request){w.WriteHeader(200);_,_=w.Write([]byte("ok\n"))}
 func (s *server) ready(w http.ResponseWriter,r *http.Request){ctx,c:=context.WithTimeout(r.Context(),2*time.Second);defer c();if err:=s.db.Ping(ctx);err!=nil{http.Error(w,"database unavailable",503);return};w.WriteHeader(200);_,_=w.Write([]byte("ready\n"))}
+func (s *server) mediaReady(w http.ResponseWriter, r *http.Request) {
+	if !s.auth(w, r) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if s.db == nil || s.db.Ping(ctx) != nil {
+		writeErr(w, http.StatusServiceUnavailable, "media database is unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "namespace": "media"})
+}
 func (s *server) auth(w http.ResponseWriter,r *http.Request)bool{
 	authorizationValues:=r.Header.Values("Authorization")
 	if len(authorizationValues)!=1 { writeErr(w,401,"unauthorized");return false }
