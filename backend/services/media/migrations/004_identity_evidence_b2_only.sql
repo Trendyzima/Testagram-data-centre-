@@ -5,6 +5,7 @@ BEGIN;
 
 UPDATE media_objects
 SET replica_verified_at = NULL,
+    primary_verified_at = CASE WHEN status IN ('replication_pending', 'restore_pending') THEN NULL ELSE primary_verified_at END,
     reconciliation_claimed_at = NULL,
     status = CASE
       WHEN status = 'replication_pending' THEN 'uploaded'
@@ -25,7 +26,7 @@ SET status = 'dead',
     last_error = 'identity evidence is B2-only; legacy replica restore requires an audited operator recovery',
     updated_at = now()
 WHERE namespace = 'identity-evidence-private'
-  AND operation = 'restore_primary'
+  AND operation IN ('replicate', 'restore_primary')
   AND status IN ('pending', 'processing', 'retry');
 
 COMMIT;
