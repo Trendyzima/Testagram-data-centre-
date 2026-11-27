@@ -452,7 +452,7 @@ jobs:
           test "$identity_on_ordinary" = 401
           identity_created="$(curl -sS -o /tmp/identity-upload-grant.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/identity-evidence/upload-url -H "Authorization: Bearer $identity_token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"identity-evidence-private","key":"identity/owner-1/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001.jpg-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","content_type":"image/jpeg","size_bytes":123}')"
           test "$identity_created" = 201
-          python -c 'import json; d=json.load(open("/tmp/identity-upload-grant.json")); assert d["primary"]=="backblaze_b2_identity_evidence" and d["upload_url"].startswith("https://")'
+          python -c 'import json,urllib.parse; d=json.load(open("/tmp/identity-upload-grant.json")); path=urllib.parse.urlparse(d["upload_url"]).path; assert d["primary"]=="backblaze_b2" and "/ci-identity-evidence-b2/" in path'
           created="$(curl -sS -o /tmp/media-upload-grant.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123}')"
           test "$created" = 201
           python -c 'import json; d=json.load(open("/tmp/media-upload-grant.json")); assert d["primary"]=="backblaze_b2" and d["max_bytes"]==123 and d["upload_url"].startswith("https://")'
