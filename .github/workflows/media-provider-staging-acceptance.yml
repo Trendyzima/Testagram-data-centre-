@@ -124,7 +124,7 @@ jobs:
           done
           psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/services/media/migrations/test_identity_evidence_b2_only.sql
       - name: Exercise real provider round-trip, B2/R2 restore, repair and deletion
-        run: go test -count=1 -run '^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete|TestLiveIdentityEvidenceLifecycle|TestLiveIdentityEvidenceProviderCredentialIsolation)
+        run: go test -count=1 -run '^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete|TestLiveIdentityEvidenceLifecycle|TestLiveIdentityEvidenceProviderCredentialIsolation)$' -v ./backend/services/media
       - name: Stop isolated MinIO metadata store
         if: always()
         run: docker rm -f testagram-minio-media-metadata-smoke >/dev/null 2>&1 || true
