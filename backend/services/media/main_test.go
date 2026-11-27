@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -361,4 +362,54 @@ func TestIdentityEvidenceB2StoreRequiresSeparateBucketAndApplicationKey(t *testi
 			if err:=validateIdentityStoreIsolation(media,candidate);err==nil{t.Fatalf("%s was accepted",tc.name)}
 		})
 	}
+}
+
+
+func TestDeleteAllB2ObjectVersionsPermanentlyRemovesVersionsAndDeleteMarkers(t *testing.T) {
+	const key = "identity/owner/evidence.jpg"
+	remaining := map[string]bool{"v3":true,"d2":true,"v1":true,"neighbor":true}
+	deleted := make([]string,0,3)
+	plainDeletes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
+		if r.Header.Get("Authorization") == "" { t.Error("B2 request omitted SigV4 authorization") }
+		if r.Method == http.MethodGet {
+			if r.URL.Path != "/identity-bucket/" { t.Errorf("version list path=%q",r.URL.Path) }
+			if _,ok:=r.URL.Query()["versions"];!ok { t.Error("version list omitted versions subresource") }
+			if got:=r.URL.Query().Get("prefix");got!=key { t.Errorf("version list prefix=%q, want exact evidence key",got) }
+			if got:=r.URL.Query().Get("max-keys");got!="1000" { t.Errorf("version list max-keys=%q",got) }
+			w.Header().Set("Content-Type","application/xml")
+			if r.URL.Query().Get("key-marker")=="" {
+				if remaining["v3"]||remaining["d2"]||remaining["v1"] {
+					_,_=fmt.Fprintf(w,`<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Version><Key>%s</Key><VersionId>v3</VersionId></Version><DeleteMarker><Key>%s</Key><VersionId>d2</VersionId></DeleteMarker><Version><Key>%s-neighbor</Key><VersionId>neighbor</VersionId></Version><IsTruncated>true</IsTruncated><NextKeyMarker>%s</NextKeyMarker><NextVersionIdMarker>d2</NextVersionIdMarker></ListVersionsResult>`,key,key,key,key)
+				} else {
+					_,_=fmt.Fprintf(w,`<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Version><Key>%s-neighbor</Key><VersionId>neighbor</VersionId></Version><IsTruncated>false</IsTruncated></ListVersionsResult>`,key)
+				}
+				return
+			}
+			if r.URL.Query().Get("key-marker")!=key || r.URL.Query().Get("version-id-marker")!="d2" { t.Errorf("unexpected pagination markers: %v",r.URL.Query()) }
+			if remaining["v1"] {
+				_,_=fmt.Fprintf(w,`<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Version><Key>%s</Key><VersionId>v1</VersionId></Version><Version><Key>%s-neighbor</Key><VersionId>neighbor</VersionId></Version><IsTruncated>false</IsTruncated></ListVersionsResult>`,key,key)
+			} else {
+				_,_=fmt.Fprintf(w,`<ListVersionsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Version><Key>%s-neighbor</Key><VersionId>neighbor</VersionId></Version><IsTruncated>false</IsTruncated></ListVersionsResult>`,key)
+			}
+			return
+		}
+		if r.Method==http.MethodDelete {
+			if r.URL.Path!="/identity-bucket/"+key { t.Errorf("version delete path=%q",r.URL.Path) }
+			versionID:=r.URL.Query().Get("versionId")
+			if versionID=="" { plainDeletes++;http.Error(w,"versionId is required for permanent deletion",http.StatusBadRequest);return }
+			if !remaining[versionID] { http.Error(w,"version not found",http.StatusNotFound);return }
+			delete(remaining,versionID);deleted=append(deleted,versionID);w.WriteHeader(http.StatusNoContent);return
+		}
+		http.Error(w,"unexpected method",http.StatusMethodNotAllowed)
+	}))
+	defer server.Close()
+	store:=s3Store{name:"backblaze_b2_identity_evidence",endpoint:server.URL,region:"us-east-005",bucket:"identity-bucket",access:"identity-key",secret:"identity-secret"}
+	s:=&server{http:server.Client()}
+	if err:=s.deleteAllB2ObjectVersions(context.Background(),store,key);err!=nil { t.Fatalf("permanent B2 version deletion: %v",err) }
+	if len(deleted)!=3 { t.Fatalf("deleted version IDs=%v, want all three data/delete-marker versions",deleted) }
+	if remaining["v3"]||remaining["d2"]||remaining["v1"] { t.Fatalf("identity evidence versions remain: %+v",remaining) }
+	if !remaining["neighbor"] { t.Fatal("version deletion crossed the exact object-key boundary") }
+	if plainDeletes!=0 { t.Fatalf("permanent deletion issued %d unversioned DELETE requests",plainDeletes) }
+	if deleted[0]!="v3"||deleted[1]!="d2"||deleted[2]!="v1" { t.Fatalf("unexpected version deletion order: %v",deleted) }
 }
