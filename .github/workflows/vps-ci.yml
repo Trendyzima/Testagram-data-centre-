@@ -424,7 +424,7 @@ jobs:
             -e VPS_MINIO_METADATA_ACCESS_KEY_ID=ci-minio-metadata-access \
             -e VPS_MINIO_METADATA_SECRET_ACCESS_KEY=ci-minio-metadata-secret \
             -e CLOUDFLARE_R2_METADATA_BUCKET=ci-media-metadata-replica \
-            testagram-media-ci
+            testagram-media-ci:ci
           ready=0
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:8096/readyz >/dev/null; then ready=1; break; fi
