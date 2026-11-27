@@ -124,7 +124,25 @@ jobs:
           done
           psql "$MEDIA_DATABASE_URL" -v ON_ERROR_STOP=1 -f backend/services/media/migrations/test_identity_evidence_b2_only.sql
       - name: Exercise real provider round-trip, B2/R2 restore, repair and deletion
-        run: go test -count=1 -run '^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete|TestLiveIdentityEvidenceLifecycle)$' -v ./backend/services/media
+        run: go test -count=1 -run '^(TestLiveProviderRoundTrip|TestLiveMediaReplicationRestoreDelete|TestLiveIdentityEvidenceLifecycle|TestLiveIdentityEvidenceProviderCredentialIsolation)
+      - name: Stop isolated MinIO metadata store
+        if: always()
+        run: docker rm -f testagram-minio-media-metadata-smoke >/dev/null 2>&1 || true
+      - name: Record staging acceptance scope
+        if: success()
+        run: |
+          {
+            echo "### Data Centre media provider staging acceptance"
+            echo "- Source revision: $GITHUB_SHA"
+            echo "- B2 and R2 upload, HEAD, read-back and SHA-256 verification exercised."
+            echo "- Durable B2-to-R2 replication and R2-to-B2 primary restoration exercised."
+            echo "- Identity evidence was stored, verified, downloaded and deleted exclusively in the dedicated Backblaze B2 identity bucket."
+            echo "- Separate identity-evidence credentials, namespace authorization and cross-application denial exercised."
+            echo "- Temporary objects and database rows are cleaned by the test harness."
+            echo "- No production buckets, credentials, DNS, deployments or VPS services were used."
+            echo "- This is provider/service lifecycle evidence, not proof of same-deployment Backend-to-CDN-to-Flutter acceptance."
+          } >> "$GITHUB_STEP_SUMMARY"
+ -v ./backend/services/media
       - name: Stop isolated MinIO metadata store
         if: always()
         run: docker rm -f testagram-minio-media-metadata-smoke >/dev/null 2>&1 || true
