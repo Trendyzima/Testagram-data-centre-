@@ -14,6 +14,7 @@ Environment variables:
 - `MEDIA_STAGING_R2_ENDPOINT`
 - `MEDIA_STAGING_R2_REGION`
 - `MEDIA_STAGING_R2_PRIVATE_BUCKET`
+- `MEDIA_STAGING_R2_PUBLIC_BUCKET`
 - `MEDIA_STAGING_R2_IDENTITY_BUCKET`
 - `MEDIA_STAGING_R2_METADATA_BUCKET`
 
@@ -25,7 +26,7 @@ Environment secrets:
 - `MEDIA_STAGING_INTERNAL_TOKEN`
 - `MEDIA_STAGING_IDENTITY_EVIDENCE_INTERNAL_TOKEN`
 
-The media and identity-evidence service tokens must be different and at least 32 characters. Each endpoint must use HTTPS. Each bucket name must explicitly contain `ci`, `staging` or `smoke`, must not contain `prod` or `production`, and the identity-evidence bucket must be distinct from the ordinary media bucket for that provider.
+The media and identity-evidence service tokens must be different and at least 32 characters. Each endpoint must use HTTPS. Each bucket name must explicitly contain `ci`, `staging` or `smoke`, must not contain `prod` or `production`, and the identity-evidence bucket must be distinct from the ordinary media bucket for that provider, and the R2 metadata bucket must be distinct from R2 private, public and identity-evidence buckets.
 
 ## Run
 
