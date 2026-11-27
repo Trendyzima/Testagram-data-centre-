@@ -56,7 +56,7 @@ func TestLiveProviderRoundTrip(t *testing.T) {
 			}
 			key := "ci-smoke/" + id
 			defer func() {
-				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 7*time.Minute)
 				defer cleanupCancel()
 				resp, cleanupErr := s.signedRequest(cleanupCtx, store, http.MethodDelete, key, nil, "")
 				if cleanupErr != nil {
@@ -184,7 +184,7 @@ func TestLiveMediaReplicationRestoreDelete(t *testing.T) {
 	if metadataReplica.bucket == replica.bucket {
 		t.Fatal("R2 metadata sidecar bucket must be distinct from the media bucket")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	db, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
@@ -393,6 +393,13 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 	defer func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cleanupCancel()
+		var cleanupAfter *time.Time
+		if cleanupErr := db.QueryRow(cleanupCtx, `select max(expires_at + interval '60 seconds') from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3`, owner, item.namespace, key).Scan(&cleanupAfter); cleanupErr != nil {
+			t.Errorf("read upload grant expiry before cleanup: %v", cleanupErr)
+		}
+		if cleanupAfter != nil {
+			if wait := time.Until(*cleanupAfter); wait > 0 { time.Sleep(wait + time.Second) }
+		}
 		for _, store := range []s3Store{identityPrimary} {
 			for _, objectKey := range []string{key, key + ".metadata.json"} {
 				if cleanupErr := s.deleteAllB2ObjectVersions(cleanupCtx, store, objectKey); cleanupErr != nil {
@@ -531,7 +538,21 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 		RequesterID:owner, OwnerID:owner, Namespace:item.namespace, Key:key,
 	})
 	decode(deleteResp, nil, http.StatusAccepted)
-	if err := s.processOne(ctx); err != nil { t.Fatalf("durable identity evidence deletion: %v", err) }
+	firstDeleteErr := s.processOne(ctx)
+	if firstDeleteErr == nil || !strings.Contains(firstDeleteErr.Error(), "presigned upload URL remains valid") {
+		t.Fatalf("deletion did not wait for the outstanding B2 upload URL to expire: %v", firstDeleteErr)
+	}
+	var pendingMediaStatus, pendingOutboxStatus string
+	if err := db.QueryRow(ctx, `select status from media_objects where owner_id=$1 and namespace=$2 and object_key=$3`, owner, item.namespace, key).Scan(&pendingMediaStatus); err != nil { t.Fatal(err) }
+	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete'`, owner, item.namespace, key).Scan(&pendingOutboxStatus); err != nil { t.Fatal(err) }
+	if pendingMediaStatus != "delete_pending" || pendingOutboxStatus != "retry" { t.Fatalf("active upload grant did not leave deletion safely pending: media=%q outbox=%q", pendingMediaStatus, pendingOutboxStatus) }
+	versionsWhileGrantValid, err := s.collectB2ObjectVersions(ctx, identityPrimary, key)
+	if err != nil { t.Fatalf("list B2 versions while upload grant remains valid: %v", err) }
+	if len(versionsWhileGrantValid) < 3 { t.Fatalf("B2 versions were purged while a signed upload URL was still valid: %d remain", len(versionsWhileGrantValid)) }
+	var retryAt time.Time
+	if err := db.QueryRow(ctx, `select available_at from media_outbox where owner_id=$1 and namespace=$2 and object_key=$3 and operation='delete'`, owner, item.namespace, key).Scan(&retryAt); err != nil { t.Fatal(err) }
+	if wait := time.Until(retryAt); wait > 0 { time.Sleep(wait + time.Second) }
+	if err := s.processOne(ctx); err != nil { t.Fatalf("permanent identity evidence deletion after upload URL expiry: %v", err) }
 	statusResp = call(http.MethodGet, statusRoute, identityToken, nil)
 	decode(statusResp, &state, http.StatusOK)
 	if state["status"] != "deleted" { t.Fatalf("identity evidence deletion state=%v, want deleted", state["status"]) }
@@ -545,6 +566,9 @@ func TestLiveIdentityEvidenceLifecycle(t *testing.T) {
 		if err != nil { t.Fatalf("list B2 versions after permanent deletion of %s: %v", objectKey, err) }
 		if len(remaining) != 0 { t.Fatalf("B2 retained %d versions or delete markers for %s after physical deletion", len(remaining), objectKey) }
 	}
+	var remainingGrants int
+	if err := db.QueryRow(ctx, `select count(*) from media_upload_grants where owner_id=$1 and namespace=$2 and object_key=$3`, owner, item.namespace, key).Scan(&remainingGrants); err != nil { t.Fatalf("read upload grants after deletion: %v", err) }
+	if remainingGrants != 0 { t.Fatalf("permanently deleted identity evidence retained %d upload grants", remainingGrants) }
 	for _, store := range []s3Store{identityPrimary} {
 		head, err := s.signedRequest(ctx, store, http.MethodHead, key+".metadata.json", nil, "")
 		if err != nil { t.Fatalf("%s identity metadata HEAD after deletion: %v", store.name, err) }
