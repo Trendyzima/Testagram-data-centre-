@@ -270,8 +270,9 @@ func (s *server) uploadURL(w http.ResponseWriter, r *http.Request) {
 		values($1,$2,$3,$4,$5,'upload_pending',now())
 		on conflict(owner_id,namespace,object_key) do update
 		set content_type=excluded.content_type,size_bytes=excluded.size_bytes,status='upload_pending',
-			sha256=null,primary_verified_at=null,replica_verified_at=null,updated_at=now()
-		where media_objects.status='deleted'
+			sha256=null,primary_verified_at=null,replica_verified_at=null,identity_evidence_purged_at=null,updated_at=now()
+		where (media_objects.status='deleted'
+		       and ($2 <> 'identity-evidence-private' or media_objects.identity_evidence_purged_at is not null))
 		   or (media_objects.status='upload_pending' and not exists (
 				select 1 from media_upload_grants g
 				where g.owner_id=excluded.owner_id and g.namespace=excluded.namespace and g.object_key=excluded.object_key
@@ -422,8 +423,16 @@ func (s *server) enqueueLegacyIdentityEvidencePurges(ctx context.Context) error 
 			UPDATE media_objects
 			SET status='delete_pending', updated_at=now()
 			WHERE namespace='identity-evidence-private'
-			  AND status='deleted'
+			  AND status IN ('deleted','delete_pending')
 			  AND identity_evidence_purged_at IS NULL
+			  AND NOT EXISTS (
+				SELECT 1 FROM media_outbox active
+				WHERE active.owner_id=media_objects.owner_id
+				  AND active.namespace=media_objects.namespace
+				  AND active.object_key=media_objects.object_key
+				  AND active.operation='delete'
+				  AND active.status IN ('pending','processing','retry')
+			  )
 			RETURNING owner_id, namespace, object_key
 		)
 		INSERT INTO media_outbox(owner_id,namespace,object_key,operation,status,attempts,available_at,locked_until,last_error)
