@@ -189,8 +189,7 @@ jobs:
               psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/005_identity_evidence_permanent_purge.sql;
               psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/006_identity_evidence_legacy_reverify.sql;
               psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/test_identity_evidence_b2_only.sql;
-              psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/test_identity_evidence_legacy_reverify.sql;
-'
+              psql -h 127.0.0.1 -U postgres -d testagram_identity_reverify_ci -v ON_ERROR_STOP=1 -f /workspace/backend/services/media/migrations/test_identity_evidence_legacy_reverify.sql'
       - name: Exercise isolated media database bootstrap and least-privilege role
         shell: bash
         run: |
