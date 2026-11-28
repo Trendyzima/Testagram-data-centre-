@@ -3,11 +3,15 @@ info:
   title: Testagram Data Centre Identity Evidence API
   version: "1.0.0"
   description: |
-    Private Backend-to-Data-Centre API for identity evidence only. The Backend
+    Optional private Backend-to-Data-Centre API for identity evidence only.
+    It is not a prerequisite for ordinary Testagram account registration,
+    email verification, password login, session refresh or logout. The Backend
     owns identity review, application ownership and authorization. This service
     stores and verifies evidence bytes using a dedicated credential, namespace,
-    and one dedicated private Backblaze B2 bucket. Identity evidence is never
-    replicated to Cloudflare R2 or InstaBox. It is not a public client API.
+    and one dedicated private Backblaze B2 bucket. When the optional capability
+    is disabled, its routes are not registered and its credentials/bucket are
+    not required. Identity evidence is never replicated to Cloudflare R2 or
+    InstaBox. It is not a public client API.
 description: |
   Every operation requires the dedicated identity-evidence service bearer and
   X-Testagram-API-Version: 1. The identity-evidence bearer must never be reused
