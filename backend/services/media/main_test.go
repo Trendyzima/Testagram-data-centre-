@@ -205,6 +205,23 @@ func TestIdentityEvidenceNamespaceRequiresDedicatedRoute(t *testing.T) {
 	}
 }
 
+func TestIdentityEvidenceRoutesAreInaccessibleWhenFeatureDisabled(t *testing.T) {
+	s := &server{cfg: config{identityEnabled: false}}
+	r := httptest.NewRequest(http.MethodPost, "/internal/v1/identity-evidence/upload-url", nil)
+	w := httptest.NewRecorder()
+	if s.namespaceAllowedForRoute(w, r, "identity-evidence-private") {
+		t.Fatal("disabled identity-evidence route was allowed")
+	}
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("disabled identity-evidence route status=%d, want 404", w.Code)
+	}
+	primary, replica := s.storesForNamespace("identity-evidence-private")
+	if primary.bucket != "" || primary.access != "" || primary.secret != "" ||
+		replica.bucket != "" || replica.access != "" || replica.secret != "" {
+		t.Fatalf("disabled identity feature retained storage credentials: primary=%+v replica=%+v", primary, replica)
+	}
+}
+
 func TestIdentityEvidenceReadinessRequiresDedicatedCredential(t *testing.T) {
 	s := &server{cfg: config{token: strings.Repeat("m", 40), identityToken: strings.Repeat("i", 40)}}
 	request := func(token string) *httptest.ResponseRecorder {
