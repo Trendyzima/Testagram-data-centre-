@@ -48,10 +48,9 @@ services:
       CDN_ORIGIN_AUTH_TOKEN: ${CDN_ORIGIN_AUTH_TOKEN:-}
       CDN_PURGE_URL: ${CDN_PURGE_URL:-}
       CDN_PURGE_TOKEN: ${CDN_PURGE_TOKEN:-}
-      # Native-auth transactional email; optional until mail is provisioned.
-      CLOUDFLARE_EMAIL_ACCOUNT_ID: ${CLOUDFLARE_EMAIL_ACCOUNT_ID:-}
-      CLOUDFLARE_EMAIL_API_TOKEN: ${CLOUDFLARE_EMAIL_API_TOKEN:-}
-      AUTH_FROM_EMAIL: ${AUTH_FROM_EMAIL:-}
+      # Backend-owned native mail outbox decryption only. Transport, DKIM,
+      # delivery gating and bounce processing are configured by the canonical
+      # Backend InstaBox deployment, never by the Data Centre overlay.
       TESTAGRAM_MAIL_ENCRYPTION_KEY: ${TESTAGRAM_MAIL_ENCRYPTION_KEY:-}
       # Keep API-side direct object storage and replication disabled. The Data
       # Centre media service owns B2/R2 credentials and object lifecycle.
