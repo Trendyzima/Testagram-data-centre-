@@ -79,17 +79,19 @@ func main() {
 	if cfg.downloadTTL < time.Minute || cfg.downloadTTL > 15*time.Minute { log.Fatal("MEDIA_DOWNLOAD_TTL must be between 1 minute and 15 minutes") }
 	if err:=validateStore(cfg.primary);err!=nil{log.Fatalf("invalid B2 primary configuration: %v",err)}
 	if err:=validateStore(cfg.replica);err!=nil{log.Fatalf("invalid R2 replica configuration: %v",err)}
-	identityFields := []string{cfg.identityToken, cfg.identityPrimary.bucket, cfg.identityPrimary.access, cfg.identityPrimary.secret}
-	identityConfigured := false
-	identityMissing := false
-	for _, value := range identityFields { if value != "" { identityConfigured = true } else { identityMissing = true } }
-	if identityConfigured && identityMissing { log.Fatal("identity-evidence feature configuration is incomplete; disable it by omitting all identity-evidence settings") }
-	cfg.identityEnabled = identityConfigured
+	cfg.identityEnabled = cfg.identityToken != ""
 	if cfg.identityEnabled {
 		if len(cfg.identityToken) < 32 { log.Fatal("IDENTITY_EVIDENCE_INTERNAL_TOKEN must be at least 32 characters when identity evidence is enabled") }
+		if cfg.identityPrimary.bucket == "" || cfg.identityPrimary.access == "" || cfg.identityPrimary.secret == "" {
+			log.Fatal("identity-evidence bucket and dedicated credentials are required only when IDENTITY_EVIDENCE_INTERNAL_TOKEN enables the feature")
+		}
 		if subtle.ConstantTimeCompare([]byte(cfg.identityToken), []byte(cfg.token)) == 1 { log.Fatal("IDENTITY_EVIDENCE_INTERNAL_TOKEN must be distinct from MEDIA_INTERNAL_TOKEN") }
 		if err:=validateStore(cfg.identityPrimary);err!=nil{log.Fatalf("invalid B2 identity evidence configuration: %v",err)}
 		if err:=validateIdentityStoreIsolation(cfg.primary,cfg.identityPrimary);err!=nil { log.Fatal(err) }
+	} else {
+		// Ignore stale identity bucket/key variables in ordinary deployments.
+		// The feature is disabled solely by omitting its dedicated service token.
+		cfg.identityPrimary = s3Store{}
 	}
 	if err:=validateStore(cfg.metadataPrimary);err!=nil{log.Fatalf("invalid VPS metadata store configuration: %v",err)}
 	if err:=validateStore(cfg.metadataReplica);err!=nil{log.Fatalf("invalid R2 metadata store configuration: %v",err)}
