@@ -1,0 +1,21 @@
+name: Enforce native mail ownership boundary
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  native-mail-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Reject retired outbound mail providers and relay configuration
+        run: python3 scripts/guard-native-mail-boundary.py
