@@ -45,7 +45,6 @@ jobs:
       FRESH_MEDIA_ENABLED: "false"
       DATA_CENTRE_MEDIA_API_URL: http://media:8096
       FRESH_DATA_CENTRE_INTERNAL_TOKEN: ci-media-internal-token-at-least-32-chars
-      IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN: ci-identity-evidence-service-token-0123456789
       MEDIA_DATABASE_NAME: media
       MEDIA_DATABASE_USER: testagram_media_ci
       MEDIA_DATABASE_PASSWORD: ci-media-db-password-only
@@ -53,11 +52,8 @@ jobs:
       B2_S3_ENDPOINT: https://s3.us-west-004.backblazeb2.com
       B2_S3_REGION: us-west-004
       B2_S3_BUCKET: ci-media-primary
-      B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET: ci-identity-evidence-b2
       B2_S3_ACCESS_KEY_ID: ci-b2-access
       B2_S3_SECRET_ACCESS_KEY: ci-b2-secret
-      B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID: ci-b2-identity-access
-      B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY: ci-b2-identity-secret
       CLOUDFLARE_R2_ENDPOINT: https://ci-account.r2.cloudflarestorage.com
       CLOUDFLARE_R2_REGION: auto
       CLOUDFLARE_R2_BUCKET: ci-media-replica
@@ -361,7 +357,7 @@ jobs:
           ! grep -Eqi "supabase|SUPABASE" vps/docker-compose.yml vps/.env.example vps/install.sh scripts/install-local-docker.sh vps/backup.sh vps/restore-drill.sh backend/docker-compose.yml
           # Verify the two Federation trust directions use their own matching credentials.
           docker compose --profile federation -f vps/docker-compose.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; fed=c["services"]["federation-api"]["environment"]; backend=api.get("FEDERATION_BACKEND_INTERNAL_TOKEN",""); fed_backend=fed.get("BACKEND_INTERNAL_TOKEN",""); ingress=api.get("FEDERATION_INTERNAL_TOKEN",""); fed_ingress=fed.get("FEDERATION_INGRESS_TOKEN",""); assert backend and backend == fed_backend, "Federation-to-Backend credential mismatch"; assert ingress and ingress == fed_ingress and ingress != backend, "Backend-to-Federation ingress token must be distinct"; assert api["LISTEN_ADDR"]==":8080" and api["INTERNAL_LISTEN_ADDR"]==":8082", "canonical Backend listener contract mismatch"; assert "testagram-backend-api" in c["services"]["api"]["networks"]["platform"]["aliases"], "private Backend alias missing"'
-          IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN=ci-identity-evidence-service-token-0123456789 docker compose --profile media -f vps/docker-compose.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; media=c["services"]["media"]["environment"]; migrate=c["services"]["media-migrate"]["environment"]; token=api.get("FRESH_DATA_CENTRE_INTERNAL_TOKEN",""); identity=api.get("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN",""); assert token and len(token)>=32 and media.get("MEDIA_INTERNAL_TOKEN")==token, "Backend/Data Centre media token mismatch"; assert identity and len(identity)>=32 and identity != token and media.get("IDENTITY_EVIDENCE_INTERNAL_TOKEN")==identity, "identity evidence must use a distinct Backend/Data Centre trust token"; assert media.get("MEDIA_DATABASE_URL")==migrate.get("MEDIA_DATABASE_URL") and media.get("MEDIA_DATABASE_URL"), "dedicated media DB mismatch"; assert all(media.get(k) for k in ("B2_S3_ENDPOINT","B2_S3_BUCKET","B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET","B2_S3_ACCESS_KEY_ID","B2_S3_SECRET_ACCESS_KEY","CLOUDFLARE_R2_ENDPOINT","CLOUDFLARE_R2_BUCKET","CLOUDFLARE_R2_ACCESS_KEY_ID","CLOUDFLARE_R2_SECRET_ACCESS_KEY","VPS_MINIO_ENDPOINT","VPS_MINIO_METADATA_BUCKET","VPS_MINIO_METADATA_ACCESS_KEY_ID","VPS_MINIO_METADATA_SECRET_ACCESS_KEY","CLOUDFLARE_R2_METADATA_BUCKET")), "provider and metadata credentials must be wired only to media"; assert not any(k in api for k in ("B2_S3_ACCESS_KEY_ID","B2_S3_SECRET_ACCESS_KEY","CLOUDFLARE_R2_ACCESS_KEY_ID","CLOUDFLARE_R2_SECRET_ACCESS_KEY")), "Backend must not receive object-store credentials"; assert "ports" not in c["services"]["media"], "media API must remain private-only"'
+          docker compose --profile media -f vps/docker-compose.yml config --format json | python -c 'import json,sys; c=json.load(sys.stdin); api=c["services"]["api"]["environment"]; media=c["services"]["media"]["environment"]; migrate=c["services"]["media-migrate"]["environment"]; token=api.get("FRESH_DATA_CENTRE_INTERNAL_TOKEN",""); identity=api.get("IDENTITY_EVIDENCE_DATA_CENTRE_INTERNAL_TOKEN",""); assert token and len(token)>=32 and media.get("MEDIA_INTERNAL_TOKEN")==token, "Backend/Data Centre media token mismatch"; assert not identity and not media.get("IDENTITY_EVIDENCE_INTERNAL_TOKEN"), "identity-evidence service must remain disabled in ordinary media profile"; assert not any(media.get(k) for k in ("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET","B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID","B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY")), "ordinary media profile must not require identity-evidence storage"; assert media.get("MEDIA_DATABASE_URL")==migrate.get("MEDIA_DATABASE_URL") and media.get("MEDIA_DATABASE_URL"), "dedicated media DB mismatch"; assert all(media.get(k) for k in ("B2_S3_ENDPOINT","B2_S3_BUCKET","B2_S3_ACCESS_KEY_ID","B2_S3_SECRET_ACCESS_KEY","CLOUDFLARE_R2_ENDPOINT","CLOUDFLARE_R2_BUCKET","CLOUDFLARE_R2_ACCESS_KEY_ID","CLOUDFLARE_R2_SECRET_ACCESS_KEY","VPS_MINIO_ENDPOINT","VPS_MINIO_METADATA_BUCKET","VPS_MINIO_METADATA_ACCESS_KEY_ID","VPS_MINIO_METADATA_SECRET_ACCESS_KEY","CLOUDFLARE_R2_METADATA_BUCKET")), "ordinary provider and metadata credentials must be wired only to media"; assert not any(k in api for k in ("B2_S3_ACCESS_KEY_ID","B2_S3_SECRET_ACCESS_KEY","CLOUDFLARE_R2_ACCESS_KEY_ID","CLOUDFLARE_R2_SECRET_ACCESS_KEY")), "Backend must not receive object-store credentials"; assert "ports" not in c["services"]["media"], "media API must remain private-only"'
           ! grep -qi 'supabase' vps/docker-compose.yml
           ! grep -Eq '/migrations/(002_video_platform|003_production_hardening|004_storage_buckets|005_platform|006_video_upload_safety|007_video_upload_safety)\.sql' vps/docker-compose.yml
           docker run --rm -e TLS_ADMIN_EMAIL=ci@example.invalid -v "$PWD/vps/fresh/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
@@ -447,19 +443,15 @@ jobs:
         run: |
           set -euo pipefail
           token=ci-media-internal-token-at-least-32-chars
-          identity_token=ci-identity-evidence-service-token-at-least-32-chars
           trap 'status=$?; echo "Dedicated media runtime failed; container state and logs follow"; docker inspect testagram-media-runtime-ci --format "{{json .State}}" 2>/dev/null || true; docker logs testagram-media-runtime-ci 2>&1 || true; exit "$status"' ERR
           trap 'docker rm -f testagram-media-runtime-ci >/dev/null 2>&1 || true' EXIT
           docker run -d --name testagram-media-runtime-ci --network host \
             -e MEDIA_ADDR=:8096 \
             -e MEDIA_INTERNAL_TOKEN="$token" \
-            -e IDENTITY_EVIDENCE_INTERNAL_TOKEN="$identity_token" \
             -e MEDIA_DATABASE_URL=postgresql://postgres:testagram@127.0.0.1:5432/testagram_media_ci?sslmode=disable \
             -e B2_S3_ENDPOINT=https://b2.invalid \
             -e B2_S3_REGION=us-west-004 -e B2_S3_BUCKET=ci-media-primary \
-            -e B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET=ci-identity-evidence-b2 \
             -e B2_S3_ACCESS_KEY_ID=ci-b2-access -e B2_S3_SECRET_ACCESS_KEY=ci-b2-secret \
-            -e B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID=ci-b2-identity-access -e B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY=ci-b2-identity-secret \
             -e CLOUDFLARE_R2_ENDPOINT=https://r2.invalid \
             -e CLOUDFLARE_R2_REGION=auto -e CLOUDFLARE_R2_BUCKET=ci-media-replica \
             -e CLOUDFLARE_R2_ACCESS_KEY_ID=ci-r2-access -e CLOUDFLARE_R2_SECRET_ACCESS_KEY=ci-r2-secret \
@@ -478,12 +470,7 @@ jobs:
           unauthorized="$(curl -sS -o /tmp/media-unauthorized.json -w '%{http_code}' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2F0123456789abcdef0123456789abcdef')"
           test "$unauthorized" = 401
           ordinary_on_identity="$(curl -sS -o /tmp/media-ordinary-on-identity.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/identity-evidence/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"identity-evidence-private","key":"identity/owner-1/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001.jpg-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","content_type":"image/jpeg","size_bytes":123}')"
-          test "$ordinary_on_identity" = 401
-          identity_on_ordinary="$(curl -sS -o /tmp/media-identity-on-ordinary.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $identity_token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123}')"
-          test "$identity_on_ordinary" = 401
-          identity_created="$(curl -sS -o /tmp/identity-upload-grant.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/identity-evidence/upload-url -H "Authorization: Bearer $identity_token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"identity-evidence-private","key":"identity/owner-1/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001.jpg-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","content_type":"image/jpeg","size_bytes":123}')"
-          test "$identity_created" = 201
-          python -c 'import json,urllib.parse; d=json.load(open("/tmp/identity-upload-grant.json")); path=urllib.parse.urlparse(d["upload_url"]).path; assert d["primary"]=="backblaze_b2" and "/ci-identity-evidence-b2/" in path'
+          test "$ordinary_on_identity" = 404
           created="$(curl -sS -o /tmp/media-upload-grant.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/media/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"media-private","key":"users/owner-1/0123456789abcdef0123456789abcdef","content_type":"video/mp4","size_bytes":123}')"
           test "$created" = 201
           python -c 'import json; d=json.load(open("/tmp/media-upload-grant.json")); assert d["primary"]=="backblaze_b2" and d["max_bytes"]==123 and d["upload_url"].startswith("https://")'
