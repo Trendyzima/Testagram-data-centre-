@@ -242,7 +242,7 @@ func TestMediaReadinessRequiresDedicatedMediaCredential(t *testing.T) {
 }
 
 func TestIdentityEvidenceUsesDedicatedB2OnlyBucket(t *testing.T) {
- s := &server{cfg: config{
+ s := &server{cfg: config{identityEnabled:true,
   primary:s3Store{name:"b2-media",bucket:"media-b2",access:"media-key",secret:"media-secret"},
   replica:s3Store{name:"r2-media",bucket:"media-r2"},
   identityPrimary:s3Store{name:"backblaze_b2_identity_evidence",bucket:"identity-b2",access:"identity-key",secret:"identity-secret"},
