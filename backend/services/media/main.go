@@ -69,7 +69,7 @@ func main() {
 		token: required("MEDIA_INTERNAL_TOKEN"), identityToken: env("IDENTITY_EVIDENCE_INTERNAL_TOKEN", ""), addr: env("MEDIA_ADDR", ":8096"),
 		primary: s3Store{name:"backblaze_b2", endpoint:required("B2_S3_ENDPOINT"), region:required("B2_S3_REGION"), bucket:required("B2_S3_BUCKET"), access:required("B2_S3_ACCESS_KEY_ID"), secret:required("B2_S3_SECRET_ACCESS_KEY")},
 		replica: s3Store{name:"cloudflare_r2", endpoint:required("CLOUDFLARE_R2_ENDPOINT"), region:env("CLOUDFLARE_R2_REGION","auto"), bucket:required("CLOUDFLARE_R2_BUCKET"), access:required("CLOUDFLARE_R2_ACCESS_KEY_ID"), secret:required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")},
-		identityPrimary: s3Store{name:"backblaze_b2_identity_evidence", endpoint:env("B2_S3_ENDPOINT", ""), region:env("B2_S3_REGION", ""), bucket:env("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET", ""), access:env("B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID", ""), secret:env("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY", "")},
+		identityPrimary: s3Store{name:"backblaze_b2_identity_evidence", endpoint:required("B2_S3_ENDPOINT"), region:required("B2_S3_REGION"), bucket:env("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET", ""), access:env("B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID", ""), secret:env("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY", "")},
 		metadataPrimary: s3Store{name:"instabox_vps_metadata", endpoint:required("VPS_MINIO_ENDPOINT"), region:env("VPS_MINIO_REGION","us-east-1"), bucket:required("VPS_MINIO_METADATA_BUCKET"), access:required("VPS_MINIO_METADATA_ACCESS_KEY_ID"), secret:required("VPS_MINIO_METADATA_SECRET_ACCESS_KEY")},
 		metadataReplica: s3Store{name:"cloudflare_r2_metadata", endpoint:required("CLOUDFLARE_R2_ENDPOINT"), region:env("CLOUDFLARE_R2_REGION","auto"), bucket:required("CLOUDFLARE_R2_METADATA_BUCKET"), access:required("CLOUDFLARE_R2_ACCESS_KEY_ID"), secret:required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")},
 		uploadTTL: duration("MEDIA_UPLOAD_TTL", 45*time.Minute), downloadTTL: duration("MEDIA_DOWNLOAD_TTL", 5*time.Minute),
@@ -79,7 +79,7 @@ func main() {
 	if cfg.downloadTTL < time.Minute || cfg.downloadTTL > 15*time.Minute { log.Fatal("MEDIA_DOWNLOAD_TTL must be between 1 minute and 15 minutes") }
 	if err:=validateStore(cfg.primary);err!=nil{log.Fatalf("invalid B2 primary configuration: %v",err)}
 	if err:=validateStore(cfg.replica);err!=nil{log.Fatalf("invalid R2 replica configuration: %v",err)}
-	identityFields := []string{cfg.identityToken, cfg.identityPrimary.endpoint, cfg.identityPrimary.region, cfg.identityPrimary.bucket, cfg.identityPrimary.access, cfg.identityPrimary.secret}
+	identityFields := []string{cfg.identityToken, cfg.identityPrimary.bucket, cfg.identityPrimary.access, cfg.identityPrimary.secret}
 	identityConfigured := false
 	identityMissing := false
 	for _, value := range identityFields { if value != "" { identityConfigured = true } else { identityMissing = true } }
