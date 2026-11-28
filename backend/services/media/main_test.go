@@ -569,3 +569,28 @@ func TestEnqueueLegacyIdentityEvidencePurgesPostgresIntegration(t *testing.T) {
 	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus); err != nil { t.Fatal(err) }
 	if outboxStatus!="done" { t.Fatalf("verified permanent purge was incorrectly requeued: %q",outboxStatus) }
 }
+
+func TestDisabledIdentityEvidenceRouteFailsClosed(t *testing.T) {
+	s := &server{cfg: config{token: strings.Repeat("m", 40), identityEnabled: false}}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/internal/v1/identity-evidence/upload-url", nil)
+	if s.namespaceAllowedForRoute(w, r, "identity-evidence-private") {
+		t.Fatal("disabled identity-evidence route was accepted")
+	}
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("disabled identity-evidence route status=%d, want 404", w.Code)
+	}
+}
+
+func TestDisabledIdentityEvidenceStoresAreNotSelected(t *testing.T) {
+	s := &server{cfg: config{
+		identityEnabled: false,
+		primary: s3Store{name: "ordinary-media", bucket: "media"},
+		replica: s3Store{name: "ordinary-replica", bucket: "replica"},
+		identityPrimary: s3Store{name: "identity", bucket: "identity"},
+	}}
+	primary, replica := s.storesForNamespace("identity-evidence-private")
+	if primary.bucket != "" || replica.bucket != "" {
+		t.Fatalf("disabled identity namespace selected storage: primary=%q replica=%q", primary.bucket, replica.bucket)
+	}
+}
