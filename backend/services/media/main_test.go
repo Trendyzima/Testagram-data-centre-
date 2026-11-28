@@ -568,6 +568,25 @@ func TestEnqueueLegacyIdentityEvidencePurgesPostgresIntegration(t *testing.T) {
 	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("skip already-purged identity evidence: %v", err) }
 	if err := db.QueryRow(ctx, `select status from media_outbox where owner_id=$1 and object_key=$2 and operation='delete'`, owner, identityKey).Scan(&outboxStatus); err != nil { t.Fatal(err) }
 	if outboxStatus!="done" { t.Fatalf("verified permanent purge was incorrectly requeued: %q",outboxStatus) }
+
+	// Ordinary media workers must leave queued identity-evidence jobs untouched
+	// when the optional identity feature is disabled.
+	disabled := &server{db: db, cfg: config{identityEnabled: false}}
+	if err := disabled.processOne(ctx); err != nil {
+		t.Fatalf("disabled media worker tried to process identity-evidence job: %v", err)
+	}
+	if err := disabled.reconcileProtectedBatch(ctx, 4); err != nil {
+		t.Fatalf("disabled reconciliation worker tried to process identity-evidence job: %v", err)
+	}
+	var untouchedStatus string
+	var untouchedAttempts int
+	var untouchedLock *time.Time
+	if err := db.QueryRow(ctx, `select status,attempts,locked_until from media_outbox where owner_id=$1 and namespace='identity-evidence-private' and object_key=$2 and operation='delete'`, orphanOwner, orphanKey).Scan(&untouchedStatus,&untouchedAttempts,&untouchedLock); err != nil {
+		t.Fatalf("read disabled identity-evidence job: %v", err)
+	}
+	if untouchedStatus != "pending" || untouchedAttempts != 0 || untouchedLock != nil {
+		t.Fatalf("disabled worker mutated identity-evidence job: status=%q attempts=%d locked_until=%v", untouchedStatus, untouchedAttempts, untouchedLock)
+	}
 }
 
 func TestDisabledIdentityEvidenceRouteFailsClosed(t *testing.T) {
