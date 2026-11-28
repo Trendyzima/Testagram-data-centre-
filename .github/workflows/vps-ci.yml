@@ -467,6 +467,15 @@ jobs:
             sleep 2
           done
           test "$ready" = 1
+          # Prove the live background worker leaves legacy identity jobs untouched
+          # when the feature token and dedicated bucket credentials are absent.
+          docker run --rm --network host -e PGPASSWORD=testagram postgres:17-alpine sh -ec '
+            psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -c "INSERT INTO public.media_objects(owner_id,namespace,object_key,content_type,size_bytes,status) VALUES (\$\$ci-disabled-identity-worker\$\$,\$\$identity-evidence-private\$\$,\$\$identity/ci-disabled-worker\$\$,\$\$image/jpeg\$\$,10,\$\$delete_pending\$\$); INSERT INTO public.media_outbox(owner_id,namespace,object_key,operation,status,attempts,available_at) VALUES (\$\$ci-disabled-identity-worker\$\$,\$\$identity-evidence-private\$\$,\$\$identity/ci-disabled-worker\$\$,\$\$delete\$\$,\$\$pending\$\$,0,now())"
+            sleep 5
+            worker_state="$(psql -h 127.0.0.1 -U postgres -d testagram_media_ci -Atqc "SELECT status || \$\$:\$\$ || attempts FROM public.media_outbox WHERE owner_id=\$\$ci-disabled-identity-worker\$\$ AND object_key=\$\$identity/ci-disabled-worker\$\$ AND operation=\$\$delete\$\$")"
+            test "$worker_state" = "pending:0"
+            psql -h 127.0.0.1 -U postgres -d testagram_media_ci -v ON_ERROR_STOP=1 -c "DELETE FROM public.media_outbox WHERE owner_id=\$\$ci-disabled-identity-worker\$\$; DELETE FROM public.media_objects WHERE owner_id=\$\$ci-disabled-identity-worker\$\$"
+          '
           unauthorized="$(curl -sS -o /tmp/media-unauthorized.json -w '%{http_code}' 'http://127.0.0.1:8096/internal/v1/media/status?owner_id=owner-1&namespace=media-private&key=users%2Fowner-1%2F0123456789abcdef0123456789abcdef')"
           test "$unauthorized" = 401
           ordinary_on_identity="$(curl -sS -o /tmp/media-ordinary-on-identity.json -w '%{http_code}' -X POST http://127.0.0.1:8096/internal/v1/identity-evidence/upload-url -H "Authorization: Bearer $token" -H 'X-Testagram-API-Version: 1' -H 'Content-Type: application/json' --data '{"owner_id":"owner-1","namespace":"identity-evidence-private","key":"identity/owner-1/10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000001.jpg-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","content_type":"image/jpeg","size_bytes":123}')"
