@@ -32,6 +32,7 @@ const maxJSON = 64 << 10
 type config struct {
 	token string
 	identityToken string
+	identityEnabled bool
 	addr string
 	primary s3Store
 	replica s3Store
@@ -68,20 +69,28 @@ func main() {
 		token: required("MEDIA_INTERNAL_TOKEN"), identityToken: env("IDENTITY_EVIDENCE_INTERNAL_TOKEN", ""), addr: env("MEDIA_ADDR", ":8096"),
 		primary: s3Store{name:"backblaze_b2", endpoint:required("B2_S3_ENDPOINT"), region:required("B2_S3_REGION"), bucket:required("B2_S3_BUCKET"), access:required("B2_S3_ACCESS_KEY_ID"), secret:required("B2_S3_SECRET_ACCESS_KEY")},
 		replica: s3Store{name:"cloudflare_r2", endpoint:required("CLOUDFLARE_R2_ENDPOINT"), region:env("CLOUDFLARE_R2_REGION","auto"), bucket:required("CLOUDFLARE_R2_BUCKET"), access:required("CLOUDFLARE_R2_ACCESS_KEY_ID"), secret:required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")},
-		identityPrimary: s3Store{name:"backblaze_b2_identity_evidence", endpoint:required("B2_S3_ENDPOINT"), region:required("B2_S3_REGION"), bucket:required("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET"), access:required("B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID"), secret:required("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY")},
+		identityPrimary: s3Store{name:"backblaze_b2_identity_evidence", endpoint:env("B2_S3_ENDPOINT", ""), region:env("B2_S3_REGION", ""), bucket:env("B2_S3_IDENTITY_EVIDENCE_PRIVATE_BUCKET", ""), access:env("B2_S3_IDENTITY_EVIDENCE_ACCESS_KEY_ID", ""), secret:env("B2_S3_IDENTITY_EVIDENCE_SECRET_ACCESS_KEY", "")},
 		metadataPrimary: s3Store{name:"instabox_vps_metadata", endpoint:required("VPS_MINIO_ENDPOINT"), region:env("VPS_MINIO_REGION","us-east-1"), bucket:required("VPS_MINIO_METADATA_BUCKET"), access:required("VPS_MINIO_METADATA_ACCESS_KEY_ID"), secret:required("VPS_MINIO_METADATA_SECRET_ACCESS_KEY")},
 		metadataReplica: s3Store{name:"cloudflare_r2_metadata", endpoint:required("CLOUDFLARE_R2_ENDPOINT"), region:env("CLOUDFLARE_R2_REGION","auto"), bucket:required("CLOUDFLARE_R2_METADATA_BUCKET"), access:required("CLOUDFLARE_R2_ACCESS_KEY_ID"), secret:required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")},
 		uploadTTL: duration("MEDIA_UPLOAD_TTL", 45*time.Minute), downloadTTL: duration("MEDIA_DOWNLOAD_TTL", 5*time.Minute),
 	}
 	if len(cfg.token)<32 { log.Fatal("MEDIA_INTERNAL_TOKEN must be at least 32 characters") }
-	if cfg.identityToken != "" && len(cfg.identityToken) < 32 { log.Fatal("IDENTITY_EVIDENCE_INTERNAL_TOKEN must be at least 32 characters when configured") }
-	if cfg.identityToken != "" && subtle.ConstantTimeCompare([]byte(cfg.identityToken), []byte(cfg.token)) == 1 { log.Fatal("IDENTITY_EVIDENCE_INTERNAL_TOKEN must be distinct from MEDIA_INTERNAL_TOKEN") }
 	if cfg.uploadTTL < time.Minute || cfg.uploadTTL > time.Hour { log.Fatal("MEDIA_UPLOAD_TTL must be between 1 minute and 1 hour") }
 	if cfg.downloadTTL < time.Minute || cfg.downloadTTL > 15*time.Minute { log.Fatal("MEDIA_DOWNLOAD_TTL must be between 1 minute and 15 minutes") }
 	if err:=validateStore(cfg.primary);err!=nil{log.Fatalf("invalid B2 primary configuration: %v",err)}
 	if err:=validateStore(cfg.replica);err!=nil{log.Fatalf("invalid R2 replica configuration: %v",err)}
-	if err:=validateStore(cfg.identityPrimary);err!=nil{log.Fatalf("invalid B2 identity evidence configuration: %v",err)}
-	if err:=validateIdentityStoreIsolation(cfg.primary,cfg.identityPrimary);err!=nil { log.Fatal(err) }
+	identityFields := []string{cfg.identityToken, cfg.identityPrimary.endpoint, cfg.identityPrimary.region, cfg.identityPrimary.bucket, cfg.identityPrimary.access, cfg.identityPrimary.secret}
+	identityConfigured := false
+	identityMissing := false
+	for _, value := range identityFields { if value != "" { identityConfigured = true } else { identityMissing = true } }
+	if identityConfigured && identityMissing { log.Fatal("identity-evidence feature configuration is incomplete; disable it by omitting all identity-evidence settings") }
+	cfg.identityEnabled = identityConfigured
+	if cfg.identityEnabled {
+		if len(cfg.identityToken) < 32 { log.Fatal("IDENTITY_EVIDENCE_INTERNAL_TOKEN must be at least 32 characters when identity evidence is enabled") }
+		if subtle.ConstantTimeCompare([]byte(cfg.identityToken), []byte(cfg.token)) == 1 { log.Fatal("IDENTITY_EVIDENCE_INTERNAL_TOKEN must be distinct from MEDIA_INTERNAL_TOKEN") }
+		if err:=validateStore(cfg.identityPrimary);err!=nil{log.Fatalf("invalid B2 identity evidence configuration: %v",err)}
+		if err:=validateIdentityStoreIsolation(cfg.primary,cfg.identityPrimary);err!=nil { log.Fatal(err) }
+	}
 	if err:=validateStore(cfg.metadataPrimary);err!=nil{log.Fatalf("invalid VPS metadata store configuration: %v",err)}
 	if err:=validateStore(cfg.metadataReplica);err!=nil{log.Fatalf("invalid R2 metadata store configuration: %v",err)}
 	db,err:=pgxpool.New(context.Background(),required("MEDIA_DATABASE_URL")); if err!=nil { log.Fatal(err) }; defer db.Close()
@@ -96,18 +105,17 @@ func main() {
 	mux.HandleFunc("/internal/v1/media/status",s.status)
 	mux.HandleFunc("/internal/v1/media/download-url",s.downloadURL)
 	mux.HandleFunc("/internal/v1/media/delete",s.delete)
-	mux.HandleFunc("/internal/v1/identity-evidence/readyz",s.identityReady)
-	mux.HandleFunc("/internal/v1/identity-evidence/upload-url",s.uploadURL)
-	mux.HandleFunc("/internal/v1/identity-evidence/verify",s.verify)
-	mux.HandleFunc("/internal/v1/identity-evidence/status",s.status)
-	mux.HandleFunc("/internal/v1/identity-evidence/download-url",s.downloadURL)
-	mux.HandleFunc("/internal/v1/identity-evidence/delete",s.delete)
-	purgeStartupCtx, purgeStartupCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	if err := s.enqueueLegacyIdentityEvidencePurges(purgeStartupCtx); err != nil {
+	if cfg.identityEnabled {
+		mux.HandleFunc("/internal/v1/identity-evidence/readyz",s.identityReady)
+		mux.HandleFunc("/internal/v1/identity-evidence/upload-url",s.uploadURL)
+		mux.HandleFunc("/internal/v1/identity-evidence/verify",s.verify)
+		mux.HandleFunc("/internal/v1/identity-evidence/status",s.status)
+		mux.HandleFunc("/internal/v1/identity-evidence/download-url",s.downloadURL)
+		mux.HandleFunc("/internal/v1/identity-evidence/delete",s.delete)
+		purgeStartupCtx, purgeStartupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := s.enqueueLegacyIdentityEvidencePurges(purgeStartupCtx); err != nil { purgeStartupCancel(); log.Fatalf("cannot initialize legacy identity evidence permanent-purge queue: %v", err) }
 		purgeStartupCancel()
-		log.Fatalf("cannot initialize legacy identity evidence permanent-purge queue: %v", err)
 	}
-	purgeStartupCancel()
 	go s.worker(context.Background())
 	go s.reconcileWorker(context.Background())
 	srv:=&http.Server{Addr:cfg.addr,Handler:logging(mux),ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:30*time.Second,IdleTimeout:60*time.Second}
@@ -173,11 +181,11 @@ func (s *server) deleteMetadataSidecars(ctx context.Context, namespace, key stri
 }
 
 func (s *server) storesForNamespace(namespace string) (s3Store, s3Store) {
-	if namespace == "identity-evidence-private" { return s.cfg.identityPrimary, s3Store{} }
+	if namespace == "identity-evidence-private" { if !s.cfg.identityEnabled { return s3Store{}, s3Store{} }; return s.cfg.identityPrimary, s3Store{} }
 	return s.cfg.primary, s.cfg.replica
 }
 func (s *server) metadataStoresForNamespace(namespace string) (s3Store, s3Store) {
-	if namespace == "identity-evidence-private" { return s.cfg.identityPrimary, s3Store{} }
+	if namespace == "identity-evidence-private" { if !s.cfg.identityEnabled { return s3Store{}, s3Store{} }; return s.cfg.identityPrimary, s3Store{} }
 	return s.cfg.metadataPrimary, s.cfg.metadataReplica
 }
 func (s *server) health(w http.ResponseWriter,r *http.Request){w.WriteHeader(200);_,_=w.Write([]byte("ok\n"))}
@@ -296,6 +304,7 @@ func (s *server) probeIdentityEvidenceStore(ctx context.Context, store s3Store) 
 
 func (s *server) namespaceAllowedForRoute(w http.ResponseWriter,r *http.Request,namespace string)bool{
 	identityRoute:=strings.HasPrefix(r.URL.Path,"/internal/v1/identity-evidence/")
+	if identityRoute && !s.cfg.identityEnabled { http.NotFound(w,r); return false }
 	identityNamespace:=namespace=="identity-evidence-private"
 	if identityRoute!=identityNamespace { writeErr(w,403,"media namespace is not allowed on this private route");return false }
 	return true
@@ -553,9 +562,9 @@ func (s *server) worker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil {
+			if s.cfg.identityEnabled { if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil {
 				log.Printf("legacy identity evidence purge enqueue: %v", err)
-			}
+			} }
 			if err := s.processOne(ctx); err != nil {
 				log.Printf("media outbox worker: %v", err)
 			}
