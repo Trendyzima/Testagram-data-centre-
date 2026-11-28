@@ -190,7 +190,7 @@ func TestIdentityEvidenceNamespaceIsPrivateAndBoundToApplication(t *testing.T) {
 }
 
 func TestIdentityEvidenceNamespaceRequiresDedicatedRoute(t *testing.T) {
-	s := &server{}
+	s := &server{cfg: config{identityEnabled: true}}
 	for _, tc := range []struct{ path, namespace string; want bool }{
 		{"/internal/v1/media/upload-url", "media-private", true},
 		{"/internal/v1/identity-evidence/upload-url", "identity-evidence-private", true},
