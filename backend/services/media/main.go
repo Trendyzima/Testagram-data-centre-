@@ -618,7 +618,7 @@ func (s *server) processOne(parent context.Context)error{
 	ctx,c:=context.WithTimeout(parent,30*time.Minute);defer c()
 	tx,err:=s.db.Begin(ctx);if err!=nil{return err};defer tx.Rollback(ctx)
 	var id int64;var attempts int;var owner,ns,key,op string
-	err=tx.QueryRow(ctx,`select o.id,o.attempts,o.owner_id,o.namespace,o.object_key,o.operation from media_outbox o where o.status in ('pending','retry','processing') and o.available_at<=now() and (o.locked_until is null or o.locked_until<now()) and not exists (select 1 from media_outbox active where active.owner_id=o.owner_id and active.namespace=o.namespace and active.object_key=o.object_key and active.status='processing' and active.id<>o.id) order by o.id for update of o skip locked limit 1`).Scan(&id,&attempts,&owner,&ns,&key,&op)
+	err=tx.QueryRow(ctx,`select o.id,o.attempts,o.owner_id,o.namespace,o.object_key,o.operation from media_outbox o where ($1::boolean or o.namespace <> 'identity-evidence-private') and o.status in ('pending','retry','processing') and o.available_at<=now() and (o.locked_until is null or o.locked_until<now()) and not exists (select 1 from media_outbox active where active.owner_id=o.owner_id and active.namespace=o.namespace and active.object_key=o.object_key and active.status='processing' and active.id<>o.id) order by o.id for update of o skip locked limit 1`,s.cfg.identityEnabled).Scan(&id,&attempts,&owner,&ns,&key,&op)
 	if errors.Is(err,pgx.ErrNoRows){return nil};if err!=nil{return err}
 	_,err=tx.Exec(ctx,`update media_outbox set status='processing',locked_until=now()+interval '35 minutes',attempts=attempts+1 where id=$1`,id);if err!=nil{return err};if err=tx.Commit(ctx);err!=nil{return err};attempts++
 	switch op {
