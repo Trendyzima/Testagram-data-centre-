@@ -514,7 +514,7 @@ func TestEnqueueLegacyIdentityEvidencePurgesPostgresIntegration(t *testing.T) {
 		_, _ = db.Exec(context.Background(), `delete from media_objects where owner_id=$1 and object_key=$2`, orphanOwner, orphanKey)
 	}()
 	identityToken := strings.Repeat("i", 40)
-	orphanServer := &server{db:db,cfg:config{identityToken:identityToken}}
+	orphanServer := &server{db:db,cfg:config{identityToken:identityToken,identityEnabled:true}}
 	body := fmt.Sprintf(`{"requester_id":%q,"owner_id":%q,"namespace":"identity-evidence-private","key":%q}`,orphanOwner,orphanOwner,orphanKey)
 	request := httptest.NewRequest(http.MethodPost,"/internal/v1/identity-evidence/delete",strings.NewReader(body))
 	request.Header.Set("Authorization","Bearer "+identityToken)
@@ -530,7 +530,7 @@ func TestEnqueueLegacyIdentityEvidencePurgesPostgresIntegration(t *testing.T) {
 	if err := db.QueryRow(ctx,`select count(*) from media_operations where owner_id=$1 and namespace='identity-evidence-private' and object_key=$2 and operation='delete' and outcome='queued'`,orphanOwner,orphanKey).Scan(&orphanAuditCount); err != nil { t.Fatal(err) }
 	if orphanAuditCount!=1 { t.Fatalf("orphan evidence purge queued without exactly one audit event: %d",orphanAuditCount) }
 
-	s := &server{db:db}
+	s := &server{db:db,cfg:config{identityEnabled:true}}
 	if err := s.enqueueLegacyIdentityEvidencePurges(ctx); err != nil { t.Fatalf("enqueue legacy identity purge: %v", err) }
 	var mediaStatus, outboxStatus string
 	var attempts int
